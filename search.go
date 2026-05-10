@@ -127,7 +127,38 @@ func (b *Board) IterativeDeepening(limits SearchLimits, stop *atomic.Bool, info 
 	best.BestMove = legal[0]
 
 	for depth := 1; depth <= maxDepth; depth++ {
-		score := s.negamax(depth, 0, -InfScore, InfScore)
+		// Aspiration windows: once we have a reliable score, search a narrow
+		// band around it. On a fail-high or fail-low, widen and re-search at
+		// the same depth — much cheaper on average than the (-inf, +inf)
+		// full window because narrower bounds give more cutoffs.
+		alpha, beta := -InfScore, InfScore
+		if depth >= 5 && best.Score > -MateInMaxPly && best.Score < MateInMaxPly {
+			alpha = best.Score - 50
+			beta = best.Score + 50
+		}
+		delta := 100
+		var score int
+		for {
+			score = s.negamax(depth, 0, alpha, beta)
+			if s.shouldStop() {
+				break
+			}
+			if score > alpha && score < beta {
+				break
+			}
+			if score <= alpha {
+				alpha -= delta
+				if alpha < -InfScore {
+					alpha = -InfScore
+				}
+			} else {
+				beta += delta
+				if beta > InfScore {
+					beta = InfScore
+				}
+			}
+			delta *= 2
+		}
 		if s.shouldStop() && depth > 1 {
 			break
 		}
@@ -239,6 +270,16 @@ func (s *Searcher) negamax(depth, ply int, alpha, beta int) int {
 	b.GeneratePseudoLegalMoves(&moves)
 	s.orderMoves(moves, ttMove, ply)
 
+	// Check extension: if we are in check, search children at unreduced depth
+	// (newDepth = depth instead of depth-1). Avoids dropping into qsearch
+	// while in check (qsearch only generates captures, so it would miss
+	// quiet escapes) and adds tactical depth along forcing lines.
+	ext := 0
+	if inCheck {
+		ext = 1
+	}
+	newDepth := depth - 1 + ext
+
 	legalCount := 0
 	bestScore := -InfScore
 	var bestMove Move
@@ -251,7 +292,18 @@ func (s *Searcher) negamax(depth, ply int, alpha, beta int) int {
 			continue
 		}
 		legalCount++
-		score := -s.negamax(depth-1, ply+1, -beta, -alpha)
+		// PVS: search the first move with the full window; later moves get
+		// a null-window scout search. If a scout move beats alpha (and is
+		// inside the PV window), re-search it with the full window.
+		var score int
+		if legalCount == 1 {
+			score = -s.negamax(newDepth, ply+1, -beta, -alpha)
+		} else {
+			score = -s.negamax(newDepth, ply+1, -alpha-1, -alpha)
+			if !s.shouldStop() && score > alpha && score < beta {
+				score = -s.negamax(newDepth, ply+1, -beta, -alpha)
+			}
+		}
 		b.UnmakeMove(u)
 
 		if s.shouldStop() {
