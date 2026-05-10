@@ -1,0 +1,24 @@
+# Build output
+/chess
+/chess.exe
+
+# Go
+*.test
+*.out
+*.prof
+coverage.txt
+coverage.html
+default.pgo
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.swp
+*.swo
+*.sw?
+
+# Logs / scratch
+*.log
+/tmp
