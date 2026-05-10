@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	_ "embed"
 	"encoding/json"
 	"fmt"
@@ -12,6 +13,11 @@ import (
 
 //go:embed gui.html
 var guiHTML []byte
+
+//go:embed replay.html
+var replayHTML []byte
+
+const replayPlaceholder = "REPLAY_DATA_PLACEHOLDER"
 
 // GUI is a thin HTTP shim over Game. It owns concurrency (mu) and search
 // lifecycle (thinking flag); all chess logic lives in Game.
@@ -38,7 +44,8 @@ type stateJSON struct {
 	Status        string    `json:"status"`
 	InCheck       bool      `json:"in_check"`
 	LegalMoves    []string  `json:"legal_moves"`
-	History       []string  `json:"history"`
+	History       []string  `json:"history"`     // long-algebraic, parallel to HistorySAN
+	HistorySAN    []string  `json:"history_san"` // standard algebraic for display
 	LastMove      *moveJSON `json:"last_move"`
 	Thinking      bool      `json:"thinking"`
 	TouchMove     bool      `json:"touch_move"`
@@ -105,6 +112,10 @@ func (g *GUI) snapshotLocked() stateJSON {
 	if hist == nil {
 		hist = []string{} // marshal as [] not null so the frontend can iterate it
 	}
+	histSAN := game.HistorySAN
+	if histSAN == nil {
+		histSAN = []string{}
+	}
 	touched := ""
 	if game.TouchedSq != NoSquare {
 		touched = SquareName(game.TouchedSq)
@@ -119,6 +130,7 @@ func (g *GUI) snapshotLocked() stateJSON {
 		InCheck:       game.Board.InCheck(game.Board.SideToMove),
 		LegalMoves:    legalStrs,
 		History:       hist,
+		HistorySAN:    histSAN,
 		LastMove:      lm,
 		Thinking:      g.thinking,
 		TouchMove:     game.TouchMove,
@@ -157,9 +169,26 @@ func (g *GUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		g.handleLoad(w, r)
 	case r.Method == "POST" && r.URL.Path == "/api/undo":
 		g.handleUndo(w)
+	case r.Method == "GET" && r.URL.Path == "/api/replay.html":
+		g.handleReplay(w, r)
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+func (g *GUI) handleReplay(w http.ResponseWriter, r *http.Request) {
+	g.mu.Lock()
+	frames := g.game.ReplayData()
+	g.mu.Unlock()
+	payload, _ := json.Marshal(frames)
+
+	html := bytes.Replace(replayHTML, []byte(replayPlaceholder), payload, 1)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if r.URL.Query().Get("download") == "1" {
+		w.Header().Set("Content-Disposition",
+			fmt.Sprintf(`attachment; filename="chess-replay-%s.html"`, time.Now().Format("20060102-150405")))
+	}
+	w.Write(html)
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

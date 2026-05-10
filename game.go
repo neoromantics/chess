@@ -21,11 +21,12 @@ const (
 // Game is the live chess game plus play-mode flags. It is *not* safe for
 // concurrent use; the HTTP layer wraps it with a mutex.
 type Game struct {
-	Board     *Board
-	StartFEN  string
-	History   []string // long-algebraic moves, parallel to UndoStack
-	LastMove  *Move
-	UndoStack []Undo
+	Board      *Board
+	StartFEN   string
+	History    []string // long-algebraic, parallel to UndoStack and HistorySAN
+	HistorySAN []string // standard algebraic ("e4", "Nf3", "O-O-O", "exd5+")
+	LastMove   *Move
+	UndoStack  []Undo
 
 	EngineWhite bool
 	EngineBlack bool
@@ -52,6 +53,7 @@ func (g *Game) Reset() {
 	g.Board = StartPosition()
 	g.StartFEN = StartFEN
 	g.History = nil
+	g.HistorySAN = nil
 	g.LastMove = nil
 	g.UndoStack = nil
 	g.TouchedSq = NoSquare
@@ -72,6 +74,7 @@ func (g *Game) Load(startFEN string, moves []string, engineW, engineB bool) erro
 	g.Board = b
 	g.StartFEN = startFEN
 	g.History = nil
+	g.HistorySAN = nil
 	g.LastMove = nil
 	g.UndoStack = nil
 	g.TouchedSq = NoSquare
@@ -96,8 +99,12 @@ func (g *Game) Load(startFEN string, moves []string, engineW, engineB bool) erro
 // PlayMove applies a legal move and updates derived state. Caller must
 // have already verified legality (see MatchMove).
 func (g *Game) PlayMove(m Move) {
+	// SAN must be computed against the *pre-move* board (it inspects
+	// disambiguation candidates and tentatively makes the move for +/#).
+	san := MoveToSAN(g.Board, m)
 	u := g.Board.MakeMove(m)
 	g.History = append(g.History, m.String())
+	g.HistorySAN = append(g.HistorySAN, san)
 	mv := m
 	g.LastMove = &mv
 	g.UndoStack = append(g.UndoStack, u)
@@ -123,6 +130,7 @@ func (g *Game) Undo() bool {
 	}
 	g.Board.UnmakeMove(g.UndoStack[n-1])
 	g.History = g.History[:n-1]
+	g.HistorySAN = g.HistorySAN[:n-1]
 	g.UndoStack = g.UndoStack[:n-1]
 	g.TouchedSq = NoSquare
 	g.TouchLost = false
@@ -277,6 +285,40 @@ func (g *Game) InsufficientMaterial() bool {
 		return true
 	}
 	return false
+}
+
+// ReplayFrame is one step of a recorded game, suitable for driving a
+// step-through replay player.
+type ReplayFrame struct {
+	FEN  string `json:"fen"`
+	SAN  string `json:"san,omitempty"`  // empty for the initial position
+	From string `json:"from,omitempty"` // empty for the initial position
+	To   string `json:"to,omitempty"`
+}
+
+// ReplayData returns the position after each ply, starting with the game's
+// initial position. Length = len(History) + 1.
+func (g *Game) ReplayData() []ReplayFrame {
+	frames := []ReplayFrame{}
+	b, err := ParseFEN(g.StartFEN)
+	if err != nil {
+		return frames
+	}
+	frames = append(frames, ReplayFrame{FEN: b.FEN()})
+	for i, u := range g.UndoStack {
+		b.MakeMove(u.Move)
+		san := ""
+		if i < len(g.HistorySAN) {
+			san = g.HistorySAN[i]
+		}
+		frames = append(frames, ReplayFrame{
+			FEN:  b.FEN(),
+			SAN:  san,
+			From: SquareName(u.Move.From),
+			To:   SquareName(u.Move.To),
+		})
+	}
+	return frames
 }
 
 // positionKey is the FEN with halfmove and fullmove counters stripped —

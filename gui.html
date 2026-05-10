@@ -114,6 +114,10 @@
       <button id="edit-mode" style="flex:1; background:#5a4a2d; border-color:#75603a;">Edit</button>
     </div>
     <div class="row" style="margin-top:6px; gap: 6px;">
+      <button id="pause" style="flex:1; background:#5a3a3a; border-color:#704545;">Pause</button>
+      <button id="replay" style="flex:1; background:#3a5a3a; border-color:#457045;">Replay</button>
+    </div>
+    <div class="row" style="margin-top:6px; gap: 6px;">
       <button id="save" style="flex:1">Save</button>
       <button id="load" style="flex:1">Load</button>
       <input type="file" id="load-file" accept="application/json,.json" style="display:none">
@@ -281,12 +285,14 @@ function render() {
   statusEl.textContent = s;
 
   historyEl.innerHTML = '';
+  const display = (state.history_san && state.history_san.length === state.history.length)
+    ? state.history_san : state.history;
   for (let i = 0; i < state.history.length; i += 2) {
     const div = document.createElement('div');
     const moveNum = (i/2) + 1;
     div.appendChild(document.createTextNode(moveNum + '. '));
-    if (state.history[i])   div.appendChild(makeMoveSpan(state.history[i],   i));
-    if (state.history[i+1]) { div.appendChild(document.createTextNode('  ')); div.appendChild(makeMoveSpan(state.history[i+1], i+1)); }
+    if (state.history[i])   div.appendChild(makeMoveSpan(display[i],   state.history[i],   i));
+    if (state.history[i+1]) { div.appendChild(document.createTextNode('  ')); div.appendChild(makeMoveSpan(display[i+1], state.history[i+1], i+1)); }
     historyEl.appendChild(div);
   }
   fenEl.textContent = state.fen;
@@ -460,13 +466,15 @@ async function runAssess(index) {
   }
 }
 
-function makeMoveSpan(mv, idx) {
+function makeMoveSpan(label, lan, idx) {
   const span = document.createElement('span');
-  span.textContent = mv;
+  span.textContent = label;
   span.style.cursor = 'pointer';
   span.style.padding = '0 3px';
   span.style.borderRadius = '2px';
-  span.title = 'Click to assess this move';
+  // Tooltip shows the underlying long-algebraic move (e.g. "e2e4") so the
+  // user can confirm the engine-facing move ID behind the SAN label.
+  span.title = lan + '  (click to assess)';
   span.onmouseenter = () => span.style.background = '#3a3a3a';
   span.onmouseleave = () => span.style.background = 'transparent';
   span.onclick = async () => {
@@ -554,7 +562,10 @@ function thinkTimeFor(side) {
   return parseInt(document.getElementById('movetime-' + side).value);
 }
 
+let paused = false;
+
 function scheduleEngine() {
+  if (paused) return;
   if (!state || state.status !== 'ongoing') return;
   if (!state.engine_to_move) return;
   if (enginePending) return;
@@ -827,6 +838,20 @@ document.getElementById('touchmove').onchange = async (e) => {
   showAssess(null);
   assessments = {};
   render();
+};
+
+document.getElementById('pause').onclick = () => {
+  paused = !paused;
+  const btn = document.getElementById('pause');
+  btn.textContent = paused ? 'Resume' : 'Pause';
+  btn.style.background = paused ? '#7a5a2d' : '#5a3a3a';
+  btn.style.borderColor = paused ? '#9a753a' : '#704545';
+  if (!paused) scheduleEngine();
+};
+
+document.getElementById('replay').onclick = () => {
+  // Open the replay in a new tab so the current game can keep going.
+  window.open('/api/replay.html', '_blank');
 };
 
 document.getElementById('save').onclick = () => {
