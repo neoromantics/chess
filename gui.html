@@ -116,6 +116,7 @@
     <div class="row" style="margin-top:6px; gap: 6px;">
       <button id="pause" style="flex:1; background:#5a3a3a; border-color:#704545;">Pause</button>
       <button id="replay" style="flex:1; background:#3a5a3a; border-color:#457045;">Replay</button>
+      <button id="flip" title="Flip board (F)" style="flex:1; background:#3a3a5a; border-color:#454570;">Flip</button>
     </div>
     <div class="row" style="margin-top:6px; gap: 6px;">
       <button id="save" style="flex:1">Save</button>
@@ -190,20 +191,29 @@ const historyEl = document.getElementById('history');
 const fenEl = document.getElementById('fen');
 const modalEl = document.getElementById('modal');
 
-(function buildCoords(){
+// Board orientation. When true, render from Black's POV (rank 1 at top,
+// file h at left). Persisted across reloads via localStorage.
+let flipped = localStorage.getItem('chess-flipped') === '1';
+
+function buildCoords(){
   const files = document.getElementById('files');
-  for (let f = 0; f < 8; f++) {
+  files.innerHTML = '';
+  const fileChars = flipped ? 'hgfedcba' : 'abcdefgh';
+  for (const c of fileChars) {
     const d = document.createElement('div');
-    d.textContent = String.fromCharCode(97+f);
+    d.textContent = c;
     files.appendChild(d);
   }
   const ranks = document.getElementById('ranks');
-  for (let r = 8; r >= 1; r--) {
+  ranks.innerHTML = '';
+  const rankNums = flipped ? [1,2,3,4,5,6,7,8] : [8,7,6,5,4,3,2,1];
+  for (const n of rankNums) {
     const d = document.createElement('div');
-    d.textContent = r;
+    d.textContent = n;
     ranks.appendChild(d);
   }
-})();
+}
+buildCoords();
 
 function parseBoard(fen) {
   const rows = fen.split(' ')[0].split('/');
@@ -227,8 +237,10 @@ function render() {
   if (editMode) { renderEdit(); return; }
   const grid = parseBoard(state.fen);
   boardEl.innerHTML = '';
-  for (let r = 0; r < 8; r++) {
-    for (let f = 0; f < 8; f++) {
+  for (let i = 0; i < 8; i++) {
+    for (let j = 0; j < 8; j++) {
+      const r = flipped ? 7 - i : i;
+      const f = flipped ? 7 - j : j;
       const sq = document.createElement('div');
       const dark = (r + f) % 2 === 1;
       sq.className = 'sq ' + (dark ? 'dark' : 'light');
@@ -621,8 +633,10 @@ let editPickedUp = null; // {r, f, pc} when a piece is held in select mode
 
 function renderEdit() {
   boardEl.innerHTML = '';
-  for (let r = 0; r < 8; r++) {
-    for (let f = 0; f < 8; f++) {
+  for (let i = 0; i < 8; i++) {
+    for (let j = 0; j < 8; j++) {
+      const r = flipped ? 7 - i : i;
+      const f = flipped ? 7 - j : j;
       const sq = document.createElement('div');
       const dark = (r + f) % 2 === 1;
       sq.className = 'sq ' + (dark ? 'dark' : 'light');
@@ -839,6 +853,20 @@ document.getElementById('touchmove').onchange = async (e) => {
   assessments = {};
   render();
 };
+
+function toggleFlip() {
+  flipped = !flipped;
+  localStorage.setItem('chess-flipped', flipped ? '1' : '0');
+  buildCoords();
+  render();
+}
+document.getElementById('flip').onclick = toggleFlip;
+document.addEventListener('keydown', (e) => {
+  // Ignore when typing into the FEN input or other inputs.
+  const tag = (e.target && e.target.tagName) || '';
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+  if (e.key === 'f' || e.key === 'F') toggleFlip();
+});
 
 document.getElementById('pause').onclick = () => {
   paused = !paused;

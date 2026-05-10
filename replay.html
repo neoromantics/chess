@@ -88,12 +88,19 @@ const playBtn = document.getElementById('play');
 const speedEl = document.getElementById('speed');
 const speedLabel = document.getElementById('speed-label');
 
-(function buildCoords(){
+let flipped = localStorage.getItem('chess-flipped') === '1';
+
+function buildCoords(){
   const f = document.getElementById('files');
-  for (let i = 0; i < 8; i++) { const d = document.createElement('div'); d.textContent = String.fromCharCode(97+i); f.appendChild(d); }
+  f.innerHTML = '';
+  const fileChars = flipped ? 'hgfedcba' : 'abcdefgh';
+  for (const c of fileChars) { const d = document.createElement('div'); d.textContent = c; f.appendChild(d); }
   const r = document.getElementById('ranks');
-  for (let i = 8; i >= 1; i--) { const d = document.createElement('div'); d.textContent = i; r.appendChild(d); }
-})();
+  r.innerHTML = '';
+  const rankNums = flipped ? [1,2,3,4,5,6,7,8] : [8,7,6,5,4,3,2,1];
+  for (const n of rankNums) { const d = document.createElement('div'); d.textContent = n; r.appendChild(d); }
+}
+buildCoords();
 
 function parseBoard(fen) {
   const rows = fen.split(' ')[0].split('/');
@@ -113,8 +120,10 @@ function render() {
   const frame = FRAMES[idx];
   const grid = parseBoard(frame.fen);
   boardEl.innerHTML = '';
-  for (let r = 0; r < 8; r++) {
-    for (let f = 0; f < 8; f++) {
+  for (let i = 0; i < 8; i++) {
+    for (let j = 0; j < 8; j++) {
+      const r = flipped ? 7 - i : i;
+      const f = flipped ? 7 - j : j;
       const sq = document.createElement('div');
       const dark = (r + f) % 2 === 1;
       sq.className = 'sq ' + (dark ? 'dark' : 'light');
@@ -196,6 +205,12 @@ document.addEventListener('keydown', (e) => {
   else if (e.key === ' ')      { e.preventDefault(); if (timer) stop(); else play(); }
   else if (e.key === 'Home')   { stop(); idx = 0; render(); }
   else if (e.key === 'End')    { stop(); idx = FRAMES.length - 1; render(); }
+  else if (e.key === 'f' || e.key === 'F') {
+    flipped = !flipped;
+    try { localStorage.setItem('chess-flipped', flipped ? '1' : '0'); } catch (_) {}
+    buildCoords();
+    render();
+  }
 });
 
 buildMovesList();
