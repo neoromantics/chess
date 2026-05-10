@@ -14,9 +14,15 @@ stdio by default; with `-gui` it serves an embedded HTML/JS chessboard.
 | `eval.go`        | Material + piece-square tables (side-to-move relative).                |
 | `search.go`      | Negamax + alpha-beta + iterative deepening + quiescence + MVV-LVA + soft time bound. |
 | `uci.go`         | UCI command loop and time management.                                   |
-| `gui.go`         | HTTP handler, in-memory game, JSON API.                                 |
-| `gui.html`       | Embedded UI (`//go:embed`).                                             |
+| `game.go`        | Pure game state + rules (Game struct, GameStatus, Reset/Load/PlayMove/Undo/Touch/Status, BoardsAroundMove, ReplayData, classifyAssessment). Used by gui.go. |
+| `san.go`         | MoveToSAN — standard algebraic notation for the move list (Nf3, exd5, O-O-O, e8=Q+, Qh4#). |
+| `gui.go`         | HTTP-only shim. http.ServeMux routes /api/*. Each handler short: lock, validate, delegate to Game, snapshot. |
+| `gui.html`       | Embedded UI (`//go:embed`). Single-page; vanilla JS.                    |
+| `replay.html`    | Embedded shareable replay player. /api/replay.html injects per-ply JSON into a script tag. |
 | `perft_test.go`  | Move-gen validation against four standard perft positions.              |
+| `game_test.go`   | Game logic: status transitions, repetition, undo, touch-move, BoardsAroundMove, etc. |
+| `san_test.go`    | SAN: castling, captures, EP, promotion, check/mate suffix, disambiguation. |
+| `repetition_test.go` | Engine treats repetition as 0 score (avoids draws when winning).    |
 
 ## Conventions
 

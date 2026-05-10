@@ -25,12 +25,40 @@ type GUI struct {
 	mu       sync.Mutex
 	game     *Game
 	thinking bool
+	mux      *http.ServeMux
 }
 
 func NewGUI() *GUI {
 	g := &GUI{game: NewGame()}
 	g.game.EngineBlack = true // default: human plays White, engine plays Black
+	g.mux = http.NewServeMux()
+	g.registerRoutes()
 	return g
+}
+
+// registerRoutes wires every endpoint into the mux. Method-prefixed
+// patterns (Go 1.22+) keep GETs and POSTs distinct, and `/{$}` matches
+// only the bare root so unknown paths fall through to the default 404.
+func (g *GUI) registerRoutes() {
+	g.mux.HandleFunc("GET /{$}", g.handleIndex)
+	g.mux.HandleFunc("GET /api/state", func(w http.ResponseWriter, r *http.Request) { g.handleState(w) })
+	g.mux.HandleFunc("POST /api/move", g.handleMove)
+	g.mux.HandleFunc("POST /api/new", g.handleNew)
+	g.mux.HandleFunc("POST /api/engine_step", g.handleEngineStep)
+	g.mux.HandleFunc("POST /api/hint", g.handleHint)
+	g.mux.HandleFunc("POST /api/touch", g.handleTouch)
+	g.mux.HandleFunc("POST /api/touch_move", g.handleTouchMove)
+	g.mux.HandleFunc("POST /api/assess", g.handleAssess)
+	g.mux.HandleFunc("POST /api/set_players", g.handleSetPlayers)
+	g.mux.HandleFunc("GET /api/save", func(w http.ResponseWriter, r *http.Request) { g.handleSave(w) })
+	g.mux.HandleFunc("POST /api/load", g.handleLoad)
+	g.mux.HandleFunc("POST /api/undo", func(w http.ResponseWriter, r *http.Request) { g.handleUndo(w) })
+	g.mux.HandleFunc("GET /api/replay.html", g.handleReplay)
+}
+
+func (g *GUI) handleIndex(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write(guiHTML)
 }
 
 // JSON shapes ---------------------------------------------------------------
@@ -141,39 +169,7 @@ func (g *GUI) snapshotLocked() stateJSON {
 // Routing -------------------------------------------------------------------
 
 func (g *GUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	switch {
-	case r.Method == "GET" && r.URL.Path == "/":
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write(guiHTML)
-	case r.Method == "GET" && r.URL.Path == "/api/state":
-		g.handleState(w)
-	case r.Method == "POST" && r.URL.Path == "/api/move":
-		g.handleMove(w, r)
-	case r.Method == "POST" && r.URL.Path == "/api/new":
-		g.handleNew(w, r)
-	case r.Method == "POST" && r.URL.Path == "/api/engine_step":
-		g.handleEngineStep(w, r)
-	case r.Method == "POST" && r.URL.Path == "/api/hint":
-		g.handleHint(w, r)
-	case r.Method == "POST" && r.URL.Path == "/api/touch":
-		g.handleTouch(w, r)
-	case r.Method == "POST" && r.URL.Path == "/api/touch_move":
-		g.handleTouchMove(w, r)
-	case r.Method == "POST" && r.URL.Path == "/api/assess":
-		g.handleAssess(w, r)
-	case r.Method == "POST" && r.URL.Path == "/api/set_players":
-		g.handleSetPlayers(w, r)
-	case r.Method == "GET" && r.URL.Path == "/api/save":
-		g.handleSave(w)
-	case r.Method == "POST" && r.URL.Path == "/api/load":
-		g.handleLoad(w, r)
-	case r.Method == "POST" && r.URL.Path == "/api/undo":
-		g.handleUndo(w)
-	case r.Method == "GET" && r.URL.Path == "/api/replay.html":
-		g.handleReplay(w, r)
-	default:
-		http.NotFound(w, r)
-	}
+	g.mux.ServeHTTP(w, r)
 }
 
 func (g *GUI) handleReplay(w http.ResponseWriter, r *http.Request) {
@@ -313,31 +309,6 @@ func (g *GUI) handleUndo(w http.ResponseWriter) {
 		g.game.Undo()
 	}
 	writeJSON(w, g.snapshotLocked())
-}
-
-// beginSearch acquires thinking, snapshots the live board for off-mutex
-// search, and returns a finish callback that re-acquires the lock and
-// runs `apply` against the live game. Returns false if the engine is
-// already busy or there's nothing to do.
-func (g *GUI) beginSearch(movetime time.Duration) (board Board, finish func(apply func()), ok bool) {
-	g.mu.Lock()
-	if g.thinking {
-		g.mu.Unlock()
-		return Board{}, nil, false
-	}
-	g.thinking = true
-	board = *g.game.Board
-	g.mu.Unlock()
-
-	finish = func(apply func()) {
-		g.mu.Lock()
-		defer g.mu.Unlock()
-		g.thinking = false
-		if apply != nil {
-			apply()
-		}
-	}
-	return board, finish, true
 }
 
 func (g *GUI) handleEngineStep(w http.ResponseWriter, r *http.Request) {
@@ -485,19 +456,8 @@ func (g *GUI) handleAssess(w http.ResponseWriter, r *http.Request) {
 	}
 
 	g.thinking = true
-	// Roll the live board back to just before the target move, snapshot
-	// before + after positions, then replay everything so g.game.Board is
-	// unchanged.
-	for j := len(g.game.UndoStack) - 1; j >= targetIdx; j-- {
-		g.game.Board.UnmakeMove(g.game.UndoStack[j])
-	}
-	beforeBoard := *g.game.Board
+	beforeBoard, afterBoard := g.game.BoardsAroundMove(targetIdx)
 	userMove := g.game.UndoStack[targetIdx].Move
-	g.game.Board.MakeMove(userMove)
-	afterBoard := *g.game.Board
-	for j := targetIdx + 1; j < len(g.game.UndoStack); j++ {
-		g.game.Board.MakeMove(g.game.UndoStack[j].Move)
-	}
 	playerStr := "w"
 	if g.game.PlayerAt(targetIdx) == Black {
 		playerStr = "b"

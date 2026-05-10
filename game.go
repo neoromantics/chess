@@ -221,6 +221,25 @@ func (g *Game) Status() GameStatus {
 	return StatusOngoing
 }
 
+// BoardsAroundMove returns snapshots of the position just before and just
+// after UndoStack[idx] was played. The live g.Board is unchanged: the
+// method temporarily unmakes back to idx, snapshots, makes the target
+// move, snapshots, then replays the rest. Caller must ensure idx is in
+// range [0, len(UndoStack)).
+func (g *Game) BoardsAroundMove(idx int) (before, after Board) {
+	n := len(g.UndoStack)
+	for j := n - 1; j >= idx; j-- {
+		g.Board.UnmakeMove(g.UndoStack[j])
+	}
+	before = *g.Board
+	g.Board.MakeMove(g.UndoStack[idx].Move)
+	after = *g.Board
+	for j := idx + 1; j < n; j++ {
+		g.Board.MakeMove(g.UndoStack[j].Move)
+	}
+	return before, after
+}
+
 // PlayerAt returns the color that played UndoStack[i].
 func (g *Game) PlayerAt(i int) Color {
 	n := len(g.UndoStack)

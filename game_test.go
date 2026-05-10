@@ -204,6 +204,25 @@ func TestLoadRejectsBadFEN(t *testing.T) {
 	}
 }
 
+func TestBoardsAroundMovePreservesLiveBoard(t *testing.T) {
+	g := NewGame()
+	for _, m := range []string{"e2e4", "e7e5", "g1f3"} {
+		mustMove(t, g, m)
+	}
+	liveBefore := g.Board.FEN()
+	before, after := g.BoardsAroundMove(0) // before/after 1.e4
+	if liveBefore != g.Board.FEN() {
+		t.Errorf("live board mutated: %s -> %s", liveBefore, g.Board.FEN())
+	}
+	if before.FEN() != StartFEN {
+		t.Errorf("before(0) = %s, want startpos", before.FEN())
+	}
+	wantAfter := "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1"
+	if after.FEN() != wantAfter {
+		t.Errorf("after(0) = %s, want %s", after.FEN(), wantAfter)
+	}
+}
+
 func TestLoadReplaysMoves(t *testing.T) {
 	g := NewGame()
 	if err := g.Load(StartFEN, []string{"e2e4", "e7e5"}, false, false); err != nil {
