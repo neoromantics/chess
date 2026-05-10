@@ -21,6 +21,9 @@ type SearchLimits struct {
 	// reached in the actual game. Lets the engine treat moves that lead to
 	// 3-fold-repetition as draws (score 0). nil = no awareness.
 	History map[uint64]int
+	// TT, if non-nil, is reused across calls (preserves knowledge between
+	// moves). If nil, IterativeDeepening allocates a small per-search table.
+	TT *TT
 }
 
 type SearchResult struct {
@@ -46,14 +49,20 @@ type Searcher struct {
 	// (read-only); path tracks positions visited in the current search line.
 	history map[uint64]int
 	path    map[uint64]int
+
+	tt *TT
 }
 
-func newSearcher(b *Board, stop *atomic.Bool, deadline time.Time, hasDeadline bool, history map[uint64]int) *Searcher {
+func newSearcher(b *Board, stop *atomic.Bool, deadline time.Time, hasDeadline bool, history map[uint64]int, tt *TT) *Searcher {
+	if tt == nil {
+		tt = NewTT(16) // 16 MB default per call when no shared TT supplied
+	}
 	return &Searcher{
 		board: b, stopFlag: stop, deadline: deadline, hasDeadline: hasDeadline,
 		startTime: time.Now(),
 		history:   history,
 		path:      map[uint64]int{},
+		tt:        tt,
 	}
 }
 
@@ -83,7 +92,7 @@ func (b *Board) IterativeDeepening(limits SearchLimits, stop *atomic.Bool, info 
 		hasDeadline = true
 	}
 
-	s := newSearcher(b, stop, deadline, hasDeadline, limits.History)
+	s := newSearcher(b, stop, deadline, hasDeadline, limits.History, limits.TT)
 	var best SearchResult
 	// Seed best with the first legal move so we always return something legal.
 	legal := b.GenerateLegalMoves()
@@ -154,6 +163,29 @@ func (s *Searcher) negamax(depth, ply int, alpha, beta int) int {
 		}
 	}
 
+	// TT probe. At a non-PV node with sufficient depth we can return the
+	// stored score directly. Even on a "soft" hit (depth too shallow),
+	// the stored move feeds move ordering as a strong PV-style hint.
+	var ttMove Move
+	if entry, ok := s.tt.Probe(b.Hash); ok {
+		ttMove = entry.Move
+		if int(entry.Depth) >= depth && ply > 0 {
+			score := scoreFromTT(entry.Score, ply)
+			switch entry.Flag {
+			case ttExact:
+				return score
+			case ttLowerBound:
+				if score >= beta {
+					return score
+				}
+			case ttUpperBound:
+				if score <= alpha {
+					return score
+				}
+			}
+		}
+	}
+
 	if depth <= 0 {
 		return s.quiesce(ply, alpha, beta)
 	}
@@ -163,10 +195,12 @@ func (s *Searcher) negamax(depth, ply int, alpha, beta int) int {
 
 	moves := make([]Move, 0, 48)
 	b.GeneratePseudoLegalMoves(&moves)
-	s.orderMoves(moves)
+	s.orderMoves(moves, ttMove)
 
 	legalCount := 0
 	bestScore := -InfScore
+	var bestMove Move
+	flag := ttUpperBound
 
 	for _, m := range moves {
 		u := b.MakeMove(m)
@@ -184,14 +218,17 @@ func (s *Searcher) negamax(depth, ply int, alpha, beta int) int {
 
 		if score > bestScore {
 			bestScore = score
+			bestMove = m
 			if score > alpha {
 				alpha = score
+				flag = ttExact
 				// Update PV.
 				s.pv[ply][0] = m
 				copy(s.pv[ply][1:], s.pv[ply+1][:s.pvLen[ply+1]])
 				s.pvLen[ply] = s.pvLen[ply+1] + 1
 			}
 			if alpha >= beta {
+				flag = ttLowerBound
 				break // beta cutoff
 			}
 		}
@@ -203,6 +240,8 @@ func (s *Searcher) negamax(depth, ply int, alpha, beta int) int {
 		}
 		return 0 // stalemate
 	}
+
+	s.tt.Store(b.Hash, bestMove, bestScore, depth, ply, flag)
 	return bestScore
 }
 
@@ -235,7 +274,7 @@ func (s *Searcher) quiesce(ply int, alpha, beta int) int {
 			captures = append(captures, m)
 		}
 	}
-	s.orderMoves(captures)
+	s.orderMoves(captures, Move{})
 
 	for _, m := range captures {
 		u := b.MakeMove(m)
@@ -258,18 +297,24 @@ func (s *Searcher) quiesce(ply int, alpha, beta int) int {
 	return alpha
 }
 
-// orderMoves sorts in-place: captures first by MVV-LVA, promotions get a big
-// bonus, quiet moves last. This is plenty for a starter engine.
-func (s *Searcher) orderMoves(moves []Move) {
+// orderMoves sorts in-place. Priority (highest first):
+//  1. The TT-suggested move (best move from a previous search of this node)
+//  2. Captures by MVV-LVA (and promotions, by promo piece value)
+//  3. Quiet moves
+func (s *Searcher) orderMoves(moves []Move, ttMove Move) {
 	b := s.board
+	hasTT := ttMove != (Move{})
 	scoreFn := func(m Move) int {
+		if hasTT && m.Equal(ttMove) {
+			return 1_000_000
+		}
 		score := 0
 		victim := b.Squares[m.To]
 		if !victim.IsEmpty() {
 			attacker := b.Squares[m.From]
-			score += 10*pieceValue[victim.Type()] - pieceValue[attacker.Type()]
+			score += 100_000 + 10*pieceValue[victim.Type()] - pieceValue[attacker.Type()]
 		} else if m.Flag == FlagEP {
-			score += 10 * pieceValue[Pawn]
+			score += 100_000 + 10*pieceValue[Pawn]
 		}
 		if m.Promo != Empty {
 			score += pieceValue[m.Promo]
