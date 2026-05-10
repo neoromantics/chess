@@ -1,0 +1,28 @@
+run:
+  timeout: 2m
+
+linters:
+  disable-all: true
+  enable:
+    - errcheck
+    - gofmt
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - misspell
+
+linters-settings:
+  errcheck:
+    exclude-functions:
+      # Encoding to a fresh JSON encoder over an http.ResponseWriter or to
+      # stderr is fine to ignore — failure modes don't affect correctness.
+      - encoding/json.NewEncoder.Encode
+      - encoding/json.NewDecoder.Decode
+      - fmt.Fprintln
+      - fmt.Fprintf
+      - fmt.Fprint
+      - (net/http.ResponseWriter).Write
+
+issues:
+  exclude-use-default: false
