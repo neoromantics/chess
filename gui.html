@@ -92,6 +92,9 @@
     <div class="row" title="After each move you make, the engine evaluates how good it was."><label>Assess my moves</label>
       <input type="checkbox" id="autoassess">
     </div>
+    <div class="row" title="Play a click when a move is made."><label>Sound</label>
+      <input type="checkbox" id="sound" checked>
+    </div>
     <button id="newgame">New Game</button>
     <div class="row" style="margin-top:8px; gap: 6px;">
       <button id="hint" style="flex:1; background:#2d4a5a; border-color:#3a6075;">Hint</button>
@@ -280,6 +283,7 @@ function render() {
   document.getElementById('white').value = state.engine_white ? 'e' : 'h';
   document.getElementById('black').value = state.engine_black ? 'e' : 'h';
   document.getElementById('touchmove').checked = state.touch_move;
+  maybePlaySound();
 }
 
 async function onSquare(name) {
@@ -350,6 +354,61 @@ const ASSESS_SYMBOL = {
   Blunder:    '??',
 };
 let assessments = {}; // index -> assessResponse
+
+// ---- Sound -------------------------------------------------------------
+let muted = localStorage.getItem('chess-muted') === '1';
+let audioCtx = null;
+let lastSoundedHistoryLen = 0;
+let prevFenForSound = '';
+
+function ensureAudio() {
+  if (!audioCtx) {
+    try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+    catch (e) { audioCtx = null; }
+  }
+  return audioCtx;
+}
+function playClick(freq, dur, gain) {
+  if (muted) return;
+  const ctx = ensureAudio();
+  if (!ctx) return;
+  if (ctx.state === 'suspended') ctx.resume();
+  const osc = ctx.createOscillator();
+  const g = ctx.createGain();
+  osc.connect(g); g.connect(ctx.destination);
+  osc.type = 'triangle';
+  osc.frequency.value = freq;
+  g.gain.setValueAtTime(gain, ctx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + dur);
+  osc.start();
+  osc.stop(ctx.currentTime + dur);
+}
+function playMoveSound(kind) {
+  if (kind === 'capture') playClick(220, 0.12, 0.15);
+  else if (kind === 'check') { playClick(880, 0.08, 0.12); setTimeout(() => playClick(660, 0.10, 0.10), 90); }
+  else playClick(520, 0.06, 0.10);
+}
+function countPieces(fen) {
+  if (!fen) return 0;
+  const board = fen.split(' ')[0];
+  let n = 0;
+  for (const c of board) if (c >= 'A' && c !== '/') n++;
+  return n;
+}
+function maybePlaySound() {
+  if (!state) return;
+  const newLen = state.history.length;
+  // Only sound on the +1 increment that follows a single move, not on
+  // big jumps from load/replay or initial state.
+  if (newLen === lastSoundedHistoryLen + 1) {
+    let kind = 'move';
+    if (state.in_check) kind = 'check';
+    else if (countPieces(prevFenForSound) > countPieces(state.fen)) kind = 'capture';
+    playMoveSound(kind);
+  }
+  lastSoundedHistoryLen = newLen;
+  prevFenForSound = state.fen;
+}
 
 function showAssess(data) {
   const el = document.getElementById('assess-info');
@@ -534,6 +593,10 @@ function showPromo() {
 
 // ---- Board editor -----------------------------------------------------
 
+// Editor tools: 'select' (pick up + drop / move), 'delete' (click to remove),
+// or a piece char ('K','Q',...,'p') for paint mode.
+let editPickedUp = null; // {r, f, pc} when a piece is held in select mode
+
 function renderEdit() {
   boardEl.innerHTML = '';
   for (let r = 0; r < 8; r++) {
@@ -548,38 +611,76 @@ function renderEdit() {
         span.className = (pc === pc.toUpperCase()) ? 'white-piece' : 'black-piece';
         sq.appendChild(span);
       }
-      sq.onclick = () => {
-        editBoard[r][f] = (editPalette === '.') ? null : editPalette;
-        renderEdit();
-      };
+      if (editPickedUp && editPickedUp.r === r && editPickedUp.f === f) {
+        sq.classList.add('sel');
+      }
+      sq.onclick = () => onEditSquare(r, f);
       sq.oncontextmenu = (e) => {
         e.preventDefault();
         editBoard[r][f] = null;
+        if (editPickedUp && editPickedUp.r === r && editPickedUp.f === f) editPickedUp = null;
         renderEdit();
       };
       boardEl.appendChild(sq);
     }
   }
-  statusEl.textContent = 'Editing position — click squares to place; right-click to remove';
+  let msg;
+  if (editPalette === 'select') {
+    msg = editPickedUp
+      ? 'Select: click destination to drop (click source to cancel)'
+      : 'Select: click a piece to pick it up and move it';
+  } else if (editPalette === 'delete') {
+    msg = 'Delete: click pieces to remove';
+  } else {
+    msg = 'Paint ' + PIECE[editPalette] + ': click squares to place; right-click removes';
+  }
+  statusEl.textContent = msg;
+}
+
+function onEditSquare(r, f) {
+  const pc = editBoard[r][f];
+  if (editPalette === 'select') {
+    if (editPickedUp) {
+      // Drop. Clicking source cancels (no-op move ends with same piece in place).
+      const src = editPickedUp;
+      editBoard[src.r][src.f] = null;
+      editBoard[r][f] = src.pc;
+      editPickedUp = null;
+    } else if (pc) {
+      editPickedUp = { r, f, pc };
+    }
+  } else if (editPalette === 'delete') {
+    if (pc) editBoard[r][f] = null;
+  } else {
+    editBoard[r][f] = editPalette; // paint a piece
+  }
+  renderEdit();
 }
 
 function buildPalette() {
   const el = document.getElementById('edit-palette');
   el.innerHTML = '';
+  const tools = [
+    { v: 'select', label: '☞', title: 'Select / move' },
+    { v: 'delete', label: '×', title: 'Delete' },
+  ];
+  for (const t of tools) {
+    const b = document.createElement('button');
+    b.textContent = t.label;
+    b.title = t.title;
+    if (editPalette === t.v) b.classList.add('sel');
+    b.onclick = () => { editPalette = t.v; editPickedUp = null; buildPalette(); renderEdit(); };
+    el.appendChild(b);
+  }
   for (const ch of PALETTE_PIECES) {
     const b = document.createElement('button');
     b.textContent = PIECE[ch];
     b.classList.add(ch === ch.toUpperCase() ? 'white-piece' : 'black-piece');
     if (editPalette === ch) b.classList.add('sel');
-    b.onclick = () => { editPalette = ch; buildPalette(); };
+    b.title = 'Paint ' + ch;
+    b.onclick = () => { editPalette = ch; editPickedUp = null; buildPalette(); renderEdit(); };
     el.appendChild(b);
   }
-  const trash = document.createElement('button');
-  trash.textContent = '×';
-  trash.title = 'Empty';
-  if (editPalette === '.') trash.classList.add('sel');
-  trash.onclick = () => { editPalette = '.'; buildPalette(); };
-  el.appendChild(trash);
 }
 
 function enterEditMode() {
@@ -590,7 +691,8 @@ function enterEditMode() {
   const ca = parts[2] || '-';
   editCastling = { KW: ca.includes('K'), QW: ca.includes('Q'),
                    KB: ca.includes('k'), QB: ca.includes('q') };
-  editPalette = 'P';
+  editPalette = 'select';
+  editPickedUp = null;
   document.getElementById('edit-panel').style.display = 'block';
   document.body.classList.add('editing');
   document.getElementById('edit-mode').textContent = 'Editing…';
@@ -606,6 +708,7 @@ function enterEditMode() {
 function exitEditMode() {
   editMode = false;
   editBoard = null;
+  editPickedUp = null;
   document.getElementById('edit-panel').style.display = 'none';
   document.body.classList.remove('editing');
   document.getElementById('edit-mode').textContent = 'Edit Position';
@@ -760,9 +863,22 @@ document.getElementById('newgame').onclick = async () => {
   scheduleEngine();
 };
 
+(function initSound(){
+  const el = document.getElementById('sound');
+  el.checked = !muted;
+  el.onchange = (e) => {
+    muted = !e.target.checked;
+    localStorage.setItem('chess-muted', muted ? '1' : '0');
+    if (!muted) ensureAudio(); // user gesture unlocks audio
+  };
+})();
+
 (async function init(){
   const r = await fetch('/api/state');
   state = await r.json();
+  // Seed sound bookkeeping so the initial render doesn't ever beep.
+  lastSoundedHistoryLen = state.history.length;
+  prevFenForSound = state.fen;
   render();
   scheduleEngine();
 })();

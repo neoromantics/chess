@@ -547,8 +547,12 @@ type savedGame struct {
 
 func (g *GUI) handleSave(w http.ResponseWriter) {
 	g.mu.Lock()
+	start := g.startFEN
+	if start == "" {
+		start = StartFEN
+	}
 	sg := savedGame{
-		StartFEN:    StartFEN, // GUI always begins from the standard start position
+		StartFEN:    start, // preserves edited puzzle positions across save/load
 		Moves:       append([]string(nil), g.history...),
 		EngineWhite: g.engineWhite,
 		EngineBlack: g.engineBlack,
