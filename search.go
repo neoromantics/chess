@@ -56,6 +56,12 @@ type Searcher struct {
 	// a beta cutoff at this ply; orderMoves prefers them right after
 	// captures so similar cutoffs happen earlier.
 	killers [MaxPly + 1][2]Move
+
+	// historyTable[color][from][to] accumulates depth² for every quiet move
+	// that produced a beta cutoff. orderMoves uses it as a tiebreaker for
+	// quiet moves so historically-strong moves are tried earlier. Boxed so
+	// the Searcher value stays small.
+	historyTable *[2][128][128]int
 }
 
 // hasNonPawnMaterial returns true if c has at least one knight, bishop,
@@ -84,10 +90,11 @@ func newSearcher(b *Board, stop *atomic.Bool, deadline time.Time, hasDeadline bo
 	}
 	return &Searcher{
 		board: b, stopFlag: stop, deadline: deadline, hasDeadline: hasDeadline,
-		startTime: time.Now(),
-		history:   history,
-		path:      map[uint64]int{},
-		tt:        tt,
+		startTime:    time.Now(),
+		history:      history,
+		path:         map[uint64]int{},
+		tt:           tt,
+		historyTable: &[2][128][128]int{},
 	}
 }
 
@@ -248,6 +255,20 @@ func (s *Searcher) negamax(depth, ply int, alpha, beta int) int {
 
 	us := b.SideToMove
 	inCheck := b.InCheck(us)
+	isPV := beta-alpha > 1
+
+	// Reverse futility pruning (a.k.a. static null-move pruning). At shallow
+	// depth in a non-PV node, if our static eval beats beta by a generous
+	// margin even after a per-depth penalty, the position is winning enough
+	// that we can skip the search. Skipped in check (eval is unreliable) and
+	// in PV nodes (we want the exact score there).
+	if !isPV && depth <= 4 && ply > 0 && !inCheck && beta < MateInMaxPly && beta > -MateInMaxPly {
+		eval := b.Evaluate()
+		margin := 80 * depth
+		if eval-margin >= beta {
+			return eval - margin
+		}
+	}
 
 	// Null-move pruning. If we can pass the move and a depth-reduced
 	// search still gives the opponent ≥ beta, the position is so good
@@ -292,14 +313,31 @@ func (s *Searcher) negamax(depth, ply int, alpha, beta int) int {
 			continue
 		}
 		legalCount++
+		// LMR: after the first few moves, reduce depth for quiet, non-tactical
+		// moves. If the reduced search beats alpha, re-search at full depth.
+		// Captures, promotions, checks-given, and search nodes already in
+		// check stay at full depth.
+		gaveCheck := b.InCheck(b.SideToMove)
+		reduction := 0
+		if newDepth >= 3 && legalCount > 3 && !inCheck && !gaveCheck && u.Captured == 0 && m.Promo == Empty {
+			reduction = 1
+			if legalCount > 6 && newDepth >= 5 {
+				reduction = 2
+			}
+		}
+
 		// PVS: search the first move with the full window; later moves get
-		// a null-window scout search. If a scout move beats alpha (and is
-		// inside the PV window), re-search it with the full window.
+		// a (possibly reduced) null-window scout. Re-search at full depth
+		// when LMR overshoots and at full window when the move turns out
+		// to be PV.
 		var score int
 		if legalCount == 1 {
 			score = -s.negamax(newDepth, ply+1, -beta, -alpha)
 		} else {
-			score = -s.negamax(newDepth, ply+1, -alpha-1, -alpha)
+			score = -s.negamax(newDepth-reduction, ply+1, -alpha-1, -alpha)
+			if !s.shouldStop() && reduction > 0 && score > alpha {
+				score = -s.negamax(newDepth, ply+1, -alpha-1, -alpha)
+			}
 			if !s.shouldStop() && score > alpha && score < beta {
 				score = -s.negamax(newDepth, ply+1, -beta, -alpha)
 			}
@@ -323,11 +361,15 @@ func (s *Searcher) negamax(depth, ply int, alpha, beta int) int {
 			}
 			if alpha >= beta {
 				flag = ttLowerBound
-				// Killer-move heuristic: remember non-capture cutoff moves
-				// so similar positions order them earlier next time.
-				if u.Captured == 0 && m.Promo == Empty && !s.killers[ply][0].Equal(m) {
-					s.killers[ply][1] = s.killers[ply][0]
-					s.killers[ply][0] = m
+				// Quiet-move cutoff bookkeeping: store as killer at this ply
+				// and accumulate history score so the move sorts earlier in
+				// other branches that share the same from/to squares.
+				if u.Captured == 0 && m.Promo == Empty {
+					if !s.killers[ply][0].Equal(m) {
+						s.killers[ply][1] = s.killers[ply][0]
+						s.killers[ply][0] = m
+					}
+					s.historyTable[us][m.From][m.To] += depth * depth
 				}
 				break // beta cutoff
 			}
@@ -401,10 +443,11 @@ func (s *Searcher) quiesce(ply int, alpha, beta int) int {
 //  1. The TT-suggested move (best move from a previous search of this node)
 //  2. Captures by MVV-LVA, promotions by promo piece value
 //  3. Killer moves at this ply (non-capture cutoffs from sibling nodes)
-//  4. Quiet moves
+//  4. Quiet moves ranked by history (depth² accumulated on past cutoffs)
 func (s *Searcher) orderMoves(moves []Move, ttMove Move, ply int) {
 	b := s.board
 	hasTT := ttMove != (Move{})
+	us := b.SideToMove
 	k0, k1 := s.killers[ply][0], s.killers[ply][1]
 	scoreFn := func(m Move) int {
 		if hasTT && m.Equal(ttMove) {
@@ -421,13 +464,19 @@ func (s *Searcher) orderMoves(moves []Move, ttMove Move, ply int) {
 		if m.Promo != Empty {
 			score += pieceValue[m.Promo]
 		}
-		// Killer bonus only when no capture/promotion bonus already set,
-		// so captures stay ahead of killers as intended.
+		// Quiet-move ranking: killers first, then history. Capped so
+		// history can never overtake a killer or capture.
 		if score == 0 {
 			if (k0 != Move{}) && m.Equal(k0) {
 				score = 9000
 			} else if (k1 != Move{}) && m.Equal(k1) {
 				score = 8000
+			} else {
+				h := s.historyTable[us][m.From][m.To]
+				if h > 7000 {
+					h = 7000
+				}
+				score = h
 			}
 		}
 		return score
