@@ -97,11 +97,16 @@ func openBrowser(url string) {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
-		cmd = exec.Command("open", url)
+		// Absolute path: when launched as an .app, the inherited PATH may
+		// not include /usr/bin, and `exec.Command("open")` then fails
+		// silently. /usr/bin/open is part of the macOS base install.
+		cmd = exec.Command("/usr/bin/open", url)
 	case "windows":
 		cmd = exec.Command("cmd", "/c", "start", "", url)
 	default:
 		cmd = exec.Command("xdg-open", url)
 	}
-	_ = cmd.Start()
+	if err := cmd.Start(); err != nil {
+		fmt.Fprintf(os.Stderr, "could not open browser: %v\nVisit %s manually.\n", err, url)
+	}
 }
