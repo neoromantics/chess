@@ -17,6 +17,10 @@ type SearchLimits struct {
 	MaxDepth int           // 0 = use MaxPly
 	MoveTime time.Duration // 0 = no per-move bound
 	Infinite bool
+	// History is the count of how many times each prior position has been
+	// reached in the actual game. Lets the engine treat moves that lead to
+	// 3-fold-repetition as draws (score 0). nil = no awareness.
+	History map[string]int
 }
 
 type SearchResult struct {
@@ -37,10 +41,20 @@ type Searcher struct {
 	startTime   time.Time
 	pv          [MaxPly + 1][MaxPly + 1]Move
 	pvLen       [MaxPly + 1]int
+
+	// Repetition awareness: history is the prior-game position counts
+	// (read-only); path tracks positions visited in the current search line.
+	history map[string]int
+	path    map[string]int
 }
 
-func newSearcher(b *Board, stop *atomic.Bool, deadline time.Time, hasDeadline bool) *Searcher {
-	return &Searcher{board: b, stopFlag: stop, deadline: deadline, hasDeadline: hasDeadline, startTime: time.Now()}
+func newSearcher(b *Board, stop *atomic.Bool, deadline time.Time, hasDeadline bool, history map[string]int) *Searcher {
+	return &Searcher{
+		board: b, stopFlag: stop, deadline: deadline, hasDeadline: hasDeadline,
+		startTime: time.Now(),
+		history:   history,
+		path:      map[string]int{},
+	}
 }
 
 // shouldStop is checked frequently inside the search.
@@ -69,7 +83,7 @@ func (b *Board) IterativeDeepening(limits SearchLimits, stop *atomic.Bool, info 
 		hasDeadline = true
 	}
 
-	s := newSearcher(b, stop, deadline, hasDeadline)
+	s := newSearcher(b, stop, deadline, hasDeadline, limits.History)
 	var best SearchResult
 	// Seed best with the first legal move so we always return something legal.
 	legal := b.GenerateLegalMoves()
@@ -112,11 +126,38 @@ func (s *Searcher) negamax(depth, ply int, alpha, beta int) int {
 	s.nodes++
 	s.pvLen[ply] = 0
 
+	b := s.board
+
+	// Draw-by-rule short circuits. The repetition check is only meaningful
+	// when reversible moves have been played since the last clock reset
+	// (clock 0 means an irreversible move just happened, so older positions
+	// are unreachable).
+	if ply > 0 {
+		if b.HalfmoveClock >= 100 {
+			return 0 // 50-move rule
+		}
+		if b.HalfmoveClock > 0 {
+			key := positionKey(b)
+			// Treat a 2nd visit on the search line, or a visit that would be
+			// the 3rd in the actual game, as a draw the engine can play
+			// for or against on cp grounds.
+			if s.path[key] > 0 || s.history[key] >= 2 {
+				return 0
+			}
+			s.path[key]++
+			defer func() {
+				s.path[key]--
+				if s.path[key] == 0 {
+					delete(s.path, key)
+				}
+			}()
+		}
+	}
+
 	if depth <= 0 {
 		return s.quiesce(ply, alpha, beta)
 	}
 
-	b := s.board
 	us := b.SideToMove
 	inCheck := b.InCheck(us)
 

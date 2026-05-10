@@ -328,10 +328,14 @@ func (g *GUI) handleEngineStep(w http.ResponseWriter, r *http.Request) {
 	}
 	g.thinking = true
 	board := *g.game.Board
+	hist := copyHistory(g.game.posCount)
 	g.mu.Unlock()
 
 	stop := &atomic.Bool{}
-	result := board.IterativeDeepening(SearchLimits{MoveTime: time.Duration(req.MoveTime) * time.Millisecond}, stop, nil)
+	result := board.IterativeDeepening(
+		SearchLimits{MoveTime: time.Duration(req.MoveTime) * time.Millisecond, History: hist},
+		stop, nil,
+	)
 
 	g.mu.Lock()
 	g.thinking = false
@@ -344,6 +348,19 @@ func (g *GUI) handleEngineStep(w http.ResponseWriter, r *http.Request) {
 	snap := g.snapshotLocked()
 	g.mu.Unlock()
 	writeJSON(w, snap)
+}
+
+// copyHistory returns a defensive copy so the search can read it without a
+// lock and without racing with subsequent PlayMove writes.
+func copyHistory(src map[string]int) map[string]int {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make(map[string]int, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
 }
 
 func (g *GUI) handleHint(w http.ResponseWriter, r *http.Request) {
@@ -369,10 +386,14 @@ func (g *GUI) handleHint(w http.ResponseWriter, r *http.Request) {
 	}
 	g.thinking = true
 	board := *g.game.Board
+	hist := copyHistory(g.game.posCount)
 	g.mu.Unlock()
 
 	stop := &atomic.Bool{}
-	result := board.IterativeDeepening(SearchLimits{MoveTime: time.Duration(req.MoveTime) * time.Millisecond}, stop, nil)
+	result := board.IterativeDeepening(
+		SearchLimits{MoveTime: time.Duration(req.MoveTime) * time.Millisecond, History: hist},
+		stop, nil,
+	)
 
 	g.mu.Lock()
 	g.thinking = false
