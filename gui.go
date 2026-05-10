@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -26,14 +27,41 @@ type GUI struct {
 	game     *Game
 	thinking bool
 	mux      *http.ServeMux
+
+	// lastPing is updated by /api/ping. The optional idle-shutdown
+	// goroutine (started via startIdleShutdown) reads it under mu.
+	lastPing time.Time
 }
 
 func NewGUI() *GUI {
-	g := &GUI{game: NewGame()}
+	g := &GUI{game: NewGame(), lastPing: time.Now()}
 	g.game.EngineBlack = true // default: human plays White, engine plays Black
 	g.mux = http.NewServeMux()
 	g.registerRoutes()
 	return g
+}
+
+// startIdleShutdown launches a goroutine that exits the process if no
+// /api/ping arrives within the given timeout. Used for .app bundle
+// launches so closing the browser tab quits the app cleanly.
+func (g *GUI) startIdleShutdown(timeout time.Duration) {
+	go func() {
+		check := timeout / 6
+		if check < time.Second {
+			check = time.Second
+		}
+		ticker := time.NewTicker(check)
+		defer ticker.Stop()
+		for range ticker.C {
+			g.mu.Lock()
+			elapsed := time.Since(g.lastPing)
+			g.mu.Unlock()
+			if elapsed > timeout {
+				fmt.Fprintf(os.Stderr, "no browser ping for %v; shutting down\n", timeout)
+				os.Exit(0)
+			}
+		}
+	}()
 }
 
 // registerRoutes wires every endpoint into the mux. Method-prefixed
@@ -54,6 +82,14 @@ func (g *GUI) registerRoutes() {
 	g.mux.HandleFunc("POST /api/load", g.handleLoad)
 	g.mux.HandleFunc("POST /api/undo", func(w http.ResponseWriter, r *http.Request) { g.handleUndo(w) })
 	g.mux.HandleFunc("GET /api/replay.html", g.handleReplay)
+	g.mux.HandleFunc("POST /api/ping", g.handlePing)
+}
+
+func (g *GUI) handlePing(w http.ResponseWriter, r *http.Request) {
+	g.mu.Lock()
+	g.lastPing = time.Now()
+	g.mu.Unlock()
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (g *GUI) handleIndex(w http.ResponseWriter, r *http.Request) {

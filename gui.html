@@ -926,6 +926,10 @@ document.getElementById('newgame').onclick = async () => {
   render();
   scheduleEngine();
 })();
+
+// Heartbeat: lets the .app launcher exit when the tab is closed.
+// Harmless for plain CLI runs (server just records the time and ignores it).
+setInterval(() => { fetch('/api/ping', {method: 'POST'}).catch(() => {}); }, 5000);
 </script>
 </body>
 </html>

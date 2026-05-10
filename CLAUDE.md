@@ -7,7 +7,8 @@ stdio by default; with `-gui` it serves an embedded HTML/JS chessboard.
 
 | File             | Role                                                                   |
 |------------------|------------------------------------------------------------------------|
-| `main.go`        | CLI entry. Auto: GUI when stdin is a TTY (opens browser), UCI when piped. Force with `-gui` / `-uci`; suppress browser with `-no-open`. |
+| `main.go`        | CLI entry. Auto: GUI when stdin is a TTY OR launched from a `.app`, UCI when piped. Flags: `-gui` / `-uci` / `-no-open` / `-shutdown-on-idle SEC`. Listener falls back to a free port if the requested one is taken. |
+| `scripts/build-app.sh` | Builds `build/Chess.app`. `ARCH=universal` for fat binary. The launcher inherits app-mode auto-detection (forces GUI; default 30s idle-shutdown). |
 | `board.go`       | 0x88 board, `Color`/`PieceType`/`Piece`, FEN parse/print, Unicode display. |
 | `move.go`        | `Move` type, `MakeMove` / `UnmakeMove`, long-algebraic parser, castling-rights table. |
 | `movegen.go`     | Pseudo-legal generation, `SquareAttacked`, legal-move filter, castling guards. |

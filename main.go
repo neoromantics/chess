@@ -9,18 +9,23 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
+	"time"
 )
 
 func main() {
-	gui := flag.Bool("gui", false, "force web GUI mode (default when stdin is a terminal)")
+	gui := flag.Bool("gui", false, "force web GUI mode (default when stdin is a terminal or .app launch)")
 	uciMode := flag.Bool("uci", false, "force UCI mode on stdio (default when stdin is piped)")
-	addr := flag.String("addr", "localhost:8080", "GUI listen address")
+	addr := flag.String("addr", "localhost:8080", "GUI listen address; falls back to a free port if taken")
 	noOpen := flag.Bool("no-open", false, "don't auto-open the browser in GUI mode")
+	idleSec := flag.Int("shutdown-on-idle", 0, "exit after N seconds with no /api/ping (0 = never; default 30 in .app launches)")
 	flag.Parse()
 
-	// Auto-detect: terminal => GUI; piped (e.g. Cute Chess) => UCI.
-	runGUI := *gui
-	if !*gui && !*uciMode {
+	app := launchedFromAppBundle()
+	// .app double-clicks have no TTY but should still launch the GUI; same
+	// goes for explicit -gui.
+	runGUI := *gui || app
+	if !*gui && !app && !*uciMode {
 		runGUI = stdinIsTerminal()
 	}
 	if *uciMode {
@@ -28,19 +33,56 @@ func main() {
 	}
 
 	if runGUI {
-		ln, err := net.Listen("tcp", *addr)
+		ln, err := listenWithFallback(*addr)
 		if err != nil {
 			log.Fatal(err)
 		}
 		url := "http://" + ln.Addr().String()
 		fmt.Fprintf(os.Stderr, "GUI: %s\n", url)
+
+		idle := time.Duration(*idleSec) * time.Second
+		if idle == 0 && app {
+			// Sensible default for double-click launches: tab close => exit.
+			idle = 30 * time.Second
+		}
+		guiSrv := NewGUI()
+		if idle > 0 {
+			guiSrv.startIdleShutdown(idle)
+		}
+
 		if !*noOpen {
 			openBrowser(url)
 		}
-		log.Fatal(http.Serve(ln, NewGUI()))
+		log.Fatal(http.Serve(ln, guiSrv))
 	}
 
 	NewUCI(os.Stdout).Run(os.Stdin)
+}
+
+// launchedFromAppBundle reports whether the executable lives inside a
+// macOS .app bundle (Contents/MacOS/<name>).
+func launchedFromAppBundle() bool {
+	exe, err := os.Executable()
+	if err != nil {
+		return false
+	}
+	return strings.Contains(exe, ".app/Contents/MacOS/")
+}
+
+// listenWithFallback tries the requested addr; if the port is in use,
+// retries on a kernel-assigned free port (host kept). Lets a .app double-
+// click launch even when an earlier instance is still running.
+func listenWithFallback(addr string) (net.Listener, error) {
+	ln, err := net.Listen("tcp", addr)
+	if err == nil {
+		return ln, nil
+	}
+	host, _, splitErr := net.SplitHostPort(addr)
+	if splitErr != nil {
+		return nil, err
+	}
+	fmt.Fprintf(os.Stderr, "%s in use, trying a free port\n", addr)
+	return net.Listen("tcp", host+":0")
 }
 
 func stdinIsTerminal() bool {
