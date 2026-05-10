@@ -7,7 +7,7 @@ stdio by default; with `-gui` it serves an embedded HTML/JS chessboard.
 
 | File             | Role                                                                   |
 |------------------|------------------------------------------------------------------------|
-| `main.go`        | CLI entry. `-gui [-addr]` selects GUI; otherwise UCI on stdio.          |
+| `main.go`        | CLI entry. Auto: GUI when stdin is a TTY (opens browser), UCI when piped. Force with `-gui` / `-uci`; suppress browser with `-no-open`. |
 | `board.go`       | 0x88 board, `Color`/`PieceType`/`Piece`, FEN parse/print, Unicode display. |
 | `move.go`        | `Move` type, `MakeMove` / `UnmakeMove`, long-algebraic parser, castling-rights table. |
 | `movegen.go`     | Pseudo-legal generation, `SquareAttacked`, legal-move filter, castling guards. |

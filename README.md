@@ -11,10 +11,14 @@ A self-contained chess engine + web GUI in Go.
 
 ```
 go build -o chess
-./chess              # UCI mode on stdio
-./chess -gui         # web GUI at http://localhost:8080
-./chess -gui -addr localhost:9000
+./chess                    # auto: GUI in a terminal (opens browser), UCI when piped
+./chess -gui               # force GUI (opens browser; add -no-open to suppress)
+./chess -uci               # force UCI on stdio
+./chess -addr localhost:9000
 ```
+
+Auto-detect uses stdin: a terminal launches the GUI; a pipe (Cute Chess,
+CI scripts) speaks UCI on stdio.
 
 Or with `just`:
 
