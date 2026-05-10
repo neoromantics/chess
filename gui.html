@@ -17,6 +17,11 @@
   .check { box-shadow: inset 0 0 0 4px #ff4d4d; }
   .hint  { box-shadow: inset 0 0 0 5px #4ec77a; }
   .touched { box-shadow: inset 0 0 0 5px #ff8c1a; }
+  .seg { display: inline-flex; border: 1px solid #555; border-radius: 4px; overflow: hidden; }
+  .seg label { padding: 4px 10px; cursor: pointer; background: #2b2b2b; font-size: 13px; user-select: none; }
+  .seg label + label { border-left: 1px solid #555; }
+  .seg input { position: absolute; opacity: 0; pointer-events: none; }
+  .seg label:has(input:checked) { background: #4a6b8a; color: #fff; }
   #edit-panel { display: none; margin-top: 12px; padding: 10px; background: #2b2b2b; border-radius: 4px; }
   #edit-palette { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin: 8px 0; }
   #edit-palette button { font-size: 28px; padding: 0; height: 40px; line-height: 1; background: #3a3a3a; }
@@ -63,10 +68,16 @@
     <h2 style="margin-top:0">chess</h2>
     <div id="status">Loading…</div>
     <div class="row"><label>White</label>
-      <select id="white"><option value="h">Human</option><option value="e">Engine</option></select>
+      <span class="seg">
+        <label><input type="radio" name="white-side" value="h" checked>Human</label>
+        <label><input type="radio" name="white-side" value="e">Engine</label>
+      </span>
     </div>
     <div class="row"><label>Black</label>
-      <select id="black"><option value="h">Human</option><option value="e" selected>Engine</option></select>
+      <span class="seg">
+        <label><input type="radio" name="black-side" value="h">Human</label>
+        <label><input type="radio" name="black-side" value="e" checked>Engine</label>
+      </span>
     </div>
     <div class="row"><label>White think</label>
       <select id="movetime-w">
@@ -280,8 +291,8 @@ function render() {
   }
   fenEl.textContent = state.fen;
 
-  document.getElementById('white').value = state.engine_white ? 'e' : 'h';
-  document.getElementById('black').value = state.engine_black ? 'e' : 'h';
+  setPlayerSide('white', state.engine_white ? 'e' : 'h');
+  setPlayerSide('black', state.engine_black ? 'e' : 'h');
   document.getElementById('touchmove').checked = state.touch_move;
   maybePlaySound();
 }
@@ -771,8 +782,8 @@ document.getElementById('edit-apply').onclick = async () => {
   if (!castling) castling = '-';
 
   const fen = `${board} ${editTurn} ${castling} - 0 1`;
-  const w = document.getElementById('white').value === 'e';
-  const b = document.getElementById('black').value === 'e';
+  const w = getPlayerSide('white') === 'e';
+  const b = getPlayerSide('black') === 'e';
   const r = await fetch('/api/load', {method: 'POST', body: JSON.stringify({start_fen: fen, moves: [], engine_white: w, engine_black: b})});
   if (!r.ok) {
     alert('Apply failed: ' + await r.text());
@@ -788,8 +799,8 @@ document.getElementById('edit-apply').onclick = async () => {
 // ---- end editor -------------------------------------------------------
 
 async function applyPlayerSelectors() {
-  const w = document.getElementById('white').value === 'e';
-  const b = document.getElementById('black').value === 'e';
+  const w = getPlayerSide('white') === 'e';
+  const b = getPlayerSide('black') === 'e';
   const r = await fetch('/api/set_players', {method: 'POST', body: JSON.stringify({engine_white: w, engine_black: b})});
   if (!r.ok) { alert('Switch failed: ' + await r.text()); return; }
   state = await r.json();
@@ -797,8 +808,16 @@ async function applyPlayerSelectors() {
   render();
   scheduleEngine(); // newly-assigned engine takes over if it's now its turn
 }
-document.getElementById('white').onchange = applyPlayerSelectors;
-document.getElementById('black').onchange = applyPlayerSelectors;
+function getPlayerSide(side) {
+  const el = document.querySelector('input[name="' + side + '-side"]:checked');
+  return el ? el.value : 'h';
+}
+function setPlayerSide(side, value) {
+  const el = document.querySelector('input[name="' + side + '-side"][value="' + value + '"]');
+  if (el) el.checked = true;
+}
+document.querySelectorAll('input[name="white-side"], input[name="black-side"]')
+  .forEach(r => r.addEventListener('change', applyPlayerSelectors));
 
 document.getElementById('touchmove').onchange = async (e) => {
   const r = await fetch('/api/touch_move', {method: 'POST', body: JSON.stringify({enabled: e.target.checked})});
@@ -838,8 +857,8 @@ document.getElementById('load-file').onchange = async (e) => {
 document.getElementById('load-fen').onclick = async () => {
   const fen = document.getElementById('fen-input').value.trim();
   if (!fen) return;
-  const w = document.getElementById('white').value === 'e';
-  const b = document.getElementById('black').value === 'e';
+  const w = getPlayerSide('white') === 'e';
+  const b = getPlayerSide('black') === 'e';
   const r = await fetch('/api/load', {method: 'POST', body: JSON.stringify({start_fen: fen, moves: [], engine_white: w, engine_black: b})});
   if (!r.ok) { alert('Load failed: ' + await r.text()); return; }
   state = await r.json();
@@ -851,8 +870,8 @@ document.getElementById('load-fen').onclick = async () => {
 };
 
 document.getElementById('newgame').onclick = async () => {
-  const w = document.getElementById('white').value === 'e';
-  const b = document.getElementById('black').value === 'e';
+  const w = getPlayerSide('white') === 'e';
+  const b = getPlayerSide('black') === 'e';
   const r = await fetch('/api/new', {method: 'POST', body: JSON.stringify({engine_white: w, engine_black: b})});
   state = await r.json();
   selected = null;
