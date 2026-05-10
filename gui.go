@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -14,138 +13,36 @@ import (
 //go:embed gui.html
 var guiHTML []byte
 
+// GUI is a thin HTTP shim over Game. It owns concurrency (mu) and search
+// lifecycle (thinking flag); all chess logic lives in Game.
 type GUI struct {
-	mu          sync.Mutex
-	board       *Board
-	startFEN    string
-	history     []string
-	lastMove    *Move
-	engineWhite bool
-	engineBlack bool
-	thinking    bool
-
-	// Touch-move (tournament-style): once a piece is "touched" it must be moved.
-	// Touching a piece that has no legal moves loses the game on the spot.
-	touchMove bool
-	touchedSq int  // NoSquare if no piece is currently touched
-	touchLost bool // sticky once a touch-move loss is declared
-
-	// undoStack[i] is the Undo for the move at history[i]; lets /api/assess
-	// roll back to the position before the user's move without replaying.
-	undoStack []Undo
-
-	// posCount tracks how many times the current line has reached each
-	// position (FEN minus halfmove/fullmove fields). Cleared whenever the
-	// halfmove clock resets, since older positions are no longer reachable.
-	posCount map[string]int
-}
-
-// positionKey is the FEN with the halfmove and fullmove counters stripped —
-// the canonical key for threefold-repetition equality.
-func positionKey(b *Board) string {
-	fields := strings.Fields(b.FEN())
-	if len(fields) < 4 {
-		return b.FEN()
-	}
-	return strings.Join(fields[:4], " ")
-}
-
-// insufficientMaterial reports whether neither side has enough material to
-// deliver mate even with cooperative play. Recognised draws: K vs K,
-// K + minor (B or N) vs K, and K + B vs K + B with same-square-color bishops.
-func (g *GUI) insufficientMaterial() bool {
-	var counts [2][7]int
-	bishopColor := [2]int{-1, -1}
-	for sq := 0; sq < 128; sq++ {
-		if !OnBoard(sq) {
-			continue
-		}
-		p := g.board.Squares[sq]
-		if p.IsEmpty() {
-			continue
-		}
-		counts[p.Color()][p.Type()]++
-		if p.Type() == Bishop {
-			bishopColor[p.Color()] = (FileOf(sq) + RankOf(sq)) % 2
-		}
-	}
-	for c := 0; c < 2; c++ {
-		if counts[c][Pawn] > 0 || counts[c][Rook] > 0 || counts[c][Queen] > 0 {
-			return false
-		}
-	}
-	nW := counts[White][Knight] + counts[White][Bishop]
-	nB := counts[Black][Knight] + counts[Black][Bishop]
-	if nW == 0 && nB == 0 {
-		return true
-	}
-	if (nW == 1 && nB == 0) || (nB == 1 && nW == 0) {
-		return true
-	}
-	if counts[White][Bishop] == 1 && counts[Black][Bishop] == 1 &&
-		counts[White][Knight] == 0 && counts[Black][Knight] == 0 &&
-		bishopColor[White] == bishopColor[Black] {
-		return true
-	}
-	return false
-}
-
-// playMove applies a move and records it in history + undo stack. Caller
-// must already hold g.mu.
-func (g *GUI) playMove(m Move) {
-	u := g.board.MakeMove(m)
-	g.history = append(g.history, m.String())
-	mv := m
-	g.lastMove = &mv
-	g.undoStack = append(g.undoStack, u)
-	g.touchedSq = NoSquare
-
-	// Repetition tracking. A pawn move or capture resets the halfmove clock
-	// AND makes prior positions unreachable, so we flush the counter then.
-	if g.board.HalfmoveClock == 0 {
-		g.posCount = map[string]int{}
-	}
-	if g.posCount == nil {
-		g.posCount = map[string]int{}
-	}
-	g.posCount[positionKey(g.board)]++
+	mu       sync.Mutex
+	game     *Game
+	thinking bool
 }
 
 func NewGUI() *GUI {
-	g := &GUI{touchedSq: NoSquare}
-	g.resetLocked(false, true) // default: you play White, engine plays Black
+	g := &GUI{game: NewGame()}
+	g.game.EngineBlack = true // default: human plays White, engine plays Black
 	return g
 }
 
-func (g *GUI) resetLocked(eW, eB bool) {
-	g.board = StartPosition()
-	g.startFEN = StartFEN
-	g.history = nil
-	g.lastMove = nil
-	g.engineWhite = eW
-	g.engineBlack = eB
-	g.thinking = false
-	g.touchedSq = NoSquare
-	g.touchLost = false
-	g.undoStack = nil
-	g.posCount = map[string]int{positionKey(g.board): 1}
-	// touchMove preference is kept across resets
-}
+// JSON shapes ---------------------------------------------------------------
 
 type stateJSON struct {
 	FEN           string    `json:"fen"`
-	Turn          string    `json:"turn"` // "w" or "b"
+	Turn          string    `json:"turn"`
 	EngineWhite   bool      `json:"engine_white"`
 	EngineBlack   bool      `json:"engine_black"`
 	EngineToMove  bool      `json:"engine_to_move"`
-	Status        string    `json:"status"` // ongoing, checkmate, stalemate, draw50, touch_lost
+	Status        string    `json:"status"`
 	InCheck       bool      `json:"in_check"`
 	LegalMoves    []string  `json:"legal_moves"`
 	History       []string  `json:"history"`
 	LastMove      *moveJSON `json:"last_move"`
 	Thinking      bool      `json:"thinking"`
 	TouchMove     bool      `json:"touch_move"`
-	TouchedSquare string    `json:"touched_square"` // empty if none
+	TouchedSquare string    `json:"touched_square"`
 }
 
 type moveJSON struct {
@@ -153,54 +50,83 @@ type moveJSON struct {
 	To   string `json:"to"`
 }
 
+type hintMove struct {
+	Move  string   `json:"move"`
+	From  string   `json:"from"`
+	To    string   `json:"to"`
+	Promo string   `json:"promo"`
+	Score string   `json:"score"`
+	Depth int      `json:"depth"`
+	PV    []string `json:"pv"`
+}
+
+type hintResponse struct {
+	Hint  *hintMove `json:"hint"`
+	State stateJSON `json:"state"`
+}
+
+type assessResponse struct {
+	Index     int      `json:"index"`
+	Player    string   `json:"player"`
+	Move      string   `json:"move"`
+	BestMove  string   `json:"best_move"`
+	UserScore string   `json:"user_score"`
+	BestScore string   `json:"best_score"`
+	CPLoss    int      `json:"cp_loss"`
+	Label     string   `json:"label"`
+	Depth     int      `json:"depth"`
+	PV        []string `json:"pv,omitempty"`
+}
+
+type savedGame struct {
+	StartFEN    string   `json:"start_fen"`
+	Moves       []string `json:"moves"`
+	EngineWhite bool     `json:"engine_white"`
+	EngineBlack bool     `json:"engine_black"`
+}
+
+// snapshotLocked builds the state JSON. Caller must hold g.mu.
 func (g *GUI) snapshotLocked() stateJSON {
-	legal := g.board.GenerateLegalMoves()
+	game := g.game
+	legal := game.Board.GenerateLegalMoves()
 	legalStrs := make([]string, len(legal))
 	for i, m := range legal {
 		legalStrs[i] = m.String()
 	}
-	inCheck := g.board.InCheck(g.board.SideToMove)
-	status := "ongoing"
-	switch {
-	case g.touchLost:
-		status = "touch_lost"
-	case len(legal) == 0 && inCheck:
-		status = "checkmate"
-	case len(legal) == 0:
-		status = "stalemate"
-	case g.posCount[positionKey(g.board)] >= 3:
-		status = "draw_repetition"
-	case g.insufficientMaterial():
-		status = "draw_insufficient"
-	case g.board.HalfmoveClock >= 100:
-		status = "draw50"
-	}
 	turn := "w"
-	if g.board.SideToMove == Black {
+	if game.Board.SideToMove == Black {
 		turn = "b"
 	}
-	engineToMove := (turn == "w" && g.engineWhite) || (turn == "b" && g.engineBlack)
 	var lm *moveJSON
-	if g.lastMove != nil {
-		lm = &moveJSON{From: SquareName(g.lastMove.From), To: SquareName(g.lastMove.To)}
+	if game.LastMove != nil {
+		lm = &moveJSON{From: SquareName(game.LastMove.From), To: SquareName(game.LastMove.To)}
 	}
-	hist := g.history
+	hist := game.History
 	if hist == nil {
 		hist = []string{} // marshal as [] not null so the frontend can iterate it
 	}
 	touched := ""
-	if g.touchedSq != NoSquare {
-		touched = SquareName(g.touchedSq)
+	if game.TouchedSq != NoSquare {
+		touched = SquareName(game.TouchedSq)
 	}
 	return stateJSON{
-		FEN: g.board.FEN(), Turn: turn,
-		EngineWhite: g.engineWhite, EngineBlack: g.engineBlack,
-		EngineToMove: engineToMove, Status: status, InCheck: inCheck,
-		LegalMoves: legalStrs, History: hist, LastMove: lm,
-		Thinking:  g.thinking,
-		TouchMove: g.touchMove, TouchedSquare: touched,
+		FEN:           game.Board.FEN(),
+		Turn:          turn,
+		EngineWhite:   game.EngineWhite,
+		EngineBlack:   game.EngineBlack,
+		EngineToMove:  game.EngineToMove(),
+		Status:        string(game.Status()),
+		InCheck:       game.Board.InCheck(game.Board.SideToMove),
+		LegalMoves:    legalStrs,
+		History:       hist,
+		LastMove:      lm,
+		Thinking:      g.thinking,
+		TouchMove:     game.TouchMove,
+		TouchedSquare: touched,
 	}
 }
+
+// Routing -------------------------------------------------------------------
 
 func (g *GUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
@@ -236,54 +162,30 @@ func (g *GUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (g *GUI) handleTouch(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Square string `json:"square"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), 400)
-		return
-	}
-	sq, err := ParseSquare(req.Square)
-	if err != nil {
-		http.Error(w, err.Error(), 400)
-		return
-	}
+func writeJSON(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(v)
+}
+
+// Handlers ------------------------------------------------------------------
+
+func (g *GUI) handleState(w http.ResponseWriter) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.thinking || g.touchLost {
-		writeJSON(w, g.snapshotLocked())
-		return
+	writeJSON(w, g.snapshotLocked())
+}
+
+func (g *GUI) handleNew(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		EngineWhite bool `json:"engine_white"`
+		EngineBlack bool `json:"engine_black"`
 	}
-	turn := g.board.SideToMove
-	engineTurn := (turn == White && g.engineWhite) || (turn == Black && g.engineBlack)
-	if engineTurn {
-		writeJSON(w, g.snapshotLocked())
-		return
-	}
-	// Already touched a piece — touch-move rule means you can't switch.
-	if g.touchedSq != NoSquare {
-		writeJSON(w, g.snapshotLocked())
-		return
-	}
-	p := g.board.Squares[sq]
-	if p.IsEmpty() || p.Color() != turn {
-		writeJSON(w, g.snapshotLocked())
-		return
-	}
-	hasMove := false
-	for _, m := range g.board.GenerateLegalMoves() {
-		if m.From == sq {
-			hasMove = true
-			break
-		}
-	}
-	if !hasMove {
-		// Touched a piece with no legal move → instant loss.
-		g.touchLost = true
-	} else {
-		g.touchedSq = sq
-	}
+	json.NewDecoder(r.Body).Decode(&req)
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.game.Reset()
+	g.game.EngineWhite = req.EngineWhite
+	g.game.EngineBlack = req.EngineBlack
 	writeJSON(w, g.snapshotLocked())
 }
 
@@ -302,10 +204,9 @@ func (g *GUI) handleSetPlayers(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "engine is busy", 409)
 		return
 	}
-	g.engineWhite = req.EngineWhite
-	g.engineBlack = req.EngineBlack
-	// If the side to move just became an engine, drop any pending touch.
-	g.touchedSq = NoSquare
+	g.game.EngineWhite = req.EngineWhite
+	g.game.EngineBlack = req.EngineBlack
+	g.game.TouchedSq = NoSquare // dropped: side may now be an engine
 	writeJSON(w, g.snapshotLocked())
 }
 
@@ -316,170 +217,133 @@ func (g *GUI) handleTouchMove(w http.ResponseWriter, r *http.Request) {
 	json.NewDecoder(r.Body).Decode(&req)
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.touchMove = req.Enabled
-	g.touchedSq = NoSquare // clear any pending touch when toggling
+	g.game.TouchMove = req.Enabled
+	g.game.TouchedSq = NoSquare
 	writeJSON(w, g.snapshotLocked())
 }
 
-type assessResponse struct {
-	Index     int    `json:"index"`  // 0-based ply in history
-	Player    string `json:"player"` // "w" or "b"
-	Move      string `json:"move"`
-	BestMove  string `json:"best_move"`
-	UserScore string `json:"user_score"` // from the mover's POV
-	BestScore string `json:"best_score"` // from the mover's POV
-	CPLoss    int    `json:"cp_loss"`    // best - user, in centipawns; can be negative
-	Label     string `json:"label"`      // Best, Brilliant, Excellent, Good, Inaccuracy, Mistake, Blunder
-	Depth     int    `json:"depth"`
+func (g *GUI) handleTouch(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Square string `json:"square"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	sq, err := ParseSquare(req.Square)
+	if err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.thinking {
+		writeJSON(w, g.snapshotLocked())
+		return
+	}
+	g.game.Touch(sq)
+	writeJSON(w, g.snapshotLocked())
 }
 
-func (g *GUI) handleAssess(w http.ResponseWriter, r *http.Request) {
+func (g *GUI) handleMove(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		MoveTime int  `json:"movetime"`
-		Index    *int `json:"index,omitempty"` // optional: explicit ply to grade
+		Move string `json:"move"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.thinking || g.game.TouchLost || g.game.EngineToMove() {
+		writeJSON(w, g.snapshotLocked())
+		return
+	}
+	m, err := g.game.Board.ParseUCIMove(req.Move)
+	if err != nil {
+		writeJSON(w, g.snapshotLocked())
+		return
+	}
+	if g.game.TouchMove && g.game.TouchedSq != NoSquare && m.From != g.game.TouchedSq {
+		writeJSON(w, g.snapshotLocked())
+		return
+	}
+	matched, ok := matchMove(g.game.Board.GenerateLegalMoves(), m)
+	if !ok {
+		writeJSON(w, g.snapshotLocked())
+		return
+	}
+	g.game.PlayMove(matched)
+	writeJSON(w, g.snapshotLocked())
+}
+
+func (g *GUI) handleUndo(w http.ResponseWriter) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if !g.thinking {
+		g.game.Undo()
+	}
+	writeJSON(w, g.snapshotLocked())
+}
+
+// beginSearch acquires thinking, snapshots the live board for off-mutex
+// search, and returns a finish callback that re-acquires the lock and
+// runs `apply` against the live game. Returns false if the engine is
+// already busy or there's nothing to do.
+func (g *GUI) beginSearch(movetime time.Duration) (board Board, finish func(apply func()), ok bool) {
+	g.mu.Lock()
+	if g.thinking {
+		g.mu.Unlock()
+		return Board{}, nil, false
+	}
+	g.thinking = true
+	board = *g.game.Board
+	g.mu.Unlock()
+
+	finish = func(apply func()) {
+		g.mu.Lock()
+		defer g.mu.Unlock()
+		g.thinking = false
+		if apply != nil {
+			apply()
+		}
+	}
+	return board, finish, true
+}
+
+func (g *GUI) handleEngineStep(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		MoveTime int `json:"movetime"`
 	}
 	json.NewDecoder(r.Body).Decode(&req)
 	if req.MoveTime <= 0 {
-		req.MoveTime = 500
+		req.MoveTime = 1000
 	}
 
 	g.mu.Lock()
-	if g.thinking || len(g.undoStack) == 0 {
+	if g.thinking || !g.game.EngineToMove() || g.game.Status() != StatusOngoing {
+		writeJSON(w, g.snapshotLocked())
 		g.mu.Unlock()
-		http.Error(w, "no move to assess", 400)
 		return
 	}
-
-	n := len(g.undoStack)
-	turn := g.board.SideToMove // side to move *after* the last move
-	playerAt := func(i int) Color {
-		// Player of undoStack[i] = opposite of side-to-move just after move i.
-		// Side-to-move just after move i = `turn` flipped (n-1-i) times.
-		if (n-1-i)%2 == 0 {
-			return turn.Opp()
-		}
-		return turn
-	}
-
-	targetIdx := -1
-	if req.Index != nil {
-		// Caller asked for a specific ply.
-		if *req.Index < 0 || *req.Index >= n {
-			g.mu.Unlock()
-			http.Error(w, "index out of range", 400)
-			return
-		}
-		targetIdx = *req.Index
-	} else {
-		// Default: find the last move played by a human. In human-vs-engine
-		// games this skips the engine's reply so we always grade the user.
-		isHuman := func(c Color) bool {
-			if c == White {
-				return !g.engineWhite
-			}
-			return !g.engineBlack
-		}
-		for i := n - 1; i >= 0; i-- {
-			if isHuman(playerAt(i)) {
-				targetIdx = i
-				break
-			}
-		}
-		if targetIdx < 0 {
-			g.mu.Unlock()
-			http.Error(w, "no human move to assess", 400)
-			return
-		}
-	}
-
 	g.thinking = true
-	// Roll the live board back to just before the target move, snapshot before
-	// + after positions, then replay everything so g.board is unchanged.
-	for j := n - 1; j >= targetIdx; j-- {
-		g.board.UnmakeMove(g.undoStack[j])
-	}
-	beforeBoard := *g.board
-	userMove := g.undoStack[targetIdx].Move
-	g.board.MakeMove(userMove)
-	afterBoard := *g.board
-	for j := targetIdx + 1; j < n; j++ {
-		g.board.MakeMove(g.undoStack[j].Move)
-	}
-	moveTime := time.Duration(req.MoveTime) * time.Millisecond
+	board := *g.game.Board
 	g.mu.Unlock()
 
-	stop1 := &atomic.Bool{}
-	beforeRes := beforeBoard.IterativeDeepening(SearchLimits{MoveTime: moveTime}, stop1, nil)
-	stop2 := &atomic.Bool{}
-	afterRes := afterBoard.IterativeDeepening(SearchLimits{MoveTime: moveTime}, stop2, nil)
+	stop := &atomic.Bool{}
+	result := board.IterativeDeepening(SearchLimits{MoveTime: time.Duration(req.MoveTime) * time.Millisecond}, stop, nil)
 
 	g.mu.Lock()
 	g.thinking = false
+	if result.BestMove != (Move{}) {
+		// Re-resolve against current legal moves in case of concurrent reset.
+		if matched, ok := matchMove(g.game.Board.GenerateLegalMoves(), result.BestMove); ok {
+			g.game.PlayMove(matched)
+		}
+	}
+	snap := g.snapshotLocked()
 	g.mu.Unlock()
-
-	// Both scores in the user's (mover-of-userMove) POV. afterRes is from the
-	// opponent's POV after the user's move, so negate it.
-	bestScore := beforeRes.Score
-	userScore := -afterRes.Score
-	cpLoss := bestScore - userScore
-
-	playerStr := "w"
-	if playerAt(targetIdx) == Black {
-		playerStr = "b"
-	}
-	resp := assessResponse{
-		Index:     targetIdx,
-		Player:    playerStr,
-		Move:      userMove.String(),
-		BestMove:  beforeRes.BestMove.String(),
-		UserScore: scoreToUCI(userScore),
-		BestScore: scoreToUCI(bestScore),
-		CPLoss:    cpLoss,
-		Label:     classifyAssessment(userMove, beforeRes.BestMove, cpLoss, bestScore, userScore),
-		Depth:     beforeRes.Depth,
-	}
-	writeJSON(w, resp)
-}
-
-func classifyAssessment(played, best Move, cpLoss, bestScore, userScore int) string {
-	// User found a deeper line than the engine — credit it.
-	if cpLoss <= -50 {
-		return "Brilliant"
-	}
-	if played.From == best.From && played.To == best.To && played.Promo == best.Promo {
-		return "Best"
-	}
-	// Walking from non-mated into mated is always a Blunder regardless of cp math.
-	if userScore <= -MateInMaxPly && bestScore > -MateInMaxPly {
-		return "Blunder"
-	}
-	switch {
-	case cpLoss <= 15:
-		return "Excellent"
-	case cpLoss <= 50:
-		return "Good"
-	case cpLoss <= 100:
-		return "Inaccuracy"
-	case cpLoss <= 250:
-		return "Mistake"
-	default:
-		return "Blunder"
-	}
-}
-
-type hintMove struct {
-	Move  string   `json:"move"`
-	From  string   `json:"from"`
-	To    string   `json:"to"`
-	Promo string   `json:"promo"`
-	Score string   `json:"score"` // "cp 35" or "mate 3" or "mate -1"
-	Depth int      `json:"depth"`
-	PV    []string `json:"pv"`
-}
-
-type hintResponse struct {
-	Hint  *hintMove `json:"hint"`
-	State stateJSON `json:"state"`
+	writeJSON(w, snap)
 }
 
 func (g *GUI) handleHint(w http.ResponseWriter, r *http.Request) {
@@ -497,20 +361,18 @@ func (g *GUI) handleHint(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "engine is busy", 409)
 		return
 	}
-	legal := g.board.GenerateLegalMoves()
-	if len(legal) == 0 {
+	if len(g.game.Board.GenerateLegalMoves()) == 0 {
 		snap := g.snapshotLocked()
 		g.mu.Unlock()
 		writeJSON(w, hintResponse{State: snap})
 		return
 	}
 	g.thinking = true
-	boardCopy := *g.board
-	moveTime := time.Duration(req.MoveTime) * time.Millisecond
+	board := *g.game.Board
 	g.mu.Unlock()
 
 	stop := &atomic.Bool{}
-	result := boardCopy.IterativeDeepening(SearchLimits{MoveTime: moveTime}, stop, nil)
+	result := board.IterativeDeepening(SearchLimits{MoveTime: time.Duration(req.MoveTime) * time.Millisecond}, stop, nil)
 
 	g.mu.Lock()
 	g.thinking = false
@@ -538,24 +400,103 @@ func (g *GUI) handleHint(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, resp)
 }
 
-type savedGame struct {
-	StartFEN    string   `json:"start_fen"`
-	Moves       []string `json:"moves"`
-	EngineWhite bool     `json:"engine_white"`
-	EngineBlack bool     `json:"engine_black"`
+func (g *GUI) handleAssess(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		MoveTime int  `json:"movetime"`
+		Index    *int `json:"index,omitempty"` // optional: explicit ply to grade
+	}
+	json.NewDecoder(r.Body).Decode(&req)
+	if req.MoveTime <= 0 {
+		req.MoveTime = 500
+	}
+
+	g.mu.Lock()
+	if g.thinking || len(g.game.UndoStack) == 0 {
+		g.mu.Unlock()
+		http.Error(w, "no move to assess", 400)
+		return
+	}
+
+	var targetIdx int
+	if req.Index != nil {
+		if *req.Index < 0 || *req.Index >= len(g.game.UndoStack) {
+			g.mu.Unlock()
+			http.Error(w, "index out of range", 400)
+			return
+		}
+		targetIdx = *req.Index
+	} else {
+		targetIdx = g.game.LastHumanMoveIndex()
+		if targetIdx < 0 {
+			g.mu.Unlock()
+			http.Error(w, "no human move to assess", 400)
+			return
+		}
+	}
+
+	g.thinking = true
+	// Roll the live board back to just before the target move, snapshot
+	// before + after positions, then replay everything so g.game.Board is
+	// unchanged.
+	for j := len(g.game.UndoStack) - 1; j >= targetIdx; j-- {
+		g.game.Board.UnmakeMove(g.game.UndoStack[j])
+	}
+	beforeBoard := *g.game.Board
+	userMove := g.game.UndoStack[targetIdx].Move
+	g.game.Board.MakeMove(userMove)
+	afterBoard := *g.game.Board
+	for j := targetIdx + 1; j < len(g.game.UndoStack); j++ {
+		g.game.Board.MakeMove(g.game.UndoStack[j].Move)
+	}
+	playerStr := "w"
+	if g.game.PlayerAt(targetIdx) == Black {
+		playerStr = "b"
+	}
+	moveTime := time.Duration(req.MoveTime) * time.Millisecond
+	g.mu.Unlock()
+
+	stop1 := &atomic.Bool{}
+	beforeRes := beforeBoard.IterativeDeepening(SearchLimits{MoveTime: moveTime}, stop1, nil)
+	stop2 := &atomic.Bool{}
+	afterRes := afterBoard.IterativeDeepening(SearchLimits{MoveTime: moveTime}, stop2, nil)
+
+	g.mu.Lock()
+	g.thinking = false
+	g.mu.Unlock()
+
+	bestScore := beforeRes.Score
+	userScore := -afterRes.Score
+	cpLoss := bestScore - userScore
+
+	pv := make([]string, 0, len(beforeRes.PV))
+	for _, pm := range beforeRes.PV {
+		pv = append(pv, pm.String())
+	}
+	writeJSON(w, assessResponse{
+		Index:     targetIdx,
+		Player:    playerStr,
+		Move:      userMove.String(),
+		BestMove:  beforeRes.BestMove.String(),
+		UserScore: scoreToUCI(userScore),
+		BestScore: scoreToUCI(bestScore),
+		CPLoss:    cpLoss,
+		Label:     classifyAssessment(userMove, beforeRes.BestMove, cpLoss, bestScore, userScore),
+		Depth:     beforeRes.Depth,
+		PV:        pv,
+	})
 }
 
 func (g *GUI) handleSave(w http.ResponseWriter) {
 	g.mu.Lock()
-	start := g.startFEN
+	start := g.game.StartFEN
 	if start == "" {
 		start = StartFEN
 	}
 	sg := savedGame{
 		StartFEN:    start, // preserves edited puzzle positions across save/load
-		Moves:       append([]string(nil), g.history...),
-		EngineWhite: g.engineWhite,
-		EngineBlack: g.engineBlack,
+		Moves:       append([]string(nil), g.game.History...),
+		EngineWhite: g.game.EngineWhite,
+		EngineBlack: g.game.EngineBlack,
 	}
 	g.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
@@ -570,201 +511,15 @@ func (g *GUI) handleLoad(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad JSON: "+err.Error(), 400)
 		return
 	}
-	startFEN := sg.StartFEN
-	if startFEN == "" {
-		startFEN = StartFEN
-	}
-	b, err := ParseFEN(startFEN)
-	if err != nil {
-		http.Error(w, "bad start FEN: "+err.Error(), 400)
-		return
-	}
-
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.thinking {
 		http.Error(w, "engine is thinking; try again in a moment", 409)
 		return
 	}
-	g.board = b
-	g.startFEN = startFEN
-	g.history = nil
-	g.lastMove = nil
-	g.engineWhite = sg.EngineWhite
-	g.engineBlack = sg.EngineBlack
-	g.thinking = false
-	g.touchedSq = NoSquare
-	g.touchLost = false
-	g.undoStack = nil
-	g.posCount = map[string]int{positionKey(g.board): 1}
-
-	for _, ms := range sg.Moves {
-		m, err := g.board.ParseUCIMove(ms)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("bad move %s: %v", ms, err), 400)
-			return
-		}
-		legal := g.board.GenerateLegalMoves()
-		matched, ok := matchMove(legal, m)
-		if !ok {
-			http.Error(w, fmt.Sprintf("illegal move %s in loaded game", ms), 400)
-			return
-		}
-		g.playMove(matched)
-	}
-	writeJSON(w, g.snapshotLocked())
-}
-
-func (g *GUI) handleUndo(w http.ResponseWriter) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if g.thinking || len(g.undoStack) == 0 {
-		writeJSON(w, g.snapshotLocked())
-		return
-	}
-	last := len(g.undoStack) - 1
-	g.board.UnmakeMove(g.undoStack[last])
-	g.history = g.history[:last]
-	g.undoStack = g.undoStack[:last]
-	g.touchedSq = NoSquare
-	g.touchLost = false
-	if last > 0 {
-		mv := g.undoStack[last-1].Move
-		g.lastMove = &mv
-	} else {
-		g.lastMove = nil
-	}
-	// Rebuild posCount by replaying from startFEN.
-	b, _ := ParseFEN(g.startFEN)
-	g.posCount = map[string]int{positionKey(b): 1}
-	for _, u := range g.undoStack {
-		b.MakeMove(u.Move)
-		if b.HalfmoveClock == 0 {
-			g.posCount = map[string]int{}
-		}
-		g.posCount[positionKey(b)]++
-	}
-	writeJSON(w, g.snapshotLocked())
-}
-
-func writeJSON(w http.ResponseWriter, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(v)
-}
-
-func (g *GUI) handleState(w http.ResponseWriter) {
-	g.mu.Lock()
-	snap := g.snapshotLocked()
-	g.mu.Unlock()
-	writeJSON(w, snap)
-}
-
-func (g *GUI) handleMove(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Move string `json:"move"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := g.game.Load(sg.StartFEN, sg.Moves, sg.EngineWhite, sg.EngineBlack); err != nil {
 		http.Error(w, err.Error(), 400)
 		return
 	}
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if g.thinking || g.touchLost {
-		writeJSON(w, g.snapshotLocked())
-		return
-	}
-	turn := g.board.SideToMove
-	engineTurn := (turn == White && g.engineWhite) || (turn == Black && g.engineBlack)
-	if engineTurn {
-		writeJSON(w, g.snapshotLocked())
-		return
-	}
-	m, err := g.board.ParseUCIMove(req.Move)
-	if err != nil {
-		writeJSON(w, g.snapshotLocked())
-		return
-	}
-	// Touch-move enforcement: if a piece has been touched, the move must use it.
-	if g.touchMove && g.touchedSq != NoSquare && m.From != g.touchedSq {
-		writeJSON(w, g.snapshotLocked())
-		return
-	}
-	legal := g.board.GenerateLegalMoves()
-	matched, ok := matchMove(legal, m)
-	if !ok {
-		writeJSON(w, g.snapshotLocked())
-		return
-	}
-	g.playMove(matched)
 	writeJSON(w, g.snapshotLocked())
-}
-
-func matchMove(legal []Move, m Move) (Move, bool) {
-	for _, lm := range legal {
-		if lm.From == m.From && lm.To == m.To && lm.Promo == m.Promo {
-			return lm, true
-		}
-	}
-	return Move{}, false
-}
-
-func (g *GUI) handleNew(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		EngineWhite bool `json:"engine_white"`
-		EngineBlack bool `json:"engine_black"`
-	}
-	json.NewDecoder(r.Body).Decode(&req)
-	g.mu.Lock()
-	g.resetLocked(req.EngineWhite, req.EngineBlack)
-	snap := g.snapshotLocked()
-	g.mu.Unlock()
-	writeJSON(w, snap)
-}
-
-func (g *GUI) handleEngineStep(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		MoveTime int `json:"movetime"` // ms
-	}
-	json.NewDecoder(r.Body).Decode(&req)
-	if req.MoveTime <= 0 {
-		req.MoveTime = 1000
-	}
-
-	g.mu.Lock()
-	if g.thinking {
-		snap := g.snapshotLocked()
-		g.mu.Unlock()
-		writeJSON(w, snap)
-		return
-	}
-	turn := g.board.SideToMove
-	engineTurn := (turn == White && g.engineWhite) || (turn == Black && g.engineBlack)
-	legal := g.board.GenerateLegalMoves()
-	if !engineTurn || len(legal) == 0 {
-		snap := g.snapshotLocked()
-		g.mu.Unlock()
-		writeJSON(w, snap)
-		return
-	}
-	g.thinking = true
-	// Search a copy so /api/state can read g.board concurrently.
-	boardCopy := *g.board
-	moveTime := time.Duration(req.MoveTime) * time.Millisecond
-	g.mu.Unlock()
-
-	stop := &atomic.Bool{}
-	result := boardCopy.IterativeDeepening(SearchLimits{MoveTime: moveTime}, stop, nil)
-
-	g.mu.Lock()
-	g.thinking = false
-	if result.BestMove != (Move{}) {
-		// Re-resolve against current legal moves in case of concurrent reset.
-		liveLegal := g.board.GenerateLegalMoves()
-		if matched, ok := matchMove(liveLegal, result.BestMove); ok {
-			g.playMove(matched)
-		}
-	}
-	snap := g.snapshotLocked()
-	g.mu.Unlock()
-	writeJSON(w, snap)
 }

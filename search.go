@@ -126,7 +126,6 @@ func (s *Searcher) negamax(depth, ply int, alpha, beta int) int {
 
 	legalCount := 0
 	bestScore := -InfScore
-	var bestMove Move
 
 	for _, m := range moves {
 		u := b.MakeMove(m)
@@ -144,7 +143,6 @@ func (s *Searcher) negamax(depth, ply int, alpha, beta int) int {
 
 		if score > bestScore {
 			bestScore = score
-			bestMove = m
 			if score > alpha {
 				alpha = score
 				// Update PV.
@@ -164,8 +162,6 @@ func (s *Searcher) negamax(depth, ply int, alpha, beta int) int {
 		}
 		return 0 // stalemate
 	}
-
-	_ = bestMove
 	return bestScore
 }
 

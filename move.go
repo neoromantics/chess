@@ -18,6 +18,13 @@ type Move struct {
 	Flag     MoveFlag
 }
 
+// Equal compares moves by source, destination, and promotion piece. Move
+// flags are derived from those plus board state, so they are not part of
+// equality.
+func (m Move) Equal(o Move) bool {
+	return m.From == o.From && m.To == o.To && m.Promo == o.Promo
+}
+
 // Long-algebraic notation, e.g. "e2e4" or "e7e8q".
 func (m Move) String() string {
 	s := SquareName(m.From) + SquareName(m.To)
