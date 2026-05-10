@@ -388,11 +388,11 @@ func (g *GUI) handleEngineStep(w http.ResponseWriter, r *http.Request) {
 
 // copyHistory returns a defensive copy so the search can read it without a
 // lock and without racing with subsequent PlayMove writes.
-func copyHistory(src map[string]int) map[string]int {
+func copyHistory(src map[uint64]int) map[uint64]int {
 	if len(src) == 0 {
 		return nil
 	}
-	dst := make(map[string]int, len(src))
+	dst := make(map[uint64]int, len(src))
 	for k, v := range src {
 		dst[k] = v
 	}

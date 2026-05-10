@@ -110,7 +110,8 @@ type Undo struct {
 	PrevCastling   uint8
 	PrevEPSquare   int
 	PrevHalfmove   int
-	PrevKingSquare int // king square of side-to-move *before* the move (for fast restore)
+	PrevKingSquare int    // king square of side-to-move *before* the move (for fast restore)
+	PrevHash       uint64 // Zobrist signature before the move
 }
 
 // castleClear[sq] is the set of castling-rights bits to drop whenever a piece
@@ -144,7 +145,17 @@ func (b *Board) MakeMove(m Move) Undo {
 		PrevEPSquare:   b.EPSquare,
 		PrevHalfmove:   b.HalfmoveClock,
 		PrevKingSquare: b.KingSquare[us],
+		PrevHash:       b.Hash,
 	}
+
+	// Hash bookkeeping: XOR out the parts of the position that are about
+	// to change (castling rights, EP file, side). New values are XORed
+	// back in at the end after they've been computed.
+	b.Hash ^= zCastle[b.Castling]
+	if b.EPSquare != NoSquare {
+		b.Hash ^= zEP[FileOf(b.EPSquare)]
+	}
+	b.Hash ^= zSide
 
 	// Capture detection.
 	if m.Flag == FlagEP {
@@ -156,18 +167,24 @@ func (b *Board) MakeMove(m Move) Undo {
 			capSq += 16
 		}
 		u.Captured = b.Squares[capSq]
+		b.Hash ^= zPiece[pieceZobristIndex(u.Captured)][capSq]
 		b.Squares[capSq] = 0
 	} else if !b.Squares[m.To].IsEmpty() {
 		u.Captured = b.Squares[m.To]
+		b.Hash ^= zPiece[pieceZobristIndex(u.Captured)][m.To]
 	}
 
 	// Move the piece.
-	b.Squares[m.To] = piece
+	b.Hash ^= zPiece[pieceZobristIndex(piece)][m.From]
 	b.Squares[m.From] = 0
-
-	// Handle promotion (replace pawn with promoted piece, same color).
-	if m.Promo != Empty {
-		b.Squares[m.To] = MakePiece(m.Promo, us)
+	if m.Promo == Empty {
+		b.Squares[m.To] = piece
+		b.Hash ^= zPiece[pieceZobristIndex(piece)][m.To]
+	} else {
+		// Promotion: a different piece-type lands on the destination.
+		promoted := MakePiece(m.Promo, us)
+		b.Squares[m.To] = promoted
+		b.Hash ^= zPiece[pieceZobristIndex(promoted)][m.To]
 	}
 
 	// Castling: also move the rook.
@@ -175,13 +192,19 @@ func (b *Board) MakeMove(m Move) Undo {
 	case FlagCastleK:
 		rookFrom := Sq(7, RankOf(m.From))
 		rookTo := Sq(5, RankOf(m.From))
-		b.Squares[rookTo] = b.Squares[rookFrom]
+		rook := b.Squares[rookFrom]
+		b.Squares[rookTo] = rook
 		b.Squares[rookFrom] = 0
+		b.Hash ^= zPiece[pieceZobristIndex(rook)][rookFrom]
+		b.Hash ^= zPiece[pieceZobristIndex(rook)][rookTo]
 	case FlagCastleQ:
 		rookFrom := Sq(0, RankOf(m.From))
 		rookTo := Sq(3, RankOf(m.From))
-		b.Squares[rookTo] = b.Squares[rookFrom]
+		rook := b.Squares[rookFrom]
+		b.Squares[rookTo] = rook
 		b.Squares[rookFrom] = 0
+		b.Hash ^= zPiece[pieceZobristIndex(rook)][rookFrom]
+		b.Hash ^= zPiece[pieceZobristIndex(rook)][rookTo]
 	}
 
 	// Update king square if king moved.
@@ -191,15 +214,16 @@ func (b *Board) MakeMove(m Move) Undo {
 
 	// Update castling rights (movement of king/rook, capture of rook on corner).
 	b.Castling &^= castleClear[m.From] | castleClear[m.To]
+	b.Hash ^= zCastle[b.Castling]
 
 	// Update EP square.
 	if m.Flag == FlagDoublePawn {
-		// EP target is the square the pawn passed over.
 		if us == White {
 			b.EPSquare = m.From + 16
 		} else {
 			b.EPSquare = m.From - 16
 		}
+		b.Hash ^= zEP[FileOf(b.EPSquare)]
 	} else {
 		b.EPSquare = NoSquare
 	}
@@ -233,6 +257,7 @@ func (b *Board) UnmakeMove(u Undo) {
 	b.Castling = u.PrevCastling
 	b.EPSquare = u.PrevEPSquare
 	b.HalfmoveClock = u.PrevHalfmove
+	b.Hash = u.PrevHash
 
 	// Move piece back. For promotion, restore the pawn at From.
 	piece := b.Squares[m.To]

@@ -20,7 +20,7 @@ type SearchLimits struct {
 	// History is the count of how many times each prior position has been
 	// reached in the actual game. Lets the engine treat moves that lead to
 	// 3-fold-repetition as draws (score 0). nil = no awareness.
-	History map[string]int
+	History map[uint64]int
 }
 
 type SearchResult struct {
@@ -44,16 +44,16 @@ type Searcher struct {
 
 	// Repetition awareness: history is the prior-game position counts
 	// (read-only); path tracks positions visited in the current search line.
-	history map[string]int
-	path    map[string]int
+	history map[uint64]int
+	path    map[uint64]int
 }
 
-func newSearcher(b *Board, stop *atomic.Bool, deadline time.Time, hasDeadline bool, history map[string]int) *Searcher {
+func newSearcher(b *Board, stop *atomic.Bool, deadline time.Time, hasDeadline bool, history map[uint64]int) *Searcher {
 	return &Searcher{
 		board: b, stopFlag: stop, deadline: deadline, hasDeadline: hasDeadline,
 		startTime: time.Now(),
 		history:   history,
-		path:      map[string]int{},
+		path:      map[uint64]int{},
 	}
 }
 

@@ -1,9 +1,6 @@
 package main
 
-import (
-	"fmt"
-	"strings"
-)
+import "fmt"
 
 // GameStatus is the outcome of the current position.
 type GameStatus string
@@ -36,8 +33,8 @@ type Game struct {
 	TouchedSq int  // NoSquare if no piece is currently touched
 	TouchLost bool // sticky once a touch-move loss is declared
 
-	// Repetition counter keyed by FEN minus halfmove/fullmove.
-	posCount map[string]int
+	// Repetition counter keyed by Zobrist hash.
+	posCount map[uint64]int
 }
 
 // NewGame returns a fresh game in the standard starting position.
@@ -58,7 +55,7 @@ func (g *Game) Reset() {
 	g.UndoStack = nil
 	g.TouchedSq = NoSquare
 	g.TouchLost = false
-	g.posCount = map[string]int{positionKey(g.Board): 1}
+	g.posCount = map[uint64]int{positionKey(g.Board): 1}
 }
 
 // Load reinitialises from a starting FEN and replays moves. Engine-side
@@ -81,7 +78,7 @@ func (g *Game) Load(startFEN string, moves []string, engineW, engineB bool) erro
 	g.TouchLost = false
 	g.EngineWhite = engineW
 	g.EngineBlack = engineB
-	g.posCount = map[string]int{positionKey(g.Board): 1}
+	g.posCount = map[uint64]int{positionKey(g.Board): 1}
 	for _, ms := range moves {
 		m, err := g.Board.ParseUCIMove(ms)
 		if err != nil {
@@ -112,10 +109,10 @@ func (g *Game) PlayMove(m Move) {
 	// Pawn moves and captures reset the halfmove clock and make older
 	// positions unreachable, so the repetition counter starts fresh.
 	if g.Board.HalfmoveClock == 0 {
-		g.posCount = map[string]int{}
+		g.posCount = map[uint64]int{}
 	}
 	if g.posCount == nil {
-		g.posCount = map[string]int{}
+		g.posCount = map[uint64]int{}
 	}
 	g.posCount[positionKey(g.Board)]++
 }
@@ -147,14 +144,14 @@ func (g *Game) Undo() bool {
 func (g *Game) rebuildPosCount() {
 	b, err := ParseFEN(g.StartFEN)
 	if err != nil {
-		g.posCount = map[string]int{positionKey(g.Board): 1}
+		g.posCount = map[uint64]int{positionKey(g.Board): 1}
 		return
 	}
-	g.posCount = map[string]int{positionKey(b): 1}
+	g.posCount = map[uint64]int{positionKey(b): 1}
 	for _, u := range g.UndoStack {
 		b.MakeMove(u.Move)
 		if b.HalfmoveClock == 0 {
-			g.posCount = map[string]int{}
+			g.posCount = map[uint64]int{}
 		}
 		g.posCount[positionKey(b)]++
 	}
@@ -340,14 +337,12 @@ func (g *Game) ReplayData() []ReplayFrame {
 	return frames
 }
 
-// positionKey is the FEN with halfmove and fullmove counters stripped —
-// the canonical key for threefold-repetition equality.
-func positionKey(b *Board) string {
-	fields := strings.Fields(b.FEN())
-	if len(fields) < 4 {
-		return b.FEN()
-	}
-	return strings.Join(fields[:4], " ")
+// positionKey returns the Zobrist signature — the canonical key for
+// threefold-repetition equality. The hash already encodes side-to-move,
+// castling rights, and the en-passant file, which is exactly what 3-fold
+// equality needs (and excludes the halfmove/fullmove counters).
+func positionKey(b *Board) uint64 {
+	return b.Hash
 }
 
 // matchMove finds the legal move equal to m (by from/to/promo).

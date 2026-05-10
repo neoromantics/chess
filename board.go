@@ -56,6 +56,7 @@ type Board struct {
 	HalfmoveClock  int
 	FullmoveNumber int
 	KingSquare     [2]int
+	Hash           uint64 // Zobrist signature; maintained incrementally by MakeMove/UnmakeMove
 }
 
 // Square helpers ------------------------------------------------------------
@@ -205,6 +206,7 @@ func ParseFEN(fen string) (*Board, error) {
 	if b.KingSquare[White] == NoSquare || b.KingSquare[Black] == NoSquare {
 		return nil, fmt.Errorf("FEN missing a king")
 	}
+	b.Hash = b.ComputeHash()
 	return b, nil
 }
 
