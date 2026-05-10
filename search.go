@@ -51,6 +51,31 @@ type Searcher struct {
 	path    map[uint64]int
 
 	tt *TT
+
+	// killers[ply] holds up to two non-capture moves that recently caused
+	// a beta cutoff at this ply; orderMoves prefers them right after
+	// captures so similar cutoffs happen earlier.
+	killers [MaxPly + 1][2]Move
+}
+
+// hasNonPawnMaterial returns true if c has at least one knight, bishop,
+// rook, or queen on the board. Null-move pruning is unsafe in king-and-
+// pawn-only positions because zugzwang is common there.
+func hasNonPawnMaterial(b *Board, c Color) bool {
+	for sq := 0; sq < 128; sq++ {
+		if !OnBoard(sq) {
+			continue
+		}
+		p := b.Squares[sq]
+		if p.IsEmpty() || p.Color() != c {
+			continue
+		}
+		t := p.Type()
+		if t != Pawn && t != King {
+			return true
+		}
+	}
+	return false
 }
 
 func newSearcher(b *Board, stop *atomic.Bool, deadline time.Time, hasDeadline bool, history map[uint64]int, tt *TT) *Searcher {
@@ -193,9 +218,26 @@ func (s *Searcher) negamax(depth, ply int, alpha, beta int) int {
 	us := b.SideToMove
 	inCheck := b.InCheck(us)
 
+	// Null-move pruning. If we can pass the move and a depth-reduced
+	// search still gives the opponent ≥ beta, the position is so good
+	// that we don't need to search further. Skipped in check (illegal
+	// to "pass" out of check) and in pawn-only endings (zugzwang risk).
+	if depth >= 3 && ply > 0 && !inCheck && beta < MateInMaxPly && hasNonPawnMaterial(b, us) {
+		nullU := b.MakeNullMove()
+		const R = 2
+		score := -s.negamax(depth-1-R, ply+1, -beta, -beta+1)
+		b.UnmakeNullMove(nullU)
+		if s.shouldStop() {
+			return 0
+		}
+		if score >= beta {
+			return beta
+		}
+	}
+
 	moves := make([]Move, 0, 48)
 	b.GeneratePseudoLegalMoves(&moves)
-	s.orderMoves(moves, ttMove)
+	s.orderMoves(moves, ttMove, ply)
 
 	legalCount := 0
 	bestScore := -InfScore
@@ -229,6 +271,12 @@ func (s *Searcher) negamax(depth, ply int, alpha, beta int) int {
 			}
 			if alpha >= beta {
 				flag = ttLowerBound
+				// Killer-move heuristic: remember non-capture cutoff moves
+				// so similar positions order them earlier next time.
+				if u.Captured == 0 && m.Promo == Empty && !s.killers[ply][0].Equal(m) {
+					s.killers[ply][1] = s.killers[ply][0]
+					s.killers[ply][0] = m
+				}
 				break // beta cutoff
 			}
 		}
@@ -274,7 +322,7 @@ func (s *Searcher) quiesce(ply int, alpha, beta int) int {
 			captures = append(captures, m)
 		}
 	}
-	s.orderMoves(captures, Move{})
+	s.orderMoves(captures, Move{}, ply)
 
 	for _, m := range captures {
 		u := b.MakeMove(m)
@@ -299,11 +347,13 @@ func (s *Searcher) quiesce(ply int, alpha, beta int) int {
 
 // orderMoves sorts in-place. Priority (highest first):
 //  1. The TT-suggested move (best move from a previous search of this node)
-//  2. Captures by MVV-LVA (and promotions, by promo piece value)
-//  3. Quiet moves
-func (s *Searcher) orderMoves(moves []Move, ttMove Move) {
+//  2. Captures by MVV-LVA, promotions by promo piece value
+//  3. Killer moves at this ply (non-capture cutoffs from sibling nodes)
+//  4. Quiet moves
+func (s *Searcher) orderMoves(moves []Move, ttMove Move, ply int) {
 	b := s.board
 	hasTT := ttMove != (Move{})
+	k0, k1 := s.killers[ply][0], s.killers[ply][1]
 	scoreFn := func(m Move) int {
 		if hasTT && m.Equal(ttMove) {
 			return 1_000_000
@@ -318,6 +368,15 @@ func (s *Searcher) orderMoves(moves []Move, ttMove Move) {
 		}
 		if m.Promo != Empty {
 			score += pieceValue[m.Promo]
+		}
+		// Killer bonus only when no capture/promotion bonus already set,
+		// so captures stay ahead of killers as intended.
+		if score == 0 {
+			if (k0 != Move{}) && m.Equal(k0) {
+				score = 9000
+			} else if (k1 != Move{}) && m.Equal(k1) {
+				score = 8000
+			}
 		}
 		return score
 	}

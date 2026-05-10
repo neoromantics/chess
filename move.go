@@ -244,6 +244,34 @@ func (b *Board) MakeMove(m Move) Undo {
 	return u
 }
 
+// NullUndo lets UnmakeNullMove restore state changed by MakeNullMove.
+type NullUndo struct {
+	PrevEPSquare int
+	PrevHash     uint64
+}
+
+// MakeNullMove flips the side to move without moving any piece. Used by
+// null-move pruning to test whether the position is so good that even
+// "passing" the move leaves the side to move winning. EP rights are
+// cleared for the null position because no pawn just moved.
+func (b *Board) MakeNullMove() NullUndo {
+	u := NullUndo{PrevEPSquare: b.EPSquare, PrevHash: b.Hash}
+	if b.EPSquare != NoSquare {
+		b.Hash ^= zEP[FileOf(b.EPSquare)]
+		b.EPSquare = NoSquare
+	}
+	b.Hash ^= zSide
+	b.SideToMove = b.SideToMove.Opp()
+	return u
+}
+
+// UnmakeNullMove reverses MakeNullMove.
+func (b *Board) UnmakeNullMove(u NullUndo) {
+	b.SideToMove = b.SideToMove.Opp()
+	b.EPSquare = u.PrevEPSquare
+	b.Hash = u.PrevHash
+}
+
 func (b *Board) UnmakeMove(u Undo) {
 	m := u.Move
 	them := b.SideToMove
