@@ -17,6 +17,7 @@ var guiHTML []byte
 type GUI struct {
 	mu          sync.Mutex
 	board       *Board
+	startFEN    string
 	history     []string
 	lastMove    *Move
 	engineWhite bool
@@ -118,6 +119,7 @@ func NewGUI() *GUI {
 
 func (g *GUI) resetLocked(eW, eB bool) {
 	g.board = StartPosition()
+	g.startFEN = StartFEN
 	g.history = nil
 	g.lastMove = nil
 	g.engineWhite = eW
@@ -227,6 +229,8 @@ func (g *GUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		g.handleSave(w)
 	case r.Method == "POST" && r.URL.Path == "/api/load":
 		g.handleLoad(w, r)
+	case r.Method == "POST" && r.URL.Path == "/api/undo":
+		g.handleUndo(w)
 	default:
 		http.NotFound(w, r)
 	}
@@ -579,6 +583,7 @@ func (g *GUI) handleLoad(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	g.board = b
+	g.startFEN = startFEN
 	g.history = nil
 	g.lastMove = nil
 	g.engineWhite = sg.EngineWhite
@@ -602,6 +607,38 @@ func (g *GUI) handleLoad(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		g.playMove(matched)
+	}
+	writeJSON(w, g.snapshotLocked())
+}
+
+func (g *GUI) handleUndo(w http.ResponseWriter) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.thinking || len(g.undoStack) == 0 {
+		writeJSON(w, g.snapshotLocked())
+		return
+	}
+	last := len(g.undoStack) - 1
+	g.board.UnmakeMove(g.undoStack[last])
+	g.history = g.history[:last]
+	g.undoStack = g.undoStack[:last]
+	g.touchedSq = NoSquare
+	g.touchLost = false
+	if last > 0 {
+		mv := g.undoStack[last-1].Move
+		g.lastMove = &mv
+	} else {
+		g.lastMove = nil
+	}
+	// Rebuild posCount by replaying from startFEN.
+	b, _ := ParseFEN(g.startFEN)
+	g.posCount = map[string]int{positionKey(b): 1}
+	for _, u := range g.undoStack {
+		b.MakeMove(u.Move)
+		if b.HalfmoveClock == 0 {
+			g.posCount = map[string]int{}
+		}
+		g.posCount[positionKey(b)]++
 	}
 	writeJSON(w, g.snapshotLocked())
 }

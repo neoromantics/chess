@@ -96,6 +96,7 @@
     <div class="row" style="margin-top:8px; gap: 6px;">
       <button id="hint" style="flex:1; background:#2d4a5a; border-color:#3a6075;">Hint</button>
       <button id="assess" style="flex:1; background:#4a2d5a; border-color:#603a75;">Assess</button>
+      <button id="undo" style="flex:1; background:#5a3a2d; border-color:#75503a;">Undo</button>
       <button id="edit-mode" style="flex:1; background:#5a4a2d; border-color:#75603a;">Edit</button>
     </div>
     <div class="row" style="margin-top:6px; gap: 6px;">
@@ -431,6 +432,19 @@ document.getElementById('assess').onclick = async () => {
   if (!state || state.thinking) return;
   const a = await runAssess();
   if (a) showAssess(a);
+};
+
+document.getElementById('undo').onclick = async () => {
+  if (!state || state.thinking) return;
+  const r = await fetch('/api/undo', {method: 'POST'});
+  state = await r.json();
+  selected = null;
+  clearHint();
+  showAssess(null);
+  // Remove any assessments for the undone ply index.
+  const undoneIdx = state.history.length;
+  delete assessments[undoneIdx];
+  render();
 };
 
 document.getElementById('hint').onclick = async () => {
