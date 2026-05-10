@@ -75,6 +75,13 @@ cat > "${APP_DIR}/Contents/Info.plist" <<PLIST
     <string>10.15</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <!-- Run as a UI-less agent: no Dock icon, no menu bar. The Go
+         binary never registers an NSWindow, so without this macOS
+         would bounce the Dock icon forever waiting for launch to
+         finish. The browser tab is the visible UI; closing it
+         auto-quits the app via the heartbeat. -->
+    <key>LSUIElement</key>
+    <true/>
 </dict>
 </plist>
 PLIST

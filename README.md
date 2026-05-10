@@ -93,6 +93,10 @@ that's taken), starts the GUI, opens your default browser, and waits.
 **Closing the browser tab quits the app** — the page sends a 5-second
 heartbeat over `/api/ping` and the app exits after 30 seconds without one.
 
+The bundle runs as an "agent" (`LSUIElement` in `Info.plist`), so it has
+no Dock icon and no menu bar — the browser tab *is* the UI. To force-quit
+without using the browser, run `pkill Chess` in a terminal.
+
 ### Uninstalling
 
 Drag `Chess.app` to the Trash. That's it.
