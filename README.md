@@ -7,12 +7,11 @@ This project has been upgraded from a local tool to a full web platform.
 - **User Accounts**: Secure signup and login with Bcrypt and JWT.
 - **Multi-Game Support**: Start and manage multiple games in one window.
 - **Dockerized**: Ready for containerized deployment (K8s/Cloud).
-- **Responsive UI**: Plays perfectly in browsers, on mobile, or as a native macOS app.
+- **Responsive UI**: Plays perfectly in browsers and on mobile.
 
 ## Features
 - **Engine**: Bitboard-based (0x88) engine with alpha-beta, quiescence, and tapered evaluation.
 - **Web UI**: Modern Vue 3 / Vite SPA with full TypeScript support.
-- **Native Mac UI**: Built-in standalone window mode.
 - **Analysis**: Real-time move assessment and hints.
 - **History**: Permanent storage for users and sessions (SQLite).
 

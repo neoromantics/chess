@@ -215,6 +215,7 @@ func (g *GUI) handleMe(w http.ResponseWriter, r *http.Request) {
 
 func (g *GUI) handleCreateGame(w http.ResponseWriter, r *http.Request) {
 	id := uuid.New().String()
+	fmt.Printf("Creating new game: %s\n", id)
 	entry := &gameEntry{
 		game:     game.NewGame(),
 		lastUsed: time.Now(),
@@ -248,14 +249,17 @@ func (g *GUI) handlePing(w http.ResponseWriter, r *http.Request) {
 }
 
 func (g *GUI) handleState(w http.ResponseWriter, r *http.Request) {
-	entry, _, err := g.getGame(r)
+	entry, id, err := g.getGame(r)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "handleState error: %v\n", err)
 		http.Error(w, err.Error(), 404)
 		return
 	}
+	fmt.Printf("Fetching state for game %s\n", id)
 	g.mu.Lock()
-	defer g.mu.Unlock()
-	writeJSON(w, g.snapshotLocked(entry))
+	snapshot := g.snapshotLocked(entry)
+	g.mu.Unlock()
+	writeJSON(w, snapshot)
 }
 
 func (g *GUI) handleTouch(w http.ResponseWriter, r *http.Request) {
@@ -605,6 +609,14 @@ func (g *GUI) snapshotLocked(entry *gameEntry) stateJSON {
 	if game.Board.SideToMove == core.Black {
 		turn = "b"
 	}
+	history := append([]string(nil), game.History...)
+	if history == nil {
+		history = []string{}
+	}
+	historySAN := append([]string(nil), game.HistorySAN...)
+	if historySAN == nil {
+		historySAN = []string{}
+	}
 	return stateJSON{
 		FEN:           game.Board.FEN(),
 		Turn:          turn,
@@ -614,8 +626,8 @@ func (g *GUI) snapshotLocked(entry *gameEntry) stateJSON {
 		Status:        string(game.Status()),
 		InCheck:       game.Board.InCheck(game.Board.SideToMove),
 		LegalMoves:    legalStrs,
-		History:       append([]string(nil), game.History...),
-		HistorySAN:    append([]string(nil), game.HistorySAN...),
+		History:       history,
+		HistorySAN:    historySAN,
 		LastMove:      lm,
 		Thinking:      entry.thinking.Load(),
 		TouchMove:     game.TouchMove,

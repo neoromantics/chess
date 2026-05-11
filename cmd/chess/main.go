@@ -9,29 +9,24 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
-	"strings"
 	"time"
 
 	"github.com/taiyanliu/chess/pkg/api"
 	"github.com/taiyanliu/chess/pkg/db"
 	"github.com/taiyanliu/chess/pkg/uci"
-	"github.com/webview/webview_go"
 )
 
 func main() {
-	gui := flag.Bool("gui", false, "force web GUI mode (default when stdin is a terminal or .app launch)")
+	gui := flag.Bool("gui", false, "force web GUI mode (default when stdin is a terminal)")
 	uciMode := flag.Bool("uci", false, "force UCI mode on stdio (default when stdin is piped)")
 	addr := flag.String("addr", "localhost:8080", "GUI listen address; falls back to a free port if taken")
-	browser := flag.Bool("browser", false, "force open in browser instead of native window (macOS only)")
-	noOpen := flag.Bool("no-open", false, "don't auto-open the GUI (start server only)")
-	idleSec := flag.Int("shutdown-on-idle", 0, "exit after N seconds with no /api/ping (0 = never; default 30 in .app launches)")
+	noOpen := flag.Bool("no-open", false, "don't auto-open the browser")
+	idleSec := flag.Int("shutdown-on-idle", 0, "exit after N seconds with no /api/ping (0 = never)")
 	flag.Parse()
 
-	app := launchedFromAppBundle()
-	// .app double-clicks have no TTY but should still launch the GUI; same
-	// goes for explicit -gui.
-	runGUI := *gui || app
-	if !*gui && !app && !*uciMode {
+	// Detect if we should run the GUI.
+	runGUI := *gui
+	if !*gui && !*uciMode {
 		runGUI = stdinIsTerminal()
 	}
 	if *uciMode {
@@ -39,15 +34,6 @@ func main() {
 	}
 
 	if runGUI {
-		if app && os.Getenv("DB_PATH") == "" {
-			home, _ := os.UserHomeDir()
-			if home != "" {
-				appDir := home + "/Library/Application Support/chess"
-				os.MkdirAll(appDir, 0755)
-				os.Setenv("DB_PATH", appDir+"/chess.db")
-			}
-		}
-
 		db, err := db.Open()
 		if err != nil {
 			log.Fatal(err)
@@ -62,21 +48,12 @@ func main() {
 		fmt.Fprintf(os.Stderr, "GUI: %s\n", url)
 
 		idle := time.Duration(*idleSec) * time.Second
-		if idle == 0 && app {
-			// Sensible default for double-click launches: tab close => exit.
-			idle = 30 * time.Second
-		}
 		guiSrv := api.NewGUI(db)
 		if idle > 0 {
 			guiSrv.StartIdleShutdown(idle)
 		}
 
 		if !*noOpen {
-			if runtime.GOOS == "darwin" && !*browser {
-				go http.Serve(ln, guiSrv)
-				openNativeWindow(url)
-				return
-			}
 			openBrowser(url)
 		}
 		log.Fatal(http.Serve(ln, guiSrv))
@@ -85,28 +62,8 @@ func main() {
 	uci.NewUCI(os.Stdout).Run(os.Stdin)
 }
 
-func openNativeWindow(url string) {
-	w := webview.New(false)
-	defer w.Destroy()
-	w.SetTitle("chess")
-	w.SetSize(1200, 900, webview.HintNone)
-	w.Navigate(url)
-	w.Run()
-}
-
-// launchedFromAppBundle reports whether the executable lives inside a
-// macOS .app bundle (Contents/MacOS/<name>).
-func launchedFromAppBundle() bool {
-	exe, err := os.Executable()
-	if err != nil {
-		return false
-	}
-	return strings.Contains(exe, ".app/Contents/MacOS/")
-}
-
 // listenWithFallback tries the requested addr; if the port is in use,
-// retries on a kernel-assigned free port (host kept). Lets a .app double-
-// click launch even when an earlier instance is still running.
+// retries on a kernel-assigned free port (host kept).
 func listenWithFallback(addr string) (net.Listener, error) {
 	ln, err := net.Listen("tcp", addr)
 	if err == nil {
@@ -132,9 +89,6 @@ func openBrowser(url string) {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
-		// Absolute path: when launched as an .app, the inherited PATH may
-		// not include /usr/bin, and `exec.Command("open")` then fails
-		// silently. /usr/bin/open is part of the macOS base install.
 		cmd = exec.Command("/usr/bin/open", url)
 	case "windows":
 		cmd = exec.Command("cmd", "/c", "start", "", url)

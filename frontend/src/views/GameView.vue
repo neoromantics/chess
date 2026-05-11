@@ -1,5 +1,12 @@
 <template>
-  <div v-if="!state" class="loading">Loading game...</div>
+  <div v-if="error" class="error-container">
+    <div class="error-box">
+      <h3>Failed to load game</h3>
+      <p>{{ error }}</p>
+      <router-link to="/" class="btn-primary">Back to Dashboard</router-link>
+    </div>
+  </div>
+  <div v-else-if="!state" class="loading">Loading game...</div>
   <div v-else id="app-container" :class="{ editing: editMode }">
     <ChessBoard 
       :state="state"
@@ -95,6 +102,7 @@ const props = defineProps<{
 }>();
 
 const state = ref<StateJSON | null>(null);
+const error = ref<string | null>(null);
 const selected = ref<string | null>(null);
 const flipped = ref(localStorage.getItem('chess-flipped') === '1');
 const paused = ref(false);
@@ -205,7 +213,7 @@ const updateState = (s: StateJSON) => {
   whitePlayerType.value = s.engine_white ? 'e' : 'h';
   blackPlayerType.value = s.engine_black ? 'e' : 'h';
   
-  const newLen = s.history.length;
+  const newLen = s.history ? s.history.length : 0;
   if (newLen === lastSoundedHistoryLen + 1) {
     let kind = 'move';
     if (s.in_check) kind = 'check';
@@ -472,10 +480,14 @@ const openReplay = () => { window.open(`/api/replay.html?game_id=${props.id}`, '
 watch(flipped, (val) => localStorage.setItem('chess-flipped', val ? '1' : '0'));
 
 onMounted(async () => {
-  const s = await api.getState(props.id);
-  lastSoundedHistoryLen = s.history.length;
-  prevFenForSound = s.fen;
-  updateState(s);
+  try {
+    const s = await api.getState(props.id);
+    lastSoundedHistoryLen = s.history ? s.history.length : 0;
+    prevFenForSound = s.fen;
+    updateState(s);
+  } catch (e: any) {
+    error.value = e.message || 'Unknown error';
+  }
   
   window.addEventListener('keydown', (e) => {
     const tag = (e.target && (e.target as any).tagName) || '';
@@ -503,4 +515,9 @@ onMounted(async () => {
 .nav-header a:hover { text-decoration: underline; }
 
 .loading { display: flex; align-items: center; justify-content: center; height: 100vh; font-size: 18px; color: #888; }
+
+.error-container { display: flex; align-items: center; justify-content: center; height: 100vh; padding: 20px; }
+.error-box { background: #2b2b2b; padding: 40px; border-radius: 12px; text-align: center; max-width: 400px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+.error-box h3 { color: #ff7575; margin: 0 0 16px; }
+.error-box p { color: #aaa; margin-bottom: 24px; line-height: 1.5; }
 </style>

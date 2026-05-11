@@ -213,7 +213,7 @@ func (s *Searcher) search(alpha, beta, depth, ply int) int {
 	var bestMove Move
 
 	for i, m := range moves {
-		b.MakeMove(m)
+		u := b.MakeMove(m)
 
 		var score int
 		if i == 0 {
@@ -228,7 +228,7 @@ func (s *Searcher) search(alpha, beta, depth, ply int) int {
 			}
 		}
 
-		b.UnmakeMove(Undo{Move: m})
+		b.UnmakeMove(u)
 
 		if s.shouldStop() {
 			return 0
@@ -287,9 +287,9 @@ func (s *Searcher) quiesce(alpha, beta int) int {
 			continue
 		}
 
-		s.board.MakeMove(m)
+		u := s.board.MakeMove(m)
 		score := -s.quiesce(-beta, -alpha)
-		s.board.UnmakeMove(Undo{Move: m})
+		s.board.UnmakeMove(u)
 
 		if score >= beta {
 			return beta

@@ -50,14 +50,6 @@ check:
 bench depth='6':
     @printf 'uci\nposition startpos\ngo depth {{depth}}\nquit\n' | ./chess | grep '^info depth'
 
-# Build a macOS .app bundle into ./build/Chess.app
-app:
-    bash scripts/build-app.sh
-
-# Universal (Intel + Apple Silicon) .app
-app-universal:
-    ARCH=universal bash scripts/build-app.sh
-
 # Remove build artifacts
 clean:
     rm -rf chess build pkg/api/dist frontend/dist frontend/node_modules

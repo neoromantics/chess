@@ -4,9 +4,8 @@
 - **Frontend Assets**: `just frontend` (builds Vue + copies to Go package)
 - **Build Binary**: `just build` (produces `./chess`)
 - **One-Button Dev**: `just dev` (Go API on :8080 + Vite on :5173 with HMR)
-- **Run GUI**: `just gui` (builds + runs embedded native UI)
+- **Run GUI**: `just gui` (builds + runs embedded web UI)
 - **Run UCI**: `just run` (starts engine in terminal)
-- **Native Mac App**: `just app` (creates `build/Chess.app`)
 - **Tests**: `just test` (all), `just perft` (movegen only)
 
 ## Architecture
