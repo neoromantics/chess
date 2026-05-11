@@ -11,13 +11,16 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/webview/webview_go"
 )
 
 func main() {
 	gui := flag.Bool("gui", false, "force web GUI mode (default when stdin is a terminal or .app launch)")
 	uciMode := flag.Bool("uci", false, "force UCI mode on stdio (default when stdin is piped)")
 	addr := flag.String("addr", "localhost:8080", "GUI listen address; falls back to a free port if taken")
-	noOpen := flag.Bool("no-open", false, "don't auto-open the browser in GUI mode")
+	browser := flag.Bool("browser", false, "force open in browser instead of native window (macOS only)")
+	noOpen := flag.Bool("no-open", false, "don't auto-open the GUI (start server only)")
 	idleSec := flag.Int("shutdown-on-idle", 0, "exit after N seconds with no /api/ping (0 = never; default 30 in .app launches)")
 	flag.Parse()
 
@@ -51,12 +54,26 @@ func main() {
 		}
 
 		if !*noOpen {
+			if runtime.GOOS == "darwin" && !*browser {
+				go http.Serve(ln, guiSrv)
+				openNativeWindow(url)
+				return
+			}
 			openBrowser(url)
 		}
 		log.Fatal(http.Serve(ln, guiSrv))
 	}
 
 	NewUCI(os.Stdout).Run(os.Stdin)
+}
+
+func openNativeWindow(url string) {
+	w := webview.New(false)
+	defer w.Destroy()
+	w.SetTitle("chess")
+	w.SetSize(1200, 900, webview.HintNone)
+	w.Navigate(url)
+	w.Run()
 }
 
 // launchedFromAppBundle reports whether the executable lives inside a

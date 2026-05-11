@@ -39,13 +39,13 @@ mkdir -p "${EXE_DIR}" "${RES_DIR}"
 (cd "$(dirname "$0")/../frontend" && npm install && npm run build)
 
 if [[ "${#GOARCHES[@]}" -eq 1 ]]; then
-  GOOS=darwin GOARCH="${GOARCHES[0]}" CGO_ENABLED=0 \
+  GOOS=darwin GOARCH="${GOARCHES[0]}" CGO_ENABLED=1 \
     go build -trimpath -ldflags='-s -w' -o "${EXE}" .
 else
   TMP="$(mktemp -d)"
   trap 'rm -rf "${TMP}"' EXIT
   for a in "${GOARCHES[@]}"; do
-    GOOS=darwin GOARCH="${a}" CGO_ENABLED=0 \
+    GOOS=darwin GOARCH="${a}" CGO_ENABLED=1 \
       go build -trimpath -ldflags='-s -w' -o "${TMP}/${APP_NAME}-${a}" .
   done
   if ! command -v lipo >/dev/null; then
@@ -77,13 +77,6 @@ cat > "${APP_DIR}/Contents/Info.plist" <<PLIST
     <key>LSMinimumSystemVersion</key>
     <string>10.15</string>
     <key>NSHighResolutionCapable</key>
-    <true/>
-    <!-- Run as a UI-less agent: no Dock icon, no menu bar. The Go
-         binary never registers an NSWindow, so without this macOS
-         would bounce the Dock icon forever waiting for launch to
-         finish. The browser tab is the visible UI; closing it
-         auto-quits the app via the heartbeat. -->
-    <key>LSUIElement</key>
     <true/>
 </dict>
 </plist>
