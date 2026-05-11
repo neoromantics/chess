@@ -28,7 +28,8 @@ export const api = {
 
   // Game Management
   createGame: () => request<{ game_id: string }>('/api/games/new', { method: 'POST' }),
-  listGames: () => request<string[]>('/api/games'),
+  listGames: () => request<any[]>('/api/games'),
+  deleteGame: (gameId: string) => request<void>(`/api/games/delete?game_id=${gameId}`, { method: 'DELETE' }),
 
   // Game actions (require game_id)
   getState: (gameId: string) => request<StateJSON>(`/api/state?game_id=${gameId}`),

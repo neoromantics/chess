@@ -50,9 +50,12 @@ func init() {
 const replayPlaceholder = "REPLAY_DATA_PLACEHOLDER"
 
 type gameEntry struct {
-	game     *game.Game
-	thinking atomic.Bool
-	lastUsed time.Time
+	game      *game.Game
+	thinking  atomic.Bool
+	lastUsed  time.Time
+	id        string
+	userID    int64
+	createdAt time.Time
 }
 
 type GUI struct {
@@ -84,7 +87,7 @@ func (g *GUI) StartIdleShutdown(d time.Duration) {
 			idle := time.Since(g.lastPing)
 			g.mu.Unlock()
 			if idle > d {
-				os.Exit(0)
+				// os.Exit(0) removed for web safety; would use a shutdown channel in prod
 			}
 		}
 	}()
@@ -100,6 +103,7 @@ func (g *GUI) registerRoutes() {
 	// Game management
 	g.mux.HandleFunc("POST /api/games/new", g.handleCreateGame)
 	g.mux.HandleFunc("GET /api/games", g.handleListGames)
+	g.mux.HandleFunc("DELETE /api/games/delete", g.handleDeleteGame)
 
 	// Single game routes (all require game_id)
 	g.mux.HandleFunc("GET /api/state", g.handleState)
@@ -144,11 +148,60 @@ func (g *GUI) getGame(r *http.Request) (*gameEntry, string, error) {
 	defer g.mu.Unlock()
 
 	entry, ok := g.games[id]
-	if !ok {
+	if ok {
+		entry.lastUsed = time.Now()
+		return entry, id, nil
+	}
+
+	// Try to load from DB if not in memory
+	record, err := g.db.GetGame(id)
+	if err != nil {
 		return nil, "", fmt.Errorf("game not found")
 	}
-	entry.lastUsed = time.Now()
+
+	// Verify ownership if logged in
+	user, ok := auth.GetUser(r.Context())
+	if ok && record.UserID != user.UserID {
+		return nil, "", fmt.Errorf("unauthorized")
+	}
+
+	gameInst := game.NewGame()
+	var history, historySAN []string
+	json.Unmarshal([]byte(record.History), &history)
+	json.Unmarshal([]byte(record.HistorySAN), &historySAN)
+	gameInst.Load(record.FEN, history, record.EngineWhite, record.EngineBlack)
+	gameInst.HistorySAN = historySAN // Load doesn't handle SAN history perfectly
+
+	entry = &gameEntry{
+		game:      gameInst,
+		id:        id,
+		userID:    record.UserID,
+		createdAt: record.CreatedAt,
+		lastUsed:  time.Now(),
+	}
+	g.games[id] = entry
 	return entry, id, nil
+}
+
+func (g *GUI) syncGameToDB(entry *gameEntry) {
+	g.mu.Lock()
+	gm := entry.game
+	hist, _ := json.Marshal(gm.History)
+	histSAN, _ := json.Marshal(gm.HistorySAN)
+	record := &db.GameRecord{
+		ID:          entry.id,
+		UserID:      entry.userID,
+		FEN:         gm.Board.FEN(),
+		History:     string(hist),
+		HistorySAN:  string(histSAN),
+		EngineWhite: gm.EngineWhite,
+		EngineBlack: gm.EngineBlack,
+		Status:      string(gm.Status()),
+		CreatedAt:   entry.createdAt,
+		UpdatedAt:   time.Now(),
+	}
+	g.mu.Unlock()
+	g.db.SaveGame(record)
 }
 
 func (g *GUI) handleSignup(w http.ResponseWriter, r *http.Request) {
@@ -214,26 +267,69 @@ func (g *GUI) handleMe(w http.ResponseWriter, r *http.Request) {
 }
 
 func (g *GUI) handleCreateGame(w http.ResponseWriter, r *http.Request) {
+	user, _ := auth.GetUser(r.Context())
+	var userID int64
+	if user != nil {
+		userID = user.UserID
+	}
+
 	id := uuid.New().String()
-	fmt.Printf("Creating new game: %s\n", id)
 	entry := &gameEntry{
-		game:     game.NewGame(),
-		lastUsed: time.Now(),
+		game:      game.NewGame(),
+		id:        id,
+		userID:    userID,
+		createdAt: time.Now(),
+		lastUsed:  time.Now(),
 	}
 	g.mu.Lock()
 	g.games[id] = entry
 	g.mu.Unlock()
+	
+	g.syncGameToDB(entry)
 	writeJSON(w, map[string]string{"game_id": id})
 }
 
 func (g *GUI) handleListGames(w http.ResponseWriter, r *http.Request) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	ids := make([]string, 0, len(g.games))
-	for id := range g.games {
-		ids = append(ids, id)
+	user, ok := auth.GetUser(r.Context())
+	if !ok {
+		// For guest users, only return what's in memory for their session
+		// (Ideally guests would have a session ID, but let's keep it simple)
+		g.mu.Lock()
+		defer g.mu.Unlock()
+		ids := make([]string, 0, len(g.games))
+		for id := range g.games {
+			ids = append(ids, id)
+		}
+		writeJSON(w, ids)
+		return
 	}
-	writeJSON(w, ids)
+
+	records, err := g.db.ListGames(user.UserID)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	writeJSON(w, records)
+}
+
+func (g *GUI) handleDeleteGame(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("game_id")
+	user, ok := auth.GetUser(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", 401)
+		return
+	}
+
+	g.mu.Lock()
+	delete(g.games, id)
+	g.mu.Unlock()
+
+	err := g.db.DeleteGame(id, user.UserID)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	w.WriteHeader(204)
 }
 
 func (g *GUI) handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -281,8 +377,8 @@ func (g *GUI) handleTouch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	g.mu.Lock()
-	defer g.mu.Unlock()
 	entry.game.Touch(sq)
+	g.mu.Unlock()
 	writeJSON(w, g.snapshotLocked(entry))
 }
 
@@ -300,8 +396,8 @@ func (g *GUI) handleTouchMove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	g.mu.Lock()
-	defer g.mu.Unlock()
 	entry.game.TouchMove = req.Enabled
+	g.mu.Unlock()
 	writeJSON(w, g.snapshotLocked(entry))
 }
 
@@ -319,22 +415,27 @@ func (g *GUI) handleMove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	g.mu.Lock()
-	defer g.mu.Unlock()
 	if entry.thinking.Load() || entry.game.TouchLost || entry.game.EngineToMove() {
+		g.mu.Unlock()
 		http.Error(w, "busy or not your turn", 409)
 		return
 	}
 	m, err := entry.game.Board.ParseUCIMove(req.Move)
 	if err != nil {
+		g.mu.Unlock()
 		http.Error(w, err.Error(), 400)
 		return
 	}
 	matched, ok := game.MatchMove(entry.game.Board.GenerateLegalMoves(), m)
 	if !ok {
+		g.mu.Unlock()
 		http.Error(w, "illegal move", 403)
 		return
 	}
 	entry.game.PlayMove(matched)
+	g.mu.Unlock()
+	
+	g.syncGameToDB(entry)
 	writeJSON(w, g.snapshotLocked(entry))
 }
 
@@ -353,14 +454,17 @@ func (g *GUI) handleNew(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	g.mu.Lock()
-	defer g.mu.Unlock()
 	if entry.thinking.Load() {
+		g.mu.Unlock()
 		http.Error(w, "busy", 409)
 		return
 	}
 	entry.game.Reset()
 	entry.game.EngineWhite = req.EngineWhite
 	entry.game.EngineBlack = req.EngineBlack
+	g.mu.Unlock()
+
+	g.syncGameToDB(entry)
 	writeJSON(w, g.snapshotLocked(entry))
 }
 
@@ -397,12 +501,14 @@ func (g *GUI) handleEngineStep(w http.ResponseWriter, r *http.Request) {
 	)
 
 	g.mu.Lock()
-	defer g.mu.Unlock()
 	if result.BestMove != (core.Move{}) {
 		if matched, ok := game.MatchMove(entry.game.Board.GenerateLegalMoves(), result.BestMove); ok {
 			entry.game.PlayMove(matched)
 		}
 	}
+	g.mu.Unlock()
+	
+	g.syncGameToDB(entry)
 	writeJSON(w, g.snapshotLocked(entry))
 }
 
@@ -526,9 +632,11 @@ func (g *GUI) handleSetPlayers(w http.ResponseWriter, r *http.Request) {
 	}
 	json.NewDecoder(r.Body).Decode(&req)
 	g.mu.Lock()
-	defer g.mu.Unlock()
 	entry.game.EngineWhite = req.EngineWhite
 	entry.game.EngineBlack = req.EngineBlack
+	g.mu.Unlock()
+	
+	g.syncGameToDB(entry)
 	writeJSON(w, g.snapshotLocked(entry))
 }
 
@@ -539,8 +647,15 @@ func (g *GUI) handleUndo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	g.mu.Lock()
-	defer g.mu.Unlock()
+	if entry.thinking.Load() {
+		g.mu.Unlock()
+		http.Error(w, "busy", 409)
+		return
+	}
 	entry.game.Undo()
+	g.mu.Unlock()
+
+	g.syncGameToDB(entry)
 	writeJSON(w, g.snapshotLocked(entry))
 }
 
@@ -577,6 +692,9 @@ func (g *GUI) handleLoad(w http.ResponseWriter, r *http.Request) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	entry.game.Load(sg.StartFEN, sg.Moves, sg.EngineWhite, sg.EngineBlack)
+	g.mu.Unlock()
+
+	g.syncGameToDB(entry)
 	writeJSON(w, g.snapshotLocked(entry))
 }
 
