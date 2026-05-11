@@ -4,8 +4,8 @@
       <h3>Players</h3>
       <div class="row"><label>White</label>
         <span class="seg">
-          <label><input type="radio" value="h" :modelValue="whitePlayerType" @change="$emit('update:white-player-type', $event.target.value)">Human</label>
-          <label><input type="radio" value="e" :modelValue="whitePlayerType" @change="$emit('update:white-player-type', $event.target.value)">Engine</label>
+          <label><input type="radio" name="white-side" value="h" :checked="whitePlayerType === 'h'" @change="$emit('update:white-player-type', $event.target.value)">Human</label>
+          <label><input type="radio" name="white-side" value="e" :checked="whitePlayerType === 'e'" @change="$emit('update:white-player-type', $event.target.value)">Engine</label>
         </span>
       </div>
       <div class="row" v-if="whitePlayerType === 'e'"><label>White think</label>
@@ -15,8 +15,8 @@
       </div>
       <div class="row"><label>Black</label>
         <span class="seg">
-          <label><input type="radio" value="h" :modelValue="blackPlayerType" @change="$emit('update:black-player-type', $event.target.value)">Human</label>
-          <label><input type="radio" value="e" :modelValue="blackPlayerType" @change="$emit('update:black-player-type', $event.target.value)">Engine</label>
+          <label><input type="radio" name="black-side" value="h" :checked="blackPlayerType === 'h'" @change="$emit('update:black-player-type', $event.target.value)">Human</label>
+          <label><input type="radio" name="black-side" value="e" :checked="blackPlayerType === 'e'" @change="$emit('update:black-player-type', $event.target.value)">Engine</label>
         </span>
       </div>
       <div class="row" v-if="blackPlayerType === 'e'"><label>Black think</label>
