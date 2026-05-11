@@ -50,13 +50,14 @@ func init() {
 const replayPlaceholder = "REPLAY_DATA_PLACEHOLDER"
 
 type gameEntry struct {
-	game      *game.Game
-	thinking  atomic.Bool
-	lastUsed  time.Time
-	id        string
-	userID    int64
-	sessionID string
-	createdAt time.Time
+	game       *game.Game
+	thinking   atomic.Bool
+	stopSearch atomic.Bool
+	lastUsed   time.Time
+	id         string
+	userID     int64
+	sessionID  string
+	createdAt  time.Time
 }
 
 type GUI struct {
@@ -120,7 +121,6 @@ func (g *GUI) registerRoutes() {
 	g.mux.HandleFunc("GET /api/save", g.handleSave)
 	g.mux.HandleFunc("POST /api/load", g.handleLoad)
 	g.mux.HandleFunc("GET /api/replay.html", g.handleReplay)
-	g.mux.HandleFunc("GET /ws", g.handleWS)
 	g.mux.Handle("GET /assets/", http.FileServer(assetsFS))
 	g.mux.HandleFunc("GET /{$}", g.handleIndex)
 }
@@ -189,6 +189,7 @@ func (g *GUI) getGame(r *http.Request) (*gameEntry, string, error) {
 		createdAt: record.CreatedAt,
 		lastUsed:  time.Now(),
 	}
+	entry.stopSearch.Store(false)
 	g.mu.Lock()
 	g.games[id] = entry
 	g.mu.Unlock()
@@ -295,6 +296,7 @@ func (g *GUI) handleCreateGame(w http.ResponseWriter, r *http.Request) {
 		createdAt: time.Now(),
 		lastUsed:  time.Now(),
 	}
+	entry.stopSearch.Store(false)
 	g.mu.Lock()
 	g.games[id] = entry
 	g.mu.Unlock()
@@ -340,6 +342,7 @@ func (g *GUI) handleDeleteGame(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "unauthorized", 401)
 			return
 		}
+		entry.stopSearch.Store(true) // Stop any ongoing search before deleting
 		delete(g.games, id)
 	}
 	g.mu.Unlock()
@@ -485,17 +488,35 @@ func (g *GUI) handleEngineStep(w http.ResponseWriter, r *http.Request) {
 	board := *entry.game.Board
 	hist := game.CopyHistory(entry.game.HistoryHash())
 	entry.thinking.Store(true)
+	entry.stopSearch.Store(false)
 	g.mu.Unlock()
+
 	defer entry.thinking.Store(false)
-	result := board.IterativeDeepening(core.SearchLimits{MoveTime: time.Duration(req.MoveTime) * time.Millisecond, History: hist}, &atomic.Bool{}, nil)
+
+	result := board.IterativeDeepening(
+		core.SearchLimits{MoveTime: time.Duration(req.MoveTime) * time.Millisecond, History: hist},
+		&entry.stopSearch,
+		nil,
+	)
+
 	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	// Final safety check: if user switched to human while we were thinking, abort applying the move.
+	if entry.stopSearch.Load() || !entry.game.EngineToMove() {
+		return
+	}
+
 	if result.BestMove != (core.Move{}) {
 		if matched, ok := game.MatchMove(entry.game.Board.GenerateLegalMoves(), result.BestMove); ok {
 			entry.game.PlayMove(matched)
 		}
 	}
-	g.mu.Unlock()
-	g.syncGameToDB(entry)
+	
+	// We call sync outside the local Lock but it will re-lock. 
+	// To be safer and efficient, we manually call sync logic here or unlock first.
+	// Actually syncGameToDB handles its own locking.
+	go g.syncGameToDB(entry)
 	writeJSON(w, g.snapshotLocked(entry))
 }
 
@@ -516,13 +537,14 @@ func (g *GUI) handleHint(w http.ResponseWriter, r *http.Request) {
 	board := *entry.game.Board
 	hist := game.CopyHistory(entry.game.HistoryHash())
 	entry.thinking.Store(true)
+	entry.stopSearch.Store(false)
 	g.mu.Unlock()
 	defer entry.thinking.Store(false)
-	result := board.IterativeDeepening(core.SearchLimits{MoveTime: time.Duration(req.MoveTime) * time.Millisecond, History: hist}, &atomic.Bool{}, nil)
+	result := board.IterativeDeepening(core.SearchLimits{MoveTime: time.Duration(req.MoveTime) * time.Millisecond, History: hist}, &entry.stopSearch, nil)
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	res := map[string]any{"state": g.snapshotLocked(entry)}
-	if result.BestMove != (core.Move{}) {
+	if result.BestMove != (core.Move{}) && !entry.stopSearch.Load() {
 		m := result.BestMove
 		res["hint"] = map[string]any{
 			"move": m.String(), "from": core.SquareName(m.From), "to": core.SquareName(m.To),
@@ -556,11 +578,12 @@ func (g *GUI) handleAssess(w http.ResponseWriter, r *http.Request) {
 	before, after := entry.game.BoardsAroundMove(idx)
 	userMove, player := entry.game.UndoStack[idx].Move, entry.game.PlayerAt(idx)
 	entry.thinking.Store(true)
+	entry.stopSearch.Store(false)
 	g.mu.Unlock()
 	defer entry.thinking.Store(false)
 	t := time.Duration(req.MoveTime) * time.Millisecond
-	resBefore := before.IterativeDeepening(core.SearchLimits{MoveTime: t}, &atomic.Bool{}, nil)
-	resAfter := after.IterativeDeepening(core.SearchLimits{MoveTime: t}, &atomic.Bool{}, nil)
+	resBefore := before.IterativeDeepening(core.SearchLimits{MoveTime: t}, &entry.stopSearch, nil)
+	resAfter := after.IterativeDeepening(core.SearchLimits{MoveTime: t}, &entry.stopSearch, nil)
 	bestScore, userScore := resBefore.Score, resAfter.Score
 	if player == core.Black { bestScore, userScore = -bestScore, -userScore }
 	cpLoss := bestScore - userScore
@@ -581,6 +604,10 @@ func (g *GUI) handleSetPlayers(w http.ResponseWriter, r *http.Request) {
 	json.NewDecoder(r.Body).Decode(&req)
 	g.mu.Lock()
 	entry.game.EngineWhite, entry.game.EngineBlack = req.EngineWhite, req.EngineBlack
+	// If the side whose turn it is was just switched to human, stop the search.
+	if !entry.game.EngineToMove() {
+		entry.stopSearch.Store(true)
+	}
 	g.mu.Unlock()
 	g.syncGameToDB(entry)
 	writeJSON(w, g.snapshotLocked(entry))
