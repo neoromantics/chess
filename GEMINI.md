@@ -1,16 +1,17 @@
 # Gemini Mandates: Chess Platform
 
-## 🏗 Architectural Foundation
-- **Modular Monolith**: Maintain the Go package structure strictly. Business logic belongs in `pkg/core`. API/HTTP logic belongs in `pkg/api`.
-- **Pure Go Core**: Keep `pkg/core` free of external dependencies. This ensures the engine remains fast, portable, and easy to test.
-- **TypeScript First**: All frontend code must use TypeScript. Explicit interfaces in `frontend/src/types.ts` are the source of truth for backend communication.
-- **Stateless Auth**: Use JWT for user sessions to ensure the backend can scale horizontally (K8s ready).
-- **SQLite Persistence**: Use the pure-Go SQLite driver for all database operations to maintain containerization simplicity.
+## 🏗 Architectural Foundation (Commercial Scale)
+- **Modular Monolith to Microservices**: Prepare for horizontal scaling by keeping the API stateless. Engine search must eventually move to a Worker Pool pattern.
+- **Stateless API Layer**: API pods must not rely on local in-memory state. Use Redis for active sessions and PostgreSQL for persistence in production.
+- **Pure Go Core**: Keep `pkg/core` free of external dependencies to maximize search performance on worker nodes.
+- **TypeScript First**: Strict typing in `frontend/src/types.ts` is the contract between decoupled frontend and backend services.
+- **Anti-Cheat Readiness**: Design all game logic to support telemetry collection (move times, focus events) for future statistical fraud detection.
 
-## 🚀 Deployment Standards
-- **Docker First**: The `Dockerfile` is the primary deployment artifact. Ensure multi-stage builds remain optimized.
-- **Env Awareness**: Backend must read configuration from environment variables (`PORT`, `DB_PATH`, `JWT_SECRET`).
-- **CORS Support**: Maintain CORS middleware in `pkg/api/gui.go` to support decoupled frontend/backend hosting.
+## 🚀 Deployment & Ops (Enterprise Grade)
+- **Kubernetes Native**: Use the manifests in `deploy/k8s` as the source of truth for cloud topology.
+- **Observability**: Implement structured `slog` logging and prepare for OpenTelemetry tracing across the API-to-Worker boundary.
+- **Env-Driven Config**: Never hardcode secrets. Use K8s Secrets mapped to environment variables (`JWT_SECRET`, `DB_URL`).
+- **Health-Checks**: Always maintain the `/health` endpoint for liveness/readiness probes.
 
 ## 🛠 Development Workflow
 - **One-Button Dev**: `just dev` is the canonical way to develop. It handles concurrent Go/Vite execution.

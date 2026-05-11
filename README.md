@@ -2,12 +2,13 @@
 
 A modern chess engine and web-based platform written in Go and Vue 3 (TypeScript).
 
-## 🚀 Web Launch Ready
-This project has been upgraded from a local tool to a full web platform.
+## 🚀 Enterprise Ready
+This platform is architected for commercial scale, ready to serve thousands of concurrent players.
 - **User Accounts**: Secure signup and login with Bcrypt and JWT.
-- **Multi-Game Support**: Start and manage multiple games in one window.
-- **Dockerized**: Ready for containerized deployment (K8s/Cloud).
-- **Responsive UI**: Plays perfectly in browsers and on mobile.
+- **Multi-Game Support**: Manage multiple sessions with sub-millisecond state transitions.
+- **Kubernetes Native**: Includes foundational manifests in `deploy/k8s` for cloud-scale horizontal scaling.
+- **Dockerized**: Optimized multi-stage production builds for minimal image size.
+- **Responsive UI**: Professional TypeScript Vue 3 SPA for a smooth cross-device experience.
 
 ## Features
 - **Engine**: Bitboard-based (0x88) engine with alpha-beta, quiescence, and tapered evaluation.

@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chess-api
+  labels:
+    app: chess-api
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: chess-api
+  template:
+    metadata:
+      labels:
+        app: chess-api
+    spec:
+      containers:
+      - name: chess
+        image: neoromantics/chess:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: DB_PATH
+          value: "/app/data/chess.db"
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: chess-secrets
+              key: jwt-secret
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 2
+          periodSeconds: 5
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "512Mi"
+          limits:
+            cpu: "1000m"
+            memory: "1Gi"
+        volumeMounts:
+        - name: chess-data
+          mountPath: /app/data
+      volumes:
+      - name: chess-data
+        persistentVolumeClaim:
+          claimName: chess-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chess-api
+spec:
+  selector:
+    app: chess-api
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 8080
+  type: LoadBalancer

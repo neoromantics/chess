@@ -43,6 +43,22 @@ services:
 
 Run with: `docker-compose up -d`
 
+## Kubernetes (Cloud Scale)
+
+For high-concurrency environments, use the manifests in `deploy/k8s`.
+
+### 1. Create Secrets
+```bash
+kubectl create secret generic chess-secrets --from-literal=jwt-secret=your-long-random-key
+```
+
+### 2. Apply Manifests
+```bash
+kubectl apply -f deploy/k8s/api.yaml
+```
+
+This will launch a load-balanced cluster of 3 API pods. For commercial scale, follow the **Scaling Roadmap** in the project documentation.
+
 ## Configuration (Environment Variables)
 
 | Variable | Description | Default |
