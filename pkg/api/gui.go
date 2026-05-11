@@ -61,7 +61,8 @@ type gameEntry struct {
 
 type GUI struct {
 	mux *http.ServeMux
-	db  *db.DB
+	db  db.Store
+	hub *Hub
 
 	mu    sync.Mutex
 	games map[string]*gameEntry
@@ -69,12 +70,14 @@ type GUI struct {
 	lastPing time.Time
 }
 
-func NewGUI(database *db.DB) *GUI {
+func NewGUI(database db.Store) *GUI {
 	g := &GUI{
 		db:       database,
+		hub:      NewHub(),
 		games:    make(map[string]*gameEntry),
 		lastPing: time.Now(),
 	}
+	go g.hub.Run()
 	g.mux = http.NewServeMux()
 	g.registerRoutes()
 	return g
@@ -117,6 +120,7 @@ func (g *GUI) registerRoutes() {
 	g.mux.HandleFunc("GET /api/save", g.handleSave)
 	g.mux.HandleFunc("POST /api/load", g.handleLoad)
 	g.mux.HandleFunc("GET /api/replay.html", g.handleReplay)
+	g.mux.HandleFunc("GET /ws", g.handleWS)
 	g.mux.Handle("GET /assets/", http.FileServer(assetsFS))
 	g.mux.HandleFunc("GET /{$}", g.handleIndex)
 }
@@ -209,8 +213,11 @@ func (g *GUI) syncGameToDB(entry *gameEntry) {
 		CreatedAt:   entry.createdAt,
 		UpdatedAt:   time.Now(),
 	}
+	snapshot := g.snapshotLocked(entry)
 	g.mu.Unlock()
+
 	g.db.SaveGame(record)
+	g.hub.BroadcastState(entry.id, snapshot)
 }
 
 func (g *GUI) handleSignup(w http.ResponseWriter, r *http.Request) {

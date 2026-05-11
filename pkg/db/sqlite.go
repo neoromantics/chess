@@ -9,18 +9,11 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-type User struct {
-	ID           int64     `json:"id"`
-	Username     string    `json:"username"`
-	PasswordHash string    `json:"-"`
-	CreatedAt    time.Time `json:"created_at"`
-}
-
-type DB struct {
+type SQLiteStore struct {
 	db *sql.DB
 }
 
-func Open() (*DB, error) {
+func OpenSQLite() (Store, error) {
 	path := os.Getenv("DB_PATH")
 	if path == "" {
 		path = "chess.db"
@@ -35,16 +28,16 @@ func Open() (*DB, error) {
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
-	d := &DB{db: db}
-	if err := d.init(); err != nil {
+	s := &SQLiteStore{db: db}
+	if err := s.init(); err != nil {
 		return nil, fmt.Errorf("failed to initialize schema: %w", err)
 	}
 
-	return d, nil
+	return s, nil
 }
 
-func (d *DB) init() error {
-	_, err := d.db.Exec(`
+func (s *SQLiteStore) init() error {
+	_, err := s.db.Exec(`
 		CREATE TABLE IF NOT EXISTS users (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			username TEXT UNIQUE NOT NULL,
@@ -70,87 +63,13 @@ func (d *DB) init() error {
 	return err
 }
 
-func (d *DB) Close() error {
-	return d.db.Close()
+func (s *SQLiteStore) Close() error {
+	return s.db.Close()
 }
 
-// ... CreateUser and GetUserByUsername ...
-
-type GameRecord struct {
-	ID          string    `json:"id"`
-	UserID      int64     `json:"user_id"`
-	SessionID   string    `json:"session_id"`
-	FEN         string    `json:"fen"`
-	History     string    `json:"history"`     // JSON string
-	HistorySAN  string    `json:"history_san"` // JSON string
-	EngineWhite bool      `json:"engine_white"`
-	EngineBlack bool      `json:"engine_black"`
-	Status      string    `json:"status"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
-}
-
-func (d *DB) SaveGame(g *GameRecord) error {
-	_, err := d.db.Exec(`
-		INSERT INTO games (id, user_id, session_id, fen, history, history_san, engine_white, engine_black, status, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET
-			user_id=excluded.user_id,
-			session_id=excluded.session_id,
-			fen=excluded.fen,
-			history=excluded.history,
-			history_san=excluded.history_san,
-			status=excluded.status,
-			updated_at=excluded.updated_at
-	`, g.ID, g.UserID, g.SessionID, g.FEN, g.History, g.HistorySAN, g.EngineWhite, g.EngineBlack, g.Status, g.CreatedAt, g.UpdatedAt)
-	return err
-}
-
-func (d *DB) ListGames(userID int64, sessionID string) ([]GameRecord, error) {
-	query := `
-		SELECT id, user_id, session_id, fen, history, history_san, engine_white, engine_black, status, created_at, updated_at
-		FROM games
-		WHERE (user_id > 0 AND user_id = ?) OR (user_id = 0 AND session_id = ?)
-		ORDER BY updated_at DESC
-	`
-	rows, err := d.db.Query(query, userID, sessionID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var records []GameRecord
-	for rows.Next() {
-		var g GameRecord
-		if err := rows.Scan(&g.ID, &g.UserID, &g.SessionID, &g.FEN, &g.History, &g.HistorySAN, &g.EngineWhite, &g.EngineBlack, &g.Status, &g.CreatedAt, &g.UpdatedAt); err != nil {
-			return nil, err
-		}
-		records = append(records, g)
-	}
-	return records, nil
-}
-
-func (d *DB) GetGame(id string) (*GameRecord, error) {
-	g := &GameRecord{}
-	err := d.db.QueryRow(`
-		SELECT id, user_id, session_id, fen, history, history_san, engine_white, engine_black, status, created_at, updated_at
-		FROM games
-		WHERE id = ?
-	`, id).Scan(&g.ID, &g.UserID, &g.SessionID, &g.FEN, &g.History, &g.HistorySAN, &g.EngineWhite, &g.EngineBlack, &g.Status, &g.CreatedAt, &g.UpdatedAt)
-	if err != nil {
-		return nil, err
-	}
-	return g, nil
-}
-
-func (d *DB) DeleteGame(id string, userID int64) error {
-	_, err := d.db.Exec("DELETE FROM games WHERE id = ? AND user_id = ?", id, userID)
-	return err
-}
-
-func (d *DB) CreateUser(username, passwordHash string) (*User, error) {
+func (s *SQLiteStore) CreateUser(username, passwordHash string) (*User, error) {
 	now := time.Now()
-	res, err := d.db.Exec(`
+	res, err := s.db.Exec(`
 		INSERT INTO users (username, password_hash, created_at)
 		VALUES (?, ?, ?)
 	`, username, passwordHash, now)
@@ -171,9 +90,9 @@ func (d *DB) CreateUser(username, passwordHash string) (*User, error) {
 	}, nil
 }
 
-func (d *DB) GetUserByUsername(username string) (*User, error) {
+func (s *SQLiteStore) GetUserByUsername(username string) (*User, error) {
 	u := &User{}
-	err := d.db.QueryRow(`
+	err := s.db.QueryRow(`
 		SELECT id, username, password_hash, created_at
 		FROM users
 		WHERE username = ?
@@ -182,4 +101,62 @@ func (d *DB) GetUserByUsername(username string) (*User, error) {
 		return nil, err
 	}
 	return u, nil
+}
+
+func (s *SQLiteStore) SaveGame(g *GameRecord) error {
+	_, err := s.db.Exec(`
+		INSERT INTO games (id, user_id, session_id, fen, history, history_san, engine_white, engine_black, status, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			user_id=excluded.user_id,
+			session_id=excluded.session_id,
+			fen=excluded.fen,
+			history=excluded.history,
+			history_san=excluded.history_san,
+			status=excluded.status,
+			updated_at=excluded.updated_at
+	`, g.ID, g.UserID, g.SessionID, g.FEN, g.History, g.HistorySAN, g.EngineWhite, g.EngineBlack, g.Status, g.CreatedAt, g.UpdatedAt)
+	return err
+}
+
+func (s *SQLiteStore) ListGames(userID int64, sessionID string) ([]GameRecord, error) {
+	query := `
+		SELECT id, user_id, session_id, fen, history, history_san, engine_white, engine_black, status, created_at, updated_at
+		FROM games
+		WHERE (user_id > 0 AND user_id = ?) OR (user_id = 0 AND session_id = ?)
+		ORDER BY updated_at DESC
+	`
+	rows, err := s.db.Query(query, userID, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var records []GameRecord
+	for rows.Next() {
+		var g GameRecord
+		if err := rows.Scan(&g.ID, &g.UserID, &g.SessionID, &g.FEN, &g.History, &g.HistorySAN, &g.EngineWhite, &g.EngineBlack, &g.Status, &g.CreatedAt, &g.UpdatedAt); err != nil {
+			return nil, err
+		}
+		records = append(records, g)
+	}
+	return records, nil
+}
+
+func (s *SQLiteStore) GetGame(id string) (*GameRecord, error) {
+	g := &GameRecord{}
+	err := s.db.QueryRow(`
+		SELECT id, user_id, session_id, fen, history, history_san, engine_white, engine_black, status, created_at, updated_at
+		FROM games
+		WHERE id = ?
+	`, id).Scan(&g.ID, &g.UserID, &g.SessionID, &g.FEN, &g.History, &g.HistorySAN, &g.EngineWhite, &g.EngineBlack, &g.Status, &g.CreatedAt, &g.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return g, nil
+}
+
+func (s *SQLiteStore) DeleteGame(id string, userID int64) error {
+	_, err := s.db.Exec("DELETE FROM games WHERE id = ? AND user_id = ?", id, userID)
+	return err
 }

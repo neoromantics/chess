@@ -34,7 +34,7 @@ func main() {
 	}
 
 	if runGUI {
-		db, err := db.Open()
+		db, err := db.OpenSQLite()
 		if err != nil {
 			log.Fatal(err)
 		}

@@ -85,7 +85,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, watch } from 'vue';
+import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue';
 import ChessBoard from '../components/ChessBoard.vue';
 import SidePanel from '../components/SidePanel.vue';
 import EditPanel from '../components/EditPanel.vue';
@@ -115,6 +115,8 @@ const assessColor = ref('#ddd');
 const fenInput = ref('');
 const pendingPromo = ref<{ from: string; to: string } | null>(null);
 
+let ws: WebSocket | null = null;
+
 // Players
 const whitePlayerType = ref('h');
 const blackPlayerType = ref('e');
@@ -130,9 +132,9 @@ const editCastling = reactive({ K: true, Q: true, k: true, q: true });
 const editPickedUp = ref<{ r: number; f: number; pc: string } | null>(null);
 
 // Audio
-let audioCtx: AudioContext | null = null;
 let lastSoundedHistoryLen = 0;
 let prevFenForSound = '';
+let audioCtx: AudioContext | null = null;
 
 const ensureAudio = () => {
   if (!audioCtx) {
@@ -228,6 +230,26 @@ const updateState = (s: StateJSON) => {
   if (!paused.value && s.status === 'ongoing' && s.engine_to_move && !s.thinking) {
     scheduleEngine();
   }
+};
+
+const connectWS = () => {
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const apiBase = (import.meta.env.VITE_API_URL as string) || '';
+  const host = apiBase.replace(/^https?:\/\//, '') || window.location.host;
+  const url = `${protocol}//${host}/ws?game_id=${props.id}`;
+  
+  ws = new WebSocket(url);
+  ws.onmessage = (event) => {
+    try {
+      const newState = JSON.parse(event.data);
+      updateState(newState);
+    } catch (e) {
+      console.error('Failed to parse WS message', e);
+    }
+  };
+  ws.onclose = () => {
+    setTimeout(connectWS, 3000);
+  };
 };
 
 const onSquare = async (sq: Square) => {
@@ -392,7 +414,7 @@ const scheduleEngine = async () => {
   try {
     updateState(await api.engineStep(props.id, movetime));
   } catch (e: any) {
-    slog.Error("Engine step failed", "error", e);
+    console.error("Engine step failed", e);
   }
 };
 
@@ -532,6 +554,7 @@ onMounted(async () => {
     lastSoundedHistoryLen = s.history ? s.history.length : 0;
     prevFenForSound = s.fen;
     updateState(s);
+    connectWS();
   } catch (e: any) {
     error.value = e.message || 'Unknown error';
   }
@@ -542,10 +565,17 @@ onMounted(async () => {
     if (e.key === 'f' || e.key === 'F') flipped.value = !flipped.value;
   });
 });
+
+onUnmounted(() => {
+  if (ws) {
+    ws.onclose = null;
+    ws.close();
+  }
+});
 </script>
 
 <style scoped>
-#app-container { display: flex; gap: 32px; align-items: flex-start; justify-content: center; padding: 32px 20px; min-height: 100vh; width: 100%; }
+#app-container { display: flex; gap: 32px; align-items: flex-start; justify-content: center; padding: 32px 20px; min-height: calc(100vh - 64px); width: 100%; }
 
 @media (max-width: 1000px) {
   #side { display: none; }
