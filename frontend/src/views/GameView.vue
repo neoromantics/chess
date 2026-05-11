@@ -21,9 +21,6 @@
     />
 
     <div id="side">
-      <div class="nav-header">
-        <router-link to="/">← Dashboard</router-link>
-      </div>
       <h2>Game Session</h2>
       <div class="game-id">ID: {{ id }}</div>
       <div id="status">{{ statusMsg }}</div>
@@ -95,12 +92,14 @@ import EditPanel from '../components/EditPanel.vue';
 import PromoModal from '../components/PromoModal.vue';
 import { PIECE, ASSESS_COLORS, ASSESS_SYMBOL, parseBoard } from '../constants';
 import { api } from '../api';
+import { useToastStore } from '../stores/toast';
 import { StateJSON, Square } from '../types';
 
 const props = defineProps<{
   id: string;
 }>();
 
+const toastStore = useToastStore();
 const state = ref<StateJSON | null>(null);
 const error = ref<string | null>(null);
 const selected = ref<string | null>(null);
@@ -261,7 +260,11 @@ const onSquare = async (sq: Square) => {
       if (cands.length === 1 && cands[0].length === 4) sendMove(cands[0]);
       else { pendingPromo.value = { from: touched, to: sq.name }; }
     } else {
-      updateState(await api.touch(props.id, sq.name));
+      try {
+        updateState(await api.touch(props.id, sq.name));
+      } catch (e: any) {
+        toastStore.error(e.message);
+      }
     }
     return;
   }
@@ -294,8 +297,12 @@ const sendMove = async (mv: string) => {
   hint.value = null;
   hintInfo.value = '';
   assessInfo.value = '';
-  updateState(await api.move(props.id, mv));
-  if (autoAssess.value) runAssess();
+  try {
+    updateState(await api.move(props.id, mv));
+    if (autoAssess.value) runAssess();
+  } catch (e: any) {
+    toastStore.error(e.message);
+  }
 };
 
 const completePromo = (promo: string) => {
@@ -307,22 +314,32 @@ const completePromo = (promo: string) => {
 };
 
 const newGame = async () => {
-  updateState(await api.newGame(props.id, whitePlayerType.value === 'e', blackPlayerType.value === 'e'));
-  selected.value = null;
-  hint.value = null;
-  hintInfo.value = '';
-  assessInfo.value = '';
-  Object.keys(assessments).forEach(k => delete assessments[parseInt(k)]);
+  try {
+    updateState(await api.newGame(props.id, whitePlayerType.value === 'e', blackPlayerType.value === 'e'));
+    selected.value = null;
+    hint.value = null;
+    hintInfo.value = '';
+    assessInfo.value = '';
+    Object.keys(assessments).forEach(k => delete assessments[parseInt(k)]);
+    toastStore.success('Game reset');
+  } catch (e: any) {
+    toastStore.error(e.message);
+  }
 };
 
 const undoMove = async () => {
-  updateState(await api.undo(props.id));
-  selected.value = null;
-  hint.value = null;
-  hintInfo.value = '';
-  assessInfo.value = '';
-  if (state.value) {
-    delete assessments[state.value.history.length];
+  try {
+    updateState(await api.undo(props.id));
+    selected.value = null;
+    hint.value = null;
+    hintInfo.value = '';
+    assessInfo.value = '';
+    if (state.value) {
+      delete assessments[state.value.history.length];
+    }
+    toastStore.info('Move undone');
+  } catch (e: any) {
+    toastStore.error(e.message);
   }
 };
 
@@ -340,8 +357,9 @@ const getHint = async () => {
       hint.value = null;
       hintInfo.value = 'No move available.';
     }
-  } catch (e) {
+  } catch (e: any) {
     hintInfo.value = '';
+    toastStore.error('Hint failed: ' + e.message);
   }
 };
 
@@ -361,8 +379,9 @@ const runAssess = async (idx?: number, fromHistory = false) => {
       else txt += ` (${a.user_score})`;
       assessInfo.value = txt;
     }
-  } catch (e) {
+  } catch (e: any) {
     assessInfo.value = '';
+    toastStore.error('Assessment failed');
   }
 };
 
@@ -370,18 +389,31 @@ const scheduleEngine = async () => {
   if (!state.value) return;
   if (paused.value || state.value.status !== 'ongoing' || !state.value.engine_to_move || state.value.thinking) return;
   const movetime = state.value.turn === 'w' ? whiteThinkTime.value : blackThinkTime.value;
-  updateState(await api.engineStep(props.id, movetime));
+  try {
+    updateState(await api.engineStep(props.id, movetime));
+  } catch (e: any) {
+    slog.Error("Engine step failed", "error", e);
+  }
 };
 
 const updatePlayerType = async (side: 'white' | 'black', type: string) => {
   if (side === 'white') whitePlayerType.value = type;
   else blackPlayerType.value = type;
   
-  updateState(await api.setPlayers(props.id, whitePlayerType.value === 'e', blackPlayerType.value === 'e'));
+  try {
+    updateState(await api.setPlayers(props.id, whitePlayerType.value === 'e', blackPlayerType.value === 'e'));
+  } catch (e: any) {
+    toastStore.error('Failed to update players');
+  }
 };
 
 const setTouchMove = async (enabled: boolean) => {
-  updateState(await api.setTouchMove(props.id, enabled));
+  try {
+    updateState(await api.setTouchMove(props.id, enabled));
+    toastStore.info(`Touch-move ${enabled ? 'enabled' : 'disabled'}`);
+  } catch (e: any) {
+    toastStore.error('Failed to update touch-move');
+  }
 };
 
 const setSoundEnabled = (val: boolean) => {
@@ -446,12 +478,17 @@ const editApply = async () => {
   };
   let castling = (valid.K?'K':'')+(valid.Q?'Q':'')+(valid.k?'k':'')+(valid.q?'q':'');
   const fen = `${boardStr} ${editTurn.value} ${castling||'-'} - 0 1`;
-  updateState(await api.loadGame(props.id, {
-    start_fen: fen, moves: [], 
-    engine_white: whitePlayerType.value === 'e', 
-    engine_black: blackPlayerType.value === 'e'
-  }));
-  editMode.value = false;
+  try {
+    updateState(await api.loadGame(props.id, {
+      start_fen: fen, moves: [], 
+      engine_white: whitePlayerType.value === 'e', 
+      engine_black: blackPlayerType.value === 'e'
+    }));
+    editMode.value = false;
+    toastStore.success('Position applied');
+  } catch (e: any) {
+    toastStore.error('Failed to apply position');
+  }
 };
 
 const saveGame = () => { window.location.href = api.getSaveUrl(props.id); };
@@ -459,20 +496,30 @@ const loadGameFile = async (event: Event) => {
   const file = (event.target as HTMLInputElement).files?.[0];
   if (!file) return;
   const text = await file.text();
-  updateState(await api.loadGame(props.id, text));
-  selected.value = null;
-  hint.value = null;
-  Object.keys(assessments).forEach(k => delete assessments[parseInt(k)]);
+  try {
+    updateState(await api.loadGame(props.id, text));
+    selected.value = null;
+    hint.value = null;
+    Object.keys(assessments).forEach(k => delete assessments[parseInt(k)]);
+    toastStore.success('Game loaded');
+  } catch (e: any) {
+    toastStore.error('Failed to load file');
+  }
   (event.target as HTMLInputElement).value = '';
 };
 
 const loadFen = async () => {
-  updateState(await api.loadGame(props.id, {
-    start_fen: fenInput.value.trim(), moves: [], 
-    engine_white: whitePlayerType.value === 'e', 
-    engine_black: blackPlayerType.value === 'e'
-  }));
-  fenInput.value = '';
+  try {
+    updateState(await api.loadGame(props.id, {
+      start_fen: fenInput.value.trim(), moves: [], 
+      engine_white: whitePlayerType.value === 'e', 
+      engine_black: blackPlayerType.value === 'e'
+    }));
+    fenInput.value = '';
+    toastStore.success('FEN loaded');
+  } catch (e: any) {
+    toastStore.error('Failed to load FEN');
+  }
 };
 
 const openReplay = () => { window.open(`/api/replay.html?game_id=${props.id}`, '_blank'); };
@@ -510,13 +557,9 @@ onMounted(async () => {
 .game-id { font-size: 10px; color: #666; margin-bottom: 12px; }
 #status { font-size: 16px; font-weight: 600; margin-bottom: 16px; padding: 10px 12px; background: #2b2b2b; border-radius: 4px; min-height: 22px; border-left: 3px solid #4a6b8a; }
 
-.nav-header { margin-bottom: 12px; }
-.nav-header a { color: #4a6b8a; text-decoration: none; font-size: 14px; }
-.nav-header a:hover { text-decoration: underline; }
+.loading { display: flex; align-items: center; justify-content: center; height: calc(100vh - 64px); font-size: 18px; color: #888; }
 
-.loading { display: flex; align-items: center; justify-content: center; height: 100vh; font-size: 18px; color: #888; }
-
-.error-container { display: flex; align-items: center; justify-content: center; height: 100vh; padding: 20px; }
+.error-container { display: flex; align-items: center; justify-content: center; height: calc(100vh - 64px); padding: 20px; }
 .error-box { background: #2b2b2b; padding: 40px; border-radius: 12px; text-align: center; max-width: 400px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
 .error-box h3 { color: #ff7575; margin: 0 0 16px; }
 .error-box p { color: #aaa; margin-bottom: 24px; line-height: 1.5; }

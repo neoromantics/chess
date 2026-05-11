@@ -19,8 +19,8 @@ export const ASSESS_SYMBOL: Record<string, string> = {
   Excellent: '',
   Good: '',
   Inaccuracy: '?!',
-  Mistake:    '?',
-  Blunder:    '??',
+  Mistake: '?',
+  Blunder: '??',
 };
 
 export function parseBoard(fen: string): (string | null)[][] {

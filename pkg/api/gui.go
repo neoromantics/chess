@@ -7,8 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"net/http"
-	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -94,6 +94,9 @@ func (g *GUI) StartIdleShutdown(d time.Duration) {
 }
 
 func (g *GUI) registerRoutes() {
+	// Utility
+	g.mux.HandleFunc("GET /health", g.handleHealth)
+
 	// Auth routes
 	g.mux.HandleFunc("POST /api/auth/signup", g.handleSignup)
 	g.mux.HandleFunc("POST /api/auth/login", g.handleLogin)
@@ -127,6 +130,7 @@ func (g *GUI) registerRoutes() {
 }
 
 func (g *GUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// CORS headers for development/remote web UI
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
 	w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization")
@@ -135,7 +139,17 @@ func (g *GUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	auth.Middleware(g.mux).ServeHTTP(w, r)
+	// Apply production middlewares in order
+	handler := RecoveryMiddleware(g.mux)
+	handler = LoggerMiddleware(handler)
+	handler = SecurityHeadersMiddleware(handler)
+	handler = auth.Middleware(handler)
+
+	handler.ServeHTTP(w, r)
+}
+
+func (g *GUI) handleHealth(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, map[string]string{"status": "ok", "time": time.Now().Format(time.RFC3339)})
 }
 
 func (g *GUI) getGame(r *http.Request) (*gameEntry, string, error) {
@@ -274,6 +288,7 @@ func (g *GUI) handleCreateGame(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := uuid.New().String()
+	slog.Info("creating new game", "game_id", id)
 	entry := &gameEntry{
 		game:      game.NewGame(),
 		id:        id,
@@ -347,11 +362,11 @@ func (g *GUI) handlePing(w http.ResponseWriter, r *http.Request) {
 func (g *GUI) handleState(w http.ResponseWriter, r *http.Request) {
 	entry, id, err := g.getGame(r)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "handleState error: %v\n", err)
+		slog.Error("handleState error", "error", err)
 		http.Error(w, err.Error(), 404)
 		return
 	}
-	fmt.Printf("Fetching state for game %s\n", id)
+	slog.Info("fetching state", "game_id", id)
 	g.mu.Lock()
 	snapshot := g.snapshotLocked(entry)
 	g.mu.Unlock()

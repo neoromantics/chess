@@ -1,10 +1,20 @@
 <template>
-  <router-view></router-view>
+  <div id="app-root">
+    <Navbar />
+    <main class="app-content">
+      <router-view></router-view>
+    </main>
+    <Toast />
+  </div>
 </template>
 
 <script setup lang="ts">
 import { onMounted } from 'vue';
-import { authStore } from './auth';
+import { useAuthStore } from './stores/auth';
+import Navbar from './components/Navbar.vue';
+import Toast from './components/Toast.vue';
+
+const authStore = useAuthStore();
 
 onMounted(() => {
   authStore.init();
@@ -12,7 +22,7 @@ onMounted(() => {
 </script>
 
 <style>
-/* Global styles can stay here or be moved to a separate CSS file */
+/* Global styles */
 :root { --sq: 112px; }
 * { box-sizing: border-box; }
 body { font-family: -apple-system, system-ui, sans-serif; background: #1e1e1e; color: #ddd; margin: 0; min-height: 100vh; }
@@ -43,4 +53,7 @@ button:hover, select:hover { background: #404040; }
 .info-line { margin-top: 6px; min-height: 18px; font-size: 13px; font-family: ui-monospace, Menlo, monospace; }
 
 [v-cloak] { display: none; }
+
+#app-root { display: flex; flex-direction: column; min-height: 100vh; }
+.app-content { flex: 1; }
 </style>
