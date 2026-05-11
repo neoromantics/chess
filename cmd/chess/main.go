@@ -34,11 +34,22 @@ func main() {
 	}
 
 	if runGUI {
-		db, err := db.OpenSQLite()
-		if err != nil {
-			log.Fatal(err)
+		var store db.Store
+		var err error
+
+		dsn := os.Getenv("DATABASE_URL")
+		if dsn != "" {
+			store, err = db.OpenPostgres(dsn)
+			if err != nil {
+				log.Fatalf("failed to connect to postgres: %v", err)
+			}
+		} else {
+			store, err = db.OpenSQLite()
+			if err != nil {
+				log.Fatal(err)
+			}
 		}
-		defer db.Close()
+		defer store.Close()
 
 		ln, err := listenWithFallback(*addr)
 		if err != nil {
@@ -48,7 +59,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "GUI: %s\n", url)
 
 		idle := time.Duration(*idleSec) * time.Second
-		guiSrv := api.NewGUI(db)
+		guiSrv := api.NewGUI(store)
 		if idle > 0 {
 			guiSrv.StartIdleShutdown(idle)
 		}
