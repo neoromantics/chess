@@ -1,0 +1,21 @@
+{
+  "name": "chess-frontend",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "npm run build:main && npm run build:replay",
+    "build:main": "vite build --config vite.config.main.js",
+    "build:replay": "vite build --config vite.config.replay.js",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "vue": "^3.4.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.0.0",
+    "vite": "^5.2.0",
+    "vite-plugin-singlefile": "^2.0.0"
+  }
+}

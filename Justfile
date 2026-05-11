@@ -3,8 +3,12 @@
 default:
     @just --list
 
+# Build the frontend assets
+frontend:
+    cd frontend && npm install && npm run build
+
 # Build the binary into ./chess
-build:
+build: frontend
     go build -o chess .
 
 # Run all tests
@@ -38,13 +42,13 @@ bench depth='6':
     @printf 'uci\nposition startpos\ngo depth {{depth}}\nquit\n' | ./chess | grep '^info depth'
 
 # Build a macOS .app bundle into ./build/Chess.app
-app:
+app: frontend
     bash scripts/build-app.sh
 
 # Universal (Intel + Apple Silicon) .app
-app-universal:
+app-universal: frontend
     ARCH=universal bash scripts/build-app.sh
 
 # Remove build artifacts
 clean:
-    rm -rf chess build
+    rm -rf chess build frontend/dist frontend/node_modules

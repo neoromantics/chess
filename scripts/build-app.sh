@@ -35,6 +35,9 @@ esac
 rm -rf "${APP_DIR}"
 mkdir -p "${EXE_DIR}" "${RES_DIR}"
 
+# Build frontend assets
+(cd "$(dirname "$0")/../frontend" && npm install && npm run build)
+
 if [[ "${#GOARCHES[@]}" -eq 1 ]]; then
   GOOS=darwin GOARCH="${GOARCHES[0]}" CGO_ENABLED=0 \
     go build -trimpath -ldflags='-s -w' -o "${EXE}" .

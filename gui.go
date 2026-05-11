@@ -2,9 +2,11 @@ package main
 
 import (
 	"bytes"
+	"embed"
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
 	"sync"
@@ -12,11 +14,34 @@ import (
 	"time"
 )
 
-//go:embed gui.html
-var guiHTML []byte
+//go:embed all:frontend/dist
+var frontendDist embed.FS
 
-//go:embed replay.html
-var replayHTML []byte
+var (
+	guiHTML    []byte
+	replayHTML []byte
+	assetsFS   http.FileSystem
+)
+
+func init() {
+	// Pre-load HTML files for the handlers to use as templates.
+	var err error
+	guiHTML, err = frontendDist.ReadFile("frontend/dist/index.html")
+	if err != nil {
+		panic(fmt.Sprintf("failed to read index.html: %v", err))
+	}
+	replayHTML, err = frontendDist.ReadFile("frontend/dist/replay.html")
+	if err != nil {
+		panic(fmt.Sprintf("failed to read replay.html: %v", err))
+	}
+
+	// Create a sub-FS for the assets directory.
+	sub, err := fs.Sub(frontendDist, "frontend/dist")
+	if err != nil {
+		panic(err)
+	}
+	assetsFS = http.FS(sub)
+}
 
 const replayPlaceholder = "REPLAY_DATA_PLACEHOLDER"
 
@@ -69,6 +94,7 @@ func (g *GUI) startIdleShutdown(timeout time.Duration) {
 // only the bare root so unknown paths fall through to the default 404.
 func (g *GUI) registerRoutes() {
 	g.mux.HandleFunc("GET /{$}", g.handleIndex)
+	g.mux.Handle("GET /assets/", http.FileServer(assetsFS))
 	g.mux.HandleFunc("GET /api/state", func(w http.ResponseWriter, r *http.Request) { g.handleState(w) })
 	g.mux.HandleFunc("POST /api/move", g.handleMove)
 	g.mux.HandleFunc("POST /api/new", g.handleNew)
