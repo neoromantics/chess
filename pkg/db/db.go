@@ -54,7 +54,8 @@ func (d *DB) init() error {
 
 		CREATE TABLE IF NOT EXISTS games (
 			id TEXT PRIMARY KEY,
-			user_id INTEGER NOT NULL,
+			user_id INTEGER NOT NULL DEFAULT 0,
+			session_id TEXT NOT NULL DEFAULT '',
 			fen TEXT NOT NULL,
 			history TEXT NOT NULL,
 			history_san TEXT NOT NULL,
@@ -78,6 +79,7 @@ func (d *DB) Close() error {
 type GameRecord struct {
 	ID          string    `json:"id"`
 	UserID      int64     `json:"user_id"`
+	SessionID   string    `json:"session_id"`
 	FEN         string    `json:"fen"`
 	History     string    `json:"history"`     // JSON string
 	HistorySAN  string    `json:"history_san"` // JSON string
@@ -90,25 +92,28 @@ type GameRecord struct {
 
 func (d *DB) SaveGame(g *GameRecord) error {
 	_, err := d.db.Exec(`
-		INSERT INTO games (id, user_id, fen, history, history_san, engine_white, engine_black, status, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO games (id, user_id, session_id, fen, history, history_san, engine_white, engine_black, status, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
+			user_id=excluded.user_id,
+			session_id=excluded.session_id,
 			fen=excluded.fen,
 			history=excluded.history,
 			history_san=excluded.history_san,
 			status=excluded.status,
 			updated_at=excluded.updated_at
-	`, g.ID, g.UserID, g.FEN, g.History, g.HistorySAN, g.EngineWhite, g.EngineBlack, g.Status, g.CreatedAt, g.UpdatedAt)
+	`, g.ID, g.UserID, g.SessionID, g.FEN, g.History, g.HistorySAN, g.EngineWhite, g.EngineBlack, g.Status, g.CreatedAt, g.UpdatedAt)
 	return err
 }
 
-func (d *DB) ListGames(userID int64) ([]GameRecord, error) {
-	rows, err := d.db.Query(`
-		SELECT id, user_id, fen, history, history_san, engine_white, engine_black, status, created_at, updated_at
+func (d *DB) ListGames(userID int64, sessionID string) ([]GameRecord, error) {
+	query := `
+		SELECT id, user_id, session_id, fen, history, history_san, engine_white, engine_black, status, created_at, updated_at
 		FROM games
-		WHERE user_id = ?
+		WHERE (user_id > 0 AND user_id = ?) OR (user_id = 0 AND session_id = ?)
 		ORDER BY updated_at DESC
-	`, userID)
+	`
+	rows, err := d.db.Query(query, userID, sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +122,7 @@ func (d *DB) ListGames(userID int64) ([]GameRecord, error) {
 	var records []GameRecord
 	for rows.Next() {
 		var g GameRecord
-		if err := rows.Scan(&g.ID, &g.UserID, &g.FEN, &g.History, &g.HistorySAN, &g.EngineWhite, &g.EngineBlack, &g.Status, &g.CreatedAt, &g.UpdatedAt); err != nil {
+		if err := rows.Scan(&g.ID, &g.UserID, &g.SessionID, &g.FEN, &g.History, &g.HistorySAN, &g.EngineWhite, &g.EngineBlack, &g.Status, &g.CreatedAt, &g.UpdatedAt); err != nil {
 			return nil, err
 		}
 		records = append(records, g)
@@ -128,10 +133,10 @@ func (d *DB) ListGames(userID int64) ([]GameRecord, error) {
 func (d *DB) GetGame(id string) (*GameRecord, error) {
 	g := &GameRecord{}
 	err := d.db.QueryRow(`
-		SELECT id, user_id, fen, history, history_san, engine_white, engine_black, status, created_at, updated_at
+		SELECT id, user_id, session_id, fen, history, history_san, engine_white, engine_black, status, created_at, updated_at
 		FROM games
 		WHERE id = ?
-	`, id).Scan(&g.ID, &g.UserID, &g.FEN, &g.History, &g.HistorySAN, &g.EngineWhite, &g.EngineBlack, &g.Status, &g.CreatedAt, &g.UpdatedAt)
+	`, id).Scan(&g.ID, &g.UserID, &g.SessionID, &g.FEN, &g.History, &g.HistorySAN, &g.EngineWhite, &g.EngineBlack, &g.Status, &g.CreatedAt, &g.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}

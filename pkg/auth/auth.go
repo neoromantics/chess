@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -68,13 +69,34 @@ func ValidateToken(tokenString string) (*Claims, error) {
 
 type contextKey string
 
-const UserContextKey contextKey = "user"
+const (
+	UserContextKey    contextKey = "user"
+	SessionContextKey contextKey = "session"
+)
 
 func Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 1. Check for anonymous session cookie
+		sessionID := ""
+		cookie, err := r.Cookie("session_id")
+		if err == nil {
+			sessionID = cookie.Value
+		} else {
+			// Generate a new session ID for guests
+			sessionID = uuid.New().String()
+			http.SetCookie(w, &http.Cookie{
+				Name:     "session_id",
+				Value:    sessionID,
+				Path:     "/",
+				HttpOnly: true,
+				Expires:  time.Now().Add(365 * 24 * time.Hour), // 1 year
+			})
+		}
+		ctx := context.WithValue(r.Context(), SessionContextKey, sessionID)
+
+		// 2. Check for auth token
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
-			// Fallback to cookie for easier browser use
 			cookie, err := r.Cookie("token")
 			if err == nil {
 				authHeader = "Bearer " + cookie.Value
@@ -82,18 +104,18 @@ func Middleware(next http.Handler) http.Handler {
 		}
 
 		if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
-			next.ServeHTTP(w, r)
+			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
 
 		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
 		claims, err := ValidateToken(tokenString)
 		if err != nil {
-			next.ServeHTTP(w, r)
+			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
 
-		ctx := context.WithValue(r.Context(), UserContextKey, claims)
+		ctx = context.WithValue(ctx, UserContextKey, claims)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -101,4 +123,9 @@ func Middleware(next http.Handler) http.Handler {
 func GetUser(ctx context.Context) (*Claims, bool) {
 	claims, ok := ctx.Value(UserContextKey).(*Claims)
 	return claims, ok
+}
+
+func GetSessionID(ctx context.Context) string {
+	id, _ := ctx.Value(SessionContextKey).(string)
+	return id
 }
