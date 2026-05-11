@@ -1,6 +1,8 @@
 services:
-  chess:
-    build: .
+  api:
+    build:
+      context: .
+      target: api-runtime
     ports:
       - "8080:8080"
     volumes:
@@ -10,3 +12,19 @@ services:
       - DB_PATH=/app/data/chess.db
       - JWT_SECRET=development-secret-key
     restart: always
+
+  worker:
+    build:
+      context: .
+      target: worker-runtime
+    environment:
+      - REDIS_URL=redis:6379 # Prepared for future queue support
+    depends_on:
+      - api
+    restart: always
+
+  # Placeholder for Phase 2 scaling infrastructure
+  # redis:
+  #   image: redis:alpine
+  #   ports:
+  #     - "6379:6379"

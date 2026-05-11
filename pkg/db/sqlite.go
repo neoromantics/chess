@@ -60,7 +60,21 @@ func (s *SQLiteStore) init() error {
 			FOREIGN KEY(user_id) REFERENCES users(id)
 		);
 	`)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Migration: add session_id if it doesn't exist (for existing chess.db files)
+	var count int
+	s.db.QueryRow("SELECT count(*) FROM pragma_table_info('games') WHERE name='session_id'").Scan(&count)
+	if count == 0 {
+		_, err = s.db.Exec("ALTER TABLE games ADD COLUMN session_id TEXT NOT NULL DEFAULT ''")
+		if err != nil {
+			return fmt.Errorf("migration failed: %w", err)
+		}
+	}
+
+	return nil
 }
 
 func (s *SQLiteStore) Close() error {
