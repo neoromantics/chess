@@ -36,7 +36,7 @@ rm -rf "${APP_DIR}"
 mkdir -p "${EXE_DIR}" "${RES_DIR}"
 
 # Build frontend assets
-(cd "$(dirname "$0")/frontend" && npm install && npm run build)
+(cd "$(dirname "$0")/../frontend" && npm install && npm run build)
 mkdir -p pkg/api/dist
 cp -r frontend/dist/* pkg/api/dist/
 
