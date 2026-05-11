@@ -9,6 +9,7 @@ const routes: RouteRecordRaw[] = [
   { path: '/login', component: Login },
   { path: '/signup', component: Signup },
   { path: '/game/:id', component: GameView, props: true },
+  { path: '/:pathMatch(.*)*', component: { template: '<div style="padding: 50px; text-align: center;"><h2>404 Page Not Found</h2><router-link to="/">Go Home</router-link></div>' } },
 ];
 
 const router = createRouter({
