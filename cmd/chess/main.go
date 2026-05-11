@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/taiyanliu/chess/pkg/api"
+	"github.com/taiyanliu/chess/pkg/db"
 	"github.com/taiyanliu/chess/pkg/uci"
 	"github.com/webview/webview_go"
 )
@@ -38,6 +39,12 @@ func main() {
 	}
 
 	if runGUI {
+		db, err := db.Open()
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer db.Close()
+
 		ln, err := listenWithFallback(*addr)
 		if err != nil {
 			log.Fatal(err)
@@ -50,7 +57,7 @@ func main() {
 			// Sensible default for double-click launches: tab close => exit.
 			idle = 30 * time.Second
 		}
-		guiSrv := api.NewGUI()
+		guiSrv := api.NewGUI(db)
 		if idle > 0 {
 			guiSrv.StartIdleShutdown(idle)
 		}

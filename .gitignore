@@ -28,3 +28,9 @@ default.pgo
 /frontend/dist/
 /frontend/node_modules/
 /pkg/api/dist/
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+/data/

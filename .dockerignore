@@ -1,0 +1,13 @@
+.git
+.github
+.claude
+node_modules
+dist
+build
+chess
+chess.exe
+*.db
+*.db-shm
+*.db-wal
+.env
+pkg/api/dist/

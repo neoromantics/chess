@@ -1,50 +1,50 @@
 # Chess Engine & GUI
 
-A modern chess engine and web-based GUI written in Go and Vue 3 (TypeScript).
+A modern chess engine and web-based platform written in Go and Vue 3 (TypeScript).
+
+## 🚀 Web Launch Ready
+This project has been upgraded from a local tool to a full web platform.
+- **User Accounts**: Secure signup and login with Bcrypt and JWT.
+- **Multi-Game Support**: Start and manage multiple games in one window.
+- **Dockerized**: Ready for containerized deployment (K8s/Cloud).
+- **Responsive UI**: Plays perfectly in browsers, on mobile, or as a native macOS app.
 
 ## Features
-- **Engine**: Bitboard-based (0x88) chess engine with iterative deepening, alpha-beta pruning, quiescence search, and tapered evaluation.
-- **Web UI**: Responsive Vue 3 Single Page Application with TypeScript.
-- **Native Mac UI**: Standalone macOS window mode using `webview_go`.
-- **Analysis Tool**: Move assessment and hints powered by the engine.
-- **Board Editor**: Full-featured position setup tool.
-- **Replay**: Self-contained, portable replay viewer.
+- **Engine**: Bitboard-based (0x88) engine with alpha-beta, quiescence, and tapered evaluation.
+- **Web UI**: Modern Vue 3 / Vite SPA with full TypeScript support.
+- **Native Mac UI**: Built-in standalone window mode.
+- **Analysis**: Real-time move assessment and hints.
+- **History**: Permanent storage for users and sessions (SQLite).
 
 ## Project Structure
 ```
 .
-├── cmd/chess/          # Main entry point (main.go)
+├── cmd/chess/          # Main entry point
 ├── pkg/
-│   ├── core/           # Engine internals (board, search, eval, etc.)
-│   ├── game/           # Game session & history management
-│   ├── api/            # Web server & HTTP handlers (embeds frontend/dist)
-│   └── uci/            # UCI protocol implementation
-├── frontend/           # Vue 3 TypeScript project
-├── scripts/            # Build and utility scripts
-└── Justfile            # Command runner
+│   ├── api/            # Multi-session web server & auth handlers
+│   ├── auth/           # JWT & Password security
+│   ├── core/           # Pure chess logic
+│   ├── db/             # User persistence (SQLite)
+│   ├── game/           # Game state management
+│   └── uci/            # UCI protocol
+├── frontend/           # Vue 3 TypeScript SPA
+└── Dockerfile          # Multi-stage production build
 ```
 
-## Development
+## Quick Start (Docker)
+```bash
+docker-compose up -d
+```
+Visit `http://localhost:8080`.
 
-### One Button Dev Workflow
-To run both the backend and frontend with Hot Module Replacement (HMR):
+## Development
+To run in dev mode with Hot Reloading:
 ```bash
 just dev
 ```
-This starts the Go API server on port 8080 and the Vite dev server on port 5173. Visit `http://localhost:5173` to play.
 
-### Local Build
-To build a production binary with the frontend embedded:
-```bash
-just build
-./chess -gui
-```
-
-### macOS App
-To create a native macOS application bundle (`build/Chess.app`):
-```bash
-just app
-```
+## Repository
+[github.com/neoromantics/chess](https://github.com/neoromantics/chess)
 
 ## License
 MIT
