@@ -39,6 +39,15 @@ func main() {
 	}
 
 	if runGUI {
+		if app && os.Getenv("DB_PATH") == "" {
+			home, _ := os.UserHomeDir()
+			if home != "" {
+				appDir := home + "/Library/Application Support/chess"
+				os.MkdirAll(appDir, 0755)
+				os.Setenv("DB_PATH", appDir+"/chess.db")
+			}
+		}
+
 		db, err := db.Open()
 		if err != nil {
 			log.Fatal(err)

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -83,9 +84,7 @@ func (g *GUI) StartIdleShutdown(d time.Duration) {
 			idle := time.Since(g.lastPing)
 			g.mu.Unlock()
 			if idle > d {
-				fmt.Printf("idle for %v, exiting\n", d)
-				// Note: in a web server environment, you might not want to call os.Exit.
-				// For now, we'll keep it for desktop parity but wrap it.
+				os.Exit(0)
 			}
 		}
 	}()
