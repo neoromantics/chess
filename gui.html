@@ -31,17 +31,39 @@
   .cap::before { content: ""; position: absolute; inset: 5px; border-radius: 50%; box-shadow: inset 0 0 0 6px rgba(20,20,20,0.35); }
   .white-piece { color: #fff; text-shadow: 0 0 1px #000, 0 0 2px #000, 1px 1px 1px #000; }
   .black-piece { color: #000; }
-  #side { width: 320px; }
-  h2, h3, h4 { margin: 12px 0 6px; }
-  #status { font-size: 16px; font-weight: 600; margin-bottom: 14px; padding: 10px; background: #2b2b2b; border-radius: 4px; min-height: 22px; }
-  .row { margin: 6px 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  select, button { background: #333; color: #ddd; border: 1px solid #555; padding: 6px 10px; border-radius: 3px; font: inherit; cursor: pointer; }
+  #side { width: 340px; }
+  #side h2 { margin: 0 0 12px; font-size: 22px; letter-spacing: 0.5px; }
+  #status { font-size: 16px; font-weight: 600; margin-bottom: 16px; padding: 10px 12px; background: #2b2b2b; border-radius: 4px; min-height: 22px; border-left: 3px solid #4a6b8a; }
+  .section { margin-top: 18px; }
+  .section > h3 {
+    margin: 0 0 8px; padding: 0 0 4px;
+    font-size: 10px; font-weight: 700; letter-spacing: 1.5px;
+    text-transform: uppercase; color: #7a7a7a;
+    border-bottom: 1px solid #333;
+  }
+  .row { margin: 5px 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 28px; }
+  .row > label:first-child { color: #aaa; font-size: 13px; }
+  select, button, input[type=text] { background: #333; color: #ddd; border: 1px solid #555; padding: 6px 10px; border-radius: 3px; font: inherit; cursor: pointer; }
   button:hover, select:hover { background: #404040; }
-  button#newgame { width: 100%; padding: 10px; margin-top: 8px; background: #2d5a2d; border-color: #3a703a; }
+  .btn-row { display: flex; gap: 6px; margin: 6px 0; }
+  .btn-row button { flex: 1; }
+  .btn-analysis { background: #2d4a5a !important; border-color: #3a6075 !important; }
+  .btn-analysis:hover { background: #355a6f !important; }
+  .btn-view { background: #3a3a5a !important; border-color: #454570 !important; }
+  .btn-view:hover { background: #45456f !important; }
+  .btn-file { background: #3a4a3a !important; border-color: #455045 !important; }
+  .btn-file:hover { background: #455a45 !important; }
+  .btn-edit { background: #5a4a2d !important; border-color: #75603a !important; }
+  .btn-edit:hover { background: #6f5a35 !important; }
+  .btn-pause-on { background: #7a5a2d !important; border-color: #9a753a !important; }
+  button#newgame { width: 100%; padding: 10px; margin-top: 4px; background: #2d5a2d; border-color: #3a703a; font-weight: 600; }
   button#newgame:hover { background: #357035; }
   #history { font-family: ui-monospace, Menlo, monospace; font-size: 13px; max-height: 280px; overflow-y: auto; background: #2b2b2b; padding: 8px 10px; border-radius: 3px; }
   #history div { line-height: 1.5; }
   #fen { font-family: ui-monospace, Menlo, monospace; font-size: 11px; word-break: break-all; color: #888; background: #2b2b2b; padding: 6px 8px; border-radius: 3px; }
+  .info-line { margin-top: 6px; min-height: 18px; font-size: 13px; font-family: ui-monospace, Menlo, monospace; }
+  #hint-info { color: #9fdcb5; }
+  #fen-input { flex: 1; background: #2b2b2b; }
   #modal { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: none; align-items: center; justify-content: center; }
   #modal.show { display: flex; }
   #promo { background: #2b2b2b; padding: 16px; border-radius: 6px; text-align: center; }
@@ -65,74 +87,106 @@
   </div>
 
   <div id="side">
-    <h2 style="margin-top:0">chess</h2>
+    <h2>chess</h2>
     <div id="status">Loading…</div>
-    <div class="row"><label>White</label>
-      <span class="seg">
-        <label><input type="radio" name="white-side" value="h" checked>Human</label>
-        <label><input type="radio" name="white-side" value="e">Engine</label>
-      </span>
-    </div>
-    <div class="row"><label>Black</label>
-      <span class="seg">
-        <label><input type="radio" name="black-side" value="h">Human</label>
-        <label><input type="radio" name="black-side" value="e" checked>Engine</label>
-      </span>
-    </div>
-    <div class="row"><label>White think</label>
-      <select id="movetime-w">
-        <option value="100">0.1s (weak)</option>
-        <option value="300">0.3s</option>
-        <option value="1000" selected>1s</option>
-        <option value="3000">3s</option>
-        <option value="10000">10s (strong)</option>
-      </select>
-    </div>
-    <div class="row"><label>Black think</label>
-      <select id="movetime-b">
-        <option value="100">0.1s (weak)</option>
-        <option value="300">0.3s</option>
-        <option value="1000" selected>1s</option>
-        <option value="3000">3s</option>
-        <option value="10000">10s (strong)</option>
-      </select>
-    </div>
-    <div class="row" title="Tournament rule: clicking a piece commits you to moving it. Clicking a piece with no legal moves loses the game."><label>Touch-move</label>
-      <input type="checkbox" id="touchmove">
-    </div>
-    <div class="row" title="After each move you make, the engine evaluates how good it was."><label>Assess my moves</label>
-      <input type="checkbox" id="autoassess">
-    </div>
-    <div class="row" title="Play a click when a move is made."><label>Sound</label>
-      <input type="checkbox" id="sound" checked>
-    </div>
-    <button id="newgame">New Game</button>
-    <div class="row" style="margin-top:8px; gap: 6px;">
-      <button id="hint" style="flex:1; background:#2d4a5a; border-color:#3a6075;">Hint</button>
-      <button id="assess" style="flex:1; background:#4a2d5a; border-color:#603a75;">Assess</button>
-      <button id="undo" style="flex:1; background:#5a3a2d; border-color:#75503a;">Undo</button>
-      <button id="edit-mode" style="flex:1; background:#5a4a2d; border-color:#75603a;">Edit</button>
-    </div>
-    <div class="row" style="margin-top:6px; gap: 6px;">
-      <button id="pause" style="flex:1; background:#5a3a3a; border-color:#704545;">Pause</button>
-      <button id="replay" style="flex:1; background:#3a5a3a; border-color:#457045;">Replay</button>
-      <button id="flip" title="Flip board (F)" style="flex:1; background:#3a3a5a; border-color:#454570;">Flip</button>
-    </div>
-    <div class="row" style="margin-top:6px; gap: 6px;">
-      <button id="save" style="flex:1">Save</button>
-      <button id="load" style="flex:1">Load</button>
-      <input type="file" id="load-file" accept="application/json,.json" style="display:none">
-    </div>
-    <div id="hint-info" style="margin-top:6px; min-height:18px; color:#9fdcb5; font-size:13px; font-family: ui-monospace, Menlo, monospace;"></div>
-    <div id="assess-info" style="margin-top:4px; min-height:18px; font-size:13px; font-family: ui-monospace, Menlo, monospace;"></div>
-    <div class="row" style="margin-top:6px; gap: 6px;">
-      <input type="text" id="fen-input" placeholder="paste FEN…" style="flex:1; background:#2b2b2b; color:#ddd; border:1px solid #555; padding:6px 8px; border-radius:3px; font:inherit;">
-      <button id="load-fen">Load FEN</button>
-    </div>
-    <h3>Moves</h3>
-    <div id="history"></div>
-    <h4>FEN</h4>
-    <div id="fen"></div>
+
+    <section class="section">
+      <h3>Players</h3>
+      <div class="row"><label>White</label>
+        <span class="seg">
+          <label><input type="radio" name="white-side" value="h" checked>Human</label>
+          <label><input type="radio" name="white-side" value="e">Engine</label>
+        </span>
+      </div>
+      <div class="row"><label>Black</label>
+        <span class="seg">
+          <label><input type="radio" name="black-side" value="h">Human</label>
+          <label><input type="radio" name="black-side" value="e" checked>Engine</label>
+        </span>
+      </div>
+      <div class="row"><label>White think</label>
+        <select id="movetime-w">
+          <option value="100">0.1s (weak)</option>
+          <option value="300">0.3s</option>
+          <option value="1000" selected>1s</option>
+          <option value="3000">3s</option>
+          <option value="10000">10s (strong)</option>
+        </select>
+      </div>
+      <div class="row"><label>Black think</label>
+        <select id="movetime-b">
+          <option value="100">0.1s (weak)</option>
+          <option value="300">0.3s</option>
+          <option value="1000" selected>1s</option>
+          <option value="3000">3s</option>
+          <option value="10000">10s (strong)</option>
+        </select>
+      </div>
+      <button id="newgame">New Game</button>
+    </section>
+
+    <section class="section">
+      <h3>Options</h3>
+      <div class="row" title="Tournament rule: clicking a piece commits you to moving it. Clicking a piece with no legal moves loses the game."><label>Touch-move</label>
+        <input type="checkbox" id="touchmove">
+      </div>
+      <div class="row" title="After each move you make, the engine evaluates how good it was."><label>Assess my moves</label>
+        <input type="checkbox" id="autoassess">
+      </div>
+      <div class="row" title="Play a click when a move is made."><label>Sound</label>
+        <input type="checkbox" id="sound" checked>
+      </div>
+    </section>
+
+    <section class="section">
+      <h3>Analysis</h3>
+      <div class="btn-row">
+        <button id="hint" class="btn-analysis">Hint</button>
+        <button id="assess" class="btn-analysis">Assess</button>
+        <button id="undo" class="btn-analysis">Undo</button>
+      </div>
+      <div id="hint-info" class="info-line"></div>
+      <div id="assess-info" class="info-line"></div>
+    </section>
+
+    <section class="section">
+      <h3>View</h3>
+      <div class="btn-row">
+        <button id="pause" class="btn-view">Pause</button>
+        <button id="replay" class="btn-view">Replay</button>
+        <button id="flip" class="btn-view" title="Flip board (F)">Flip</button>
+      </div>
+    </section>
+
+    <section class="section">
+      <h3>File</h3>
+      <div class="btn-row">
+        <button id="save" class="btn-file">Save Game</button>
+        <button id="load" class="btn-file">Load Game</button>
+        <input type="file" id="load-file" accept="application/json,.json" style="display:none">
+      </div>
+    </section>
+
+    <section class="section">
+      <h3>Position</h3>
+      <div class="btn-row">
+        <button id="edit-mode" class="btn-edit">Edit Position</button>
+      </div>
+      <div class="btn-row">
+        <input type="text" id="fen-input" placeholder="paste FEN…">
+        <button id="load-fen" class="btn-edit">Load</button>
+      </div>
+    </section>
+
+    <section class="section">
+      <h3>Moves</h3>
+      <div id="history"></div>
+    </section>
+
+    <section class="section">
+      <h3>FEN</h3>
+      <div id="fen"></div>
+    </section>
 
     <div id="edit-panel">
       <div style="font-weight:600; margin-bottom: 6px;">Edit Position</div>
@@ -872,8 +926,7 @@ document.getElementById('pause').onclick = () => {
   paused = !paused;
   const btn = document.getElementById('pause');
   btn.textContent = paused ? 'Resume' : 'Pause';
-  btn.style.background = paused ? '#7a5a2d' : '#5a3a3a';
-  btn.style.borderColor = paused ? '#9a753a' : '#704545';
+  btn.classList.toggle('btn-pause-on', paused);
   if (!paused) scheduleEngine();
 };
 
