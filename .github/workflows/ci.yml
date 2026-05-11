@@ -6,30 +6,65 @@ on:
   pull_request:
 
 jobs:
-  build:
+  # --- Backend Validation ---
+  backend:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: '1.25'
           cache: true
-      - name: gofmt
+
+      - name: Gofmt check
         run: |
-          diff=$(gofmt -l .)
-          if [ -n "$diff" ]; then
-            echo "Files need gofmt:"
-            echo "$diff"
+          if [ -n "$(gofmt -l .)" ]; then
+            echo "Go code is not formatted. Run 'just fmt' locally."
+            gofmt -d .
             exit 1
           fi
-      - name: vet
+
+      - name: Vet
         run: go vet ./...
-      - name: test
-        run: go test ./...
-      - name: build
-        run: go build -o chess .
-      - name: smoke (UCI startpos depth 4)
+
+      - name: Test
+        run: go test -v ./pkg/...
+
+      - name: Build Binary
+        run: |
+          # Build a minimal version without embedding for a quick check
+          mkdir -p pkg/api/dist
+          touch pkg/api/dist/index.html
+          touch pkg/api/dist/replay.html
+          go build -o chess ./cmd/chess
+
+      - name: Smoke Test (UCI)
         run: |
           out=$(printf 'uci\nposition startpos\ngo depth 4\nquit\n' | ./chess)
           echo "$out"
           echo "$out" | grep -q '^bestmove '
+
+  # --- Frontend Validation ---
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: cd frontend && npm install
+
+      - name: Type check
+        run: cd frontend && npm run build:main && npm run build:replay
+
+  # --- Container Validation ---
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Docker Image
+        run: docker build -t chess:test .
