@@ -53,13 +53,14 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { PIECE, parseBoard } from './constants';
+import { ReplayFrame } from './types';
 
-const frames = ref([{ fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1' }]);
+const frames = ref<ReplayFrame[]>([{ fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1' }]);
 const idx = ref(0);
-const timer = ref(null);
+const timer = ref<ReturnType<typeof setTimeout> | null>(null);
 const speed = ref(800);
 const flipped = ref(localStorage.getItem('chess-flipped') === '1');
 
@@ -68,7 +69,7 @@ onMounted(() => {
   const dataEl = document.getElementById('replay-data');
   if (dataEl) {
     try {
-      const parsed = JSON.parse(dataEl.textContent);
+      const parsed = JSON.parse(dataEl.textContent || '');
       if (Array.isArray(parsed) && parsed.length > 0) {
         frames.value = parsed;
       }
@@ -93,7 +94,7 @@ const currentFrame = computed(() => frames.value[idx.value]);
 
 const boardSquares = computed(() => {
   const grid = parseBoard(currentFrame.value.fen);
-  const res = [];
+  const res: any[] = [];
   for (let i = 0; i < 8; i++) {
     for (let j = 0; j < 8; j++) {
       const r = flipped.value ? 7 - i : i;
@@ -117,7 +118,7 @@ const statusMsg = computed(() => {
 });
 
 const movePairs = computed(() => {
-  const res = [];
+  const res: any[] = [];
   for (let i = 1; i < frames.value.length; i += 2) {
     const pair = [{ san: frames.value[i].san || '?', idx: i }];
     if (i + 1 < frames.value.length) {
@@ -154,7 +155,7 @@ function togglePlay() {
   else play();
 }
 
-function handleKeydown(e) {
+function handleKeydown(e: KeyboardEvent) {
   if (e.key === 'ArrowLeft') { stop(); if (idx.value > 0) idx.value--; }
   else if (e.key === 'ArrowRight') { stop(); if (idx.value < frames.value.length - 1) idx.value++; }
   else if (e.key === ' ') { e.preventDefault(); togglePlay(); }
@@ -193,7 +194,7 @@ button:disabled { opacity: 0.4; cursor: default; }
 .speed input { flex: 1; }
 
 #moves { font-family: ui-monospace, Menlo, monospace; font-size: 13px; max-height: 380px; overflow-y: auto; background: #2b2b2b; padding: 8px; border-radius: 3px; margin-top: 12px; }
-#moves .move { display: inline-block; padding: 0 4px; cursor: pointer; border-radius: 2px; }
+#moves .move { display: inline-block; padding: 0; cursor: pointer; border-radius: 2px; }
 #moves .move:hover { background: #444; }
 #moves .move.cur { background: #4a6b8a; color: #fff; }
 .row-line { line-height: 1.6; }

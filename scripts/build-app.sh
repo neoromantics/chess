@@ -36,17 +36,19 @@ rm -rf "${APP_DIR}"
 mkdir -p "${EXE_DIR}" "${RES_DIR}"
 
 # Build frontend assets
-(cd "$(dirname "$0")/../frontend" && npm install && npm run build)
+(cd "$(dirname "$0")/frontend" && npm install && npm run build)
+mkdir -p pkg/api/dist
+cp -r frontend/dist/* pkg/api/dist/
 
 if [[ "${#GOARCHES[@]}" -eq 1 ]]; then
   GOOS=darwin GOARCH="${GOARCHES[0]}" CGO_ENABLED=1 \
-    go build -trimpath -ldflags='-s -w' -o "${EXE}" .
+    go build -trimpath -ldflags='-s -w' -o "${EXE}" ./cmd/chess
 else
   TMP="$(mktemp -d)"
   trap 'rm -rf "${TMP}"' EXIT
   for a in "${GOARCHES[@]}"; do
     GOOS=darwin GOARCH="${a}" CGO_ENABLED=1 \
-      go build -trimpath -ldflags='-s -w' -o "${TMP}/${APP_NAME}-${a}" .
+      go build -trimpath -ldflags='-s -w' -o "${TMP}/${APP_NAME}-${a}" ./cmd/chess
   done
   if ! command -v lipo >/dev/null; then
     echo "lipo not found (install Xcode Command Line Tools for universal builds)" >&2
@@ -78,9 +80,14 @@ cat > "${APP_DIR}/Contents/Info.plist" <<PLIST
     <string>10.15</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
 </dict>
 </plist>
 PLIST
+
+# Note: AppIcon.icns would be copied to ${RES_DIR} here if available.
+# touch "${RES_DIR}/AppIcon.icns"
 
 # Strip macOS Gatekeeper quarantine so a freshly-built bundle opens
 # without "unidentified developer" warnings on the build machine.

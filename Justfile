@@ -6,10 +6,19 @@ default:
 # Build the frontend assets
 frontend:
     cd frontend && npm install && npm run build
+    mkdir -p pkg/api/dist
+    cp -r frontend/dist/* pkg/api/dist/
 
 # Build the binary into ./chess
 build: frontend
-    go build -o chess .
+    go build -o chess ./cmd/chess
+
+# Run in development mode with HMR for frontend
+dev:
+    @echo "Starting backend on :8080 and frontend on :5173..."
+    @(trap 'kill 0' SIGINT; \
+      go run ./cmd/chess -gui -no-open -addr localhost:8080 & \
+      cd frontend && VITE_API_URL=http://localhost:8080 npm run dev)
 
 # Run all tests
 test:
@@ -42,13 +51,13 @@ bench depth='6':
     @printf 'uci\nposition startpos\ngo depth {{depth}}\nquit\n' | ./chess | grep '^info depth'
 
 # Build a macOS .app bundle into ./build/Chess.app
-app: frontend
+app:
     bash scripts/build-app.sh
 
 # Universal (Intel + Apple Silicon) .app
-app-universal: frontend
+app-universal:
     ARCH=universal bash scripts/build-app.sh
 
 # Remove build artifacts
 clean:
-    rm -rf chess build frontend/dist frontend/node_modules
+    rm -rf chess build pkg/api/dist frontend/dist frontend/node_modules

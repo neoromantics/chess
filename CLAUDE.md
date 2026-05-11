@@ -1,79 +1,28 @@
-# Project guidance
+# CLAUDE.md - Development Guide
 
-A chess engine + GUI in Go (single `package main`). The engine speaks UCI on
-stdio by default; with `-gui` it serves an embedded HTML/JS chessboard.
+## Build & Run
+- **Frontend Assets**: `just frontend` (builds Vue + copies to Go package)
+- **Build Binary**: `just build` (produces `./chess`)
+- **One-Button Dev**: `just dev` (Go API on :8080 + Vite on :5173 with HMR)
+- **Run GUI**: `just gui` (builds + runs embedded native UI)
+- **Run UCI**: `just run` (starts engine in terminal)
+- **Native Mac App**: `just app` (creates `build/Chess.app`)
+- **Tests**: `just test` (all), `just perft` (movegen only)
 
-## Layout
+## Architecture
+- **cmd/chess**: Entry point; handles CLI flags and GUI/UCI mode selection.
+- **pkg/core**: Pure chess logic (Board, MoveGen, Search, Eval). No external dependencies.
+- **pkg/game**: Game session management, history, and state transitions.
+- **pkg/api**: HTTP handlers and static asset embedding for the Web/Native GUI.
+- **pkg/uci**: Standard Chess Engine protocol implementation.
+- **frontend**: Vue 3 SPA using TypeScript, Vite, and SFCs.
 
-| File             | Role                                                                   |
-|------------------|------------------------------------------------------------------------|
-| `main.go`        | CLI entry. Auto: GUI when stdin is a TTY OR launched from a `.app`, UCI when piped. Flags: `-gui` / `-uci` / `-no-open` / `-shutdown-on-idle SEC`. Listener falls back to a free port if the requested one is taken. |
-| `scripts/build-app.sh` | Builds `build/Chess.app`. `ARCH=universal` for fat binary. The launcher inherits app-mode auto-detection (forces GUI; default 30s idle-shutdown). |
-| `board.go`       | 0x88 board, `Color`/`PieceType`/`Piece`, FEN parse/print, Unicode display. |
-| `move.go`        | `Move` type, `MakeMove` / `UnmakeMove`, long-algebraic parser, castling-rights table. |
-| `movegen.go`     | Pseudo-legal generation, `SquareAttacked`, legal-move filter, castling guards. |
-| `eval.go`        | Material + piece-square tables (side-to-move relative).                |
-| `search.go`      | Negamax + alpha-beta + iterative deepening + quiescence + MVV-LVA + soft time bound. |
-| `uci.go`         | UCI command loop and time management.                                   |
-| `game.go`        | Pure game state + rules (Game struct, GameStatus, Reset/Load/PlayMove/Undo/Touch/Status, BoardsAroundMove, ReplayData, classifyAssessment). Used by gui.go. |
-| `san.go`         | MoveToSAN — standard algebraic notation for the move list (Nf3, exd5, O-O-O, e8=Q+, Qh4#). |
-| `gui.go`         | HTTP-only shim. http.ServeMux routes /api/*. Each handler short: lock, validate, delegate to Game, snapshot. |
-| `gui.html`       | Embedded UI (`//go:embed`). Single-page; vanilla JS.                    |
-| `replay.html`    | Embedded shareable replay player. /api/replay.html injects per-ply JSON into a script tag. |
-| `perft_test.go`  | Move-gen validation against four standard perft positions.              |
-| `game_test.go`   | Game logic: status transitions, repetition, undo, touch-move, BoardsAroundMove, etc. |
-| `san_test.go`    | SAN: castling, captures, EP, promotion, check/mate suffix, disambiguation. |
-| `repetition_test.go` | Engine treats repetition as 0 score (avoids draws when winning).    |
+## Style Guidelines
+- **Go**: Idiomatic Go, capitalized exports for cross-package use, `gofmt` compliant.
+- **Vue/TS**: Composition API (`<script setup lang="ts">`), explicit interfaces in `types.ts`, scoped styles.
+- **Modularity**: Pure logic in `pkg/core`. Keep `pkg/api` as a thin wrapper for JSON conversion.
 
-## Conventions
-
-- Run `gofmt` (the PostToolUse hook does this automatically on `.go` saves).
-- One package, no premature splitting into `internal/`. Add subpackages only when there's a real consumer.
-- Keep public surface small — only export what crosses a meaningful boundary.
-- No comments unless they explain *why*. Doc comments only on exported identifiers when behavior isn't obvious from the name.
-- No transposition table, bitboards, or `null-move pruning` until perft and time-control regressions are covered.
-- Don't add abstractions for hypothetical future engine variants. The 0x88 representation is fine.
-
-## Common tasks
-
-```
-just build      # go build -o chess
-just test       # go test ./...
-just perft      # go test -run Perft -v
-just run        # ./chess  (UCI on stdio)
-just gui        # ./chess -gui  (http://localhost:8080)
-just check      # gofmt + vet + test
-```
-
-## Engine notes
-
-- 0x88 board. `OnBoard(sq) == sq & 0x88 == 0`.
-- Color in piece bit 3; Empty == 0.
-- Castling-rights mask `castleClear[sq]` is OR'd off on every move from/to the corner squares.
-- `genCastling` requires the king on the e-file and a real rook on the corner — robust to edited FENs with stale rights.
-- Search returns scores in side-to-move POV. Mate scores: `MateScore - ply` (faster mates score higher).
-
-## GUI API
-
-Endpoints (all JSON):
-
-| Method | Path                | Body / behavior                                                |
-|--------|---------------------|----------------------------------------------------------------|
-| GET    | `/`                 | Embedded HTML UI                                                |
-| GET    | `/api/state`        | Current snapshot (FEN, legal moves, status, etc.)               |
-| POST   | `/api/move`         | `{move:"e2e4"}` — apply human move                              |
-| POST   | `/api/engine_step`  | `{movetime:1000}` — engine plays one move                        |
-| POST   | `/api/hint`         | `{movetime}` — return suggested move; do NOT apply              |
-| POST   | `/api/touch`        | `{square:"e2"}` — touch-move commit; may declare loss           |
-| POST   | `/api/touch_move`   | `{enabled:bool}` — toggle tournament rule                        |
-| POST   | `/api/assess`       | `{movetime}` — grade the user's *last* move (skips engine moves) |
-| POST   | `/api/new`          | `{engine_white,engine_black}` — fresh game                       |
-| GET    | `/api/save`         | Download game JSON                                               |
-| POST   | `/api/load`         | `{start_fen?, moves[], engine_white?, engine_black?}`            |
-
-## Don't
-
-- Add features (analysis multipv, opening book, eval tweaks) without a perft + UCI-smoke pass first.
-- Touch the search interface without re-running `go test` and a 1-second `go depth N` smoke.
-- Edit `gui.html` and forget — it's `//go:embed`-ed; `go build` re-bundles.
-- Reintroduce C++ tooling in `.claude/settings.json`.
+## Commands Reference
+- Format: `just fmt`
+- Lint: `just check`
+- Benchmark: `just bench depth=8`

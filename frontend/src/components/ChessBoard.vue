@@ -22,21 +22,25 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { computed } from 'vue';
 import { PIECE, parseBoard } from '../constants';
+import { StateJSON, Square } from '../types';
 
-const props = defineProps({
-  state: Object,
-  editMode: Boolean,
-  editBoard: Array,
-  editPickedUp: Object,
-  flipped: Boolean,
-  selected: String,
-  hint: Object
-});
+const props = defineProps<{
+  state: StateJSON | null;
+  editMode: boolean;
+  editBoard: (string | null)[][] | null;
+  editPickedUp: { r: number; f: number; pc: string } | null;
+  flipped: boolean;
+  selected: string | null;
+  hint: { from: string; to: string } | null;
+}>();
 
-defineEmits(['square-click', 'square-right-click']);
+defineEmits<{
+  (e: 'square-click', sq: Square): void;
+  (e: 'square-right-click', sq: Square): void;
+}>();
 
 const ranks = computed(() => props.flipped ? [1,2,3,4,5,6,7,8] : [8,7,6,5,4,3,2,1]);
 const files = computed(() => (props.flipped ? 'hgfedcba' : 'abcdefgh').split(''));
@@ -44,7 +48,7 @@ const files = computed(() => (props.flipped ? 'hgfedcba' : 'abcdefgh').split('')
 const boardSquares = computed(() => {
   if (!props.state && !props.editMode) return [];
   const grid = props.state ? parseBoard(props.state.fen) : null;
-  const res = [];
+  const res: Square[] = [];
   const selSq = props.state?.touch_move ? props.state.touched_square : props.selected;
 
   for (let i = 0; i < 8; i++) {
@@ -52,14 +56,14 @@ const boardSquares = computed(() => {
       const r = props.flipped ? 7 - i : i;
       const f = props.flipped ? 7 - j : j;
       const name = String.fromCharCode(97+f) + (8-r);
-      const pc = props.editMode ? props.editBoard[r][f] : (grid ? grid[r][f] : null);
+      const pc = props.editMode && props.editBoard ? props.editBoard[r][f] : (grid ? grid[r][f] : null);
       
-      const classes = {
-        last: !props.editMode && props.state?.last_move && (props.state.last_move.from === name || props.state.last_move.to === name),
-        touched: !props.editMode && props.state?.touch_move && props.state.touched_square === name,
+      const classes: Record<string, boolean> = {
+        last: !props.editMode && props.state?.last_move && (props.state.last_move.from === name || props.state.last_move.to === name) || false,
+        touched: !props.editMode && props.state?.touch_move && props.state.touched_square === name || false,
         sel: props.editMode ? (props.editPickedUp?.r === r && props.editPickedUp?.f === f) : (props.selected === name),
-        check: !props.editMode && props.state?.in_check && pc && ((props.state.turn === 'w' && pc === 'K') || (props.state.turn === 'b' && pc === 'k')),
-        hint: !props.editMode && props.hint && (props.hint.from === name || props.hint.to === name)
+        check: !props.editMode && props.state?.in_check && pc && ((props.state.turn === 'w' && pc === 'K') || (props.state.turn === 'b' && pc === 'k')) || false,
+        hint: !props.editMode && props.hint && (props.hint.from === name || props.hint.to === name) || false
       };
 
       if (!props.editMode && selSq && props.state) {

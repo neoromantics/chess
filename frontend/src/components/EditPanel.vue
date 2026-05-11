@@ -12,7 +12,7 @@
       </button>
     </div>
     <div class="row"><label>Turn</label>
-      <select :value="editTurn" @change="$emit('update:edit-turn', $event.target.value)">
+      <select :value="editTurn" @change="$emit('update:edit-turn', ($event.target as HTMLSelectElement).value)">
         <option value="w">White</option>
         <option value="b">Black</option>
       </select>
@@ -20,7 +20,7 @@
     <div class="row"><label>Castling</label>
       <span style="font-family: ui-monospace, Menlo, monospace;">
         <label v-for="(val, key) in editCastling" :key="key">
-          <input type="checkbox" :checked="editCastling[key]" @change="editCastling[key] = $event.target.checked"> {{ key }}
+          <input type="checkbox" :checked="val" @change="updateCastling(key, ($event.target as HTMLInputElement).checked)"> {{ key }}
         </label>
       </span>
     </div>
@@ -35,16 +35,23 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { PIECE } from '../constants';
 
-defineProps({
-  editPalette: String,
-  editTurn: String,
-  editCastling: Object
-});
+const props = defineProps<{
+  editPalette: string;
+  editTurn: string;
+  editCastling: Record<string, boolean>;
+}>();
 
-defineEmits(['update:edit-palette', 'update:edit-turn', 'clear', 'start-pos', 'apply', 'cancel']);
+const emit = defineEmits<{
+  (e: 'update:edit-palette', val: string): void;
+  (e: 'update:edit-turn', val: string): void;
+  (e: 'clear'): void;
+  (e: 'start-pos'): void;
+  (e: 'apply'): void;
+  (e: 'cancel'): void;
+}>();
 
 const editTools = [
   { v: 'select', label: '☞', title: 'Select / move' },
@@ -52,6 +59,10 @@ const editTools = [
   ...['K','Q','R','B','N','P'].map(c => ({ v: c, label: PIECE[c], title: 'Paint ' + c, isWhite: true })),
   ...['k','q','r','b','n','p'].map(c => ({ v: c, label: PIECE[c], title: 'Paint ' + c, isBlack: true }))
 ];
+
+const updateCastling = (key: string, val: boolean) => {
+  props.editCastling[key] = val;
+};
 </script>
 
 <style scoped>

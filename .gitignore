@@ -23,3 +23,8 @@ default.pgo
 # Logs / scratch
 *.log
 /tmp
+
+# Frontend
+/frontend/dist/
+/frontend/node_modules/
+/pkg/api/dist/

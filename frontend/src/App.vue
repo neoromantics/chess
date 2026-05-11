@@ -83,6 +83,7 @@ import SidePanel from './components/SidePanel.vue';
 import EditPanel from './components/EditPanel.vue';
 import PromoModal from './components/PromoModal.vue';
 import { PIECE, ASSESS_COLORS, ASSESS_SYMBOL, parseBoard } from './constants';
+import { api } from './api';
 
 const state = ref(null);
 const selected = ref(null);
@@ -243,8 +244,7 @@ const onSquare = async (sq) => {
       if (cands.length === 1 && cands[0].length === 4) sendMove(cands[0]);
       else { pendingPromo.value = { from: touched, to: sq.name }; }
     } else {
-      const r = await fetch('/api/touch', {method: 'POST', body: JSON.stringify({square: sq.name})});
-      updateState(await r.json());
+      updateState(await api.touch(sq.name));
     }
     return;
   }
@@ -277,8 +277,7 @@ const sendMove = async (mv) => {
   hint.value = null;
   hintInfo.value = '';
   assessInfo.value = '';
-  const r = await fetch('/api/move', {method: 'POST', body: JSON.stringify({move: mv})});
-  updateState(await r.json());
+  updateState(await api.move(mv));
   if (autoAssess.value) runAssess();
 };
 
@@ -289,8 +288,7 @@ const completePromo = (promo) => {
 };
 
 const newGame = async () => {
-  const r = await fetch('/api/new', {method: 'POST', body: JSON.stringify({engine_white: whitePlayerType.value === 'e', engine_black: blackPlayerType.value === 'e'})});
-  updateState(await r.json());
+  updateState(await api.newGame(whitePlayerType.value === 'e', blackPlayerType.value === 'e'));
   selected.value = null;
   hint.value = null;
   hintInfo.value = '';
@@ -299,8 +297,7 @@ const newGame = async () => {
 };
 
 const undoMove = async () => {
-  const r = await fetch('/api/undo', {method: 'POST'});
-  updateState(await r.json());
+  updateState(await api.undo());
   selected.value = null;
   hint.value = null;
   hintInfo.value = '';
@@ -311,16 +308,18 @@ const undoMove = async () => {
 const getHint = async () => {
   hintInfo.value = 'thinking…';
   const movetime = state.value.turn === 'w' ? whiteThinkTime.value : blackThinkTime.value;
-  const r = await fetch('/api/hint', {method: 'POST', body: JSON.stringify({movetime})});
-  if (!r.ok) { hintInfo.value = ''; return; }
-  const data = await r.json();
-  updateState(data.state);
-  if (data.hint) {
-    hint.value = { from: data.hint.from, to: data.hint.to };
-    hintInfo.value = `Hint: ${data.hint.from}→${data.hint.to}${data.hint.promo ? '=' + data.hint.promo.toUpperCase() : ''} (${data.hint.score}, depth ${data.hint.depth})`;
-  } else {
-    hint.value = null;
-    hintInfo.value = 'No move available.';
+  try {
+    const data = await api.getHint(movetime);
+    updateState(data.state);
+    if (data.hint) {
+      hint.value = { from: data.hint.from, to: data.hint.to };
+      hintInfo.value = `Hint: ${data.hint.from}→${data.hint.to}${data.hint.promo ? '=' + data.hint.promo.toUpperCase() : ''} (${data.hint.score}, depth ${data.hint.depth})`;
+    } else {
+      hint.value = null;
+      hintInfo.value = 'No move available.';
+    }
+  } catch (e) {
+    hintInfo.value = '';
   }
 };
 
@@ -328,42 +327,37 @@ const runAssess = async (idx, fromHistory = false) => {
   assessInfo.value = 'assessing…';
   assessColor.value = '#888';
   const movetime = Math.min(state.value.turn === 'w' ? whiteThinkTime.value : blackThinkTime.value, 800);
-  const body = (idx === undefined) ? {movetime} : {movetime, index: idx};
-  const r = await fetch('/api/assess', {method: 'POST', body: JSON.stringify(body)});
-  if (!r.ok) { assessInfo.value = ''; return; }
-  const a = await r.json();
-  assessments[a.index] = a;
-  if (!fromHistory || idx === state.value.history.length - 1) {
-    assessColor.value = ASSESS_COLORS[a.label] || '#ddd';
-    let txt = `${a.move}: ${a.label}`;
-    if (a.label !== 'Best' && a.label !== 'Brilliant') txt += ` (-${a.cp_loss}cp; best ${a.best_move})`;
-    else if (a.label === 'Brilliant') txt += ` (+${-a.cp_loss}cp vs engine pick ${a.best_move})`;
-    else txt += ` (${a.user_score})`;
-    assessInfo.value = txt;
+  try {
+    const a = await api.assess(movetime, idx);
+    assessments[a.index] = a;
+    if (!fromHistory || idx === state.value.history.length - 1) {
+      assessColor.value = ASSESS_COLORS[a.label] || '#ddd';
+      let txt = `${a.move}: ${a.label}`;
+      if (a.label !== 'Best' && a.label !== 'Brilliant') txt += ` (-${a.cp_loss}cp; best ${a.best_move})`;
+      else if (a.label === 'Brilliant') txt += ` (+${-a.cp_loss}cp vs engine pick ${a.best_move})`;
+      else txt += ` (${a.user_score})`;
+      assessInfo.value = txt;
+    }
+  } catch (e) {
+    assessInfo.value = '';
   }
 };
 
 const scheduleEngine = async () => {
   if (paused.value || !state.value || state.value.status !== 'ongoing' || !state.value.engine_to_move || state.value.thinking) return;
   const movetime = state.value.turn === 'w' ? whiteThinkTime.value : blackThinkTime.value;
-  const r = await fetch('/api/engine_step', {method: 'POST', body: JSON.stringify({movetime})});
-  updateState(await r.json());
+  updateState(await api.engineStep(movetime));
 };
 
 const updatePlayerType = async (side, type) => {
   if (side === 'white') whitePlayerType.value = type;
   else blackPlayerType.value = type;
   
-  const r = await fetch('/api/set_players', {method: 'POST', body: JSON.stringify({
-    engine_white: whitePlayerType.value === 'e', 
-    engine_black: blackPlayerType.value === 'e'
-  })});
-  updateState(await r.json());
+  updateState(await api.setPlayers(whitePlayerType.value === 'e', blackPlayerType.value === 'e'));
 };
 
 const setTouchMove = async (enabled) => {
-  const r = await fetch('/api/touch_move', {method: 'POST', body: JSON.stringify({enabled})});
-  updateState(await r.json());
+  updateState(await api.setTouchMove(enabled));
 };
 
 const setSoundEnabled = (val) => {
@@ -425,22 +419,20 @@ const editApply = async () => {
   };
   let castling = (valid.K?'K':'')+(valid.Q?'Q':'')+(valid.k?'k':'')+(valid.q?'q':'');
   const fen = `${board} ${editTurn.value} ${castling||'-'} - 0 1`;
-  const r = await fetch('/api/load', {method: 'POST', body: JSON.stringify({
+  updateState(await api.loadGame({
     start_fen: fen, moves: [], 
     engine_white: whitePlayerType.value === 'e', 
     engine_black: blackPlayerType.value === 'e'
-  })});
-  updateState(await r.json());
+  }));
   editMode.value = false;
 };
 
-const saveGame = () => { window.location.href = '/api/save'; };
+const saveGame = () => { window.location.href = api.getSaveUrl(); };
 const loadGameFile = async (event) => {
   const file = event.target.files[0];
   if (!file) return;
   const text = await file.text();
-  const r = await fetch('/api/load', {method: 'POST', body: text});
-  updateState(await r.json());
+  updateState(await api.loadGame(text));
   selected.value = null;
   hint.value = null;
   Object.keys(assessments).forEach(k => delete assessments[k]);
@@ -448,12 +440,11 @@ const loadGameFile = async (event) => {
 };
 
 const loadFen = async () => {
-  const r = await fetch('/api/load', {method: 'POST', body: JSON.stringify({
+  updateState(await api.loadGame({
     start_fen: fenInput.value.trim(), moves: [], 
     engine_white: whitePlayerType.value === 'e', 
     engine_black: blackPlayerType.value === 'e'
-  })});
-  updateState(await r.json());
+  }));
   fenInput.value = '';
 };
 
@@ -462,8 +453,7 @@ const openReplay = () => { window.open('/api/replay.html', '_blank'); };
 watch(flipped, (val) => localStorage.setItem('chess-flipped', val ? '1' : '0'));
 
 onMounted(async () => {
-  const r = await fetch('/api/state');
-  const s = await r.json();
+  const s = await api.getState();
   lastSoundedHistoryLen = s.history.length;
   prevFenForSound = s.fen;
   updateState(s);
@@ -474,7 +464,7 @@ onMounted(async () => {
     if (e.key === 'f' || e.key === 'F') flipped.value = !flipped.value;
   });
   
-  setInterval(() => { fetch('/api/ping', {method: 'POST'}).catch(() => {}); }, 5000);
+  setInterval(() => { api.ping(); }, 5000);
 });
 </script>
 

@@ -14,15 +14,17 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { computed } from 'vue';
 import { PIECE } from '../constants';
 
-const props = defineProps({
-  turn: String
-});
+const props = defineProps<{
+  turn: string | undefined;
+}>();
 
-defineEmits(['select']);
+defineEmits<{
+  (e: 'select', val: string): void;
+}>();
 
 const promoOptions = computed(() => {
   const isW = props.turn === 'w';
