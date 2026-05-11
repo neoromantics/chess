@@ -419,6 +419,13 @@ func (s *Searcher) quiesce(ply int, alpha, beta int) int {
 	s.orderMoves(captures, Move{}, ply)
 
 	for _, m := range captures {
+		// SEE prune: a capture whose static exchange evaluation is
+		// negative loses material outright. Searching it just wastes
+		// nodes — qsearch is supposed to converge on quiet positions,
+		// not bleed material into one. Promotions are always kept.
+		if m.Promo == Empty && b.SEE(m) < 0 {
+			continue
+		}
 		u := b.MakeMove(m)
 		if b.SquareAttacked(b.KingSquare[us], us.Opp()) {
 			b.UnmakeMove(u)

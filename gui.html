@@ -7,7 +7,19 @@
   :root { --sq: 112px; }
   * { box-sizing: border-box; }
   body { font-family: -apple-system, system-ui, sans-serif; background: #1e1e1e; color: #ddd; margin: 0; padding: 32px 20px; display: flex; gap: 32px; align-items: flex-start; justify-content: center; min-height: 100vh; }
-  #board-wrap { display: inline-block; border: 4px solid #333; }
+  #board-wrap { display: inline-block; border: 4px solid #333; flex-shrink: 0; }
+
+  @media (max-width: 1400px) {
+    :root { --sq: min(11vh, calc((100vw - 420px) / 8.2)); }
+  }
+  @media (max-width: 1000px) {
+    #side { display: none; }
+    :root { --sq: min(11vh, 11vw); }
+    body { padding: 10px; gap: 0; }
+  }
+  @media (max-height: 500px) {
+    body { padding: 10px; }
+  }
   #board { display: grid; grid-template-columns: repeat(8, var(--sq)); grid-template-rows: repeat(8, var(--sq)); position: relative; }
   .sq { width: var(--sq); height: var(--sq); display: flex; align-items: center; justify-content: center; font-size: calc(var(--sq) * 0.78); cursor: pointer; user-select: none; position: relative; line-height: 1; }
   .light { background: #f0d9b5; }
@@ -27,6 +39,8 @@
   #edit-palette button { font-size: 28px; padding: 0; height: 40px; line-height: 1; background: #3a3a3a; }
   #edit-palette button.sel { background: #ffe066; color: #000; outline: 2px solid #ffe066; }
   body.editing #board .sq { cursor: crosshair; }
+  body.editing #sec-players, body.editing #sec-options, body.editing #sec-analysis,
+  body.editing #sec-view, body.editing #sec-file, body.editing #sec-moves, body.editing #sec-fen { display: none; }
   .dot::before { content: ""; position: absolute; width: calc(var(--sq) * 0.34); height: calc(var(--sq) * 0.34); border-radius: 50%; background: rgba(0,0,0,0.25); }
   .cap::before { content: ""; position: absolute; inset: 5px; border-radius: 50%; box-shadow: inset 0 0 0 6px rgba(20,20,20,0.35); }
   .white-piece { color: #fff; text-shadow: 0 0 1px #000, 0 0 2px #000, 1px 1px 1px #000; }
@@ -69,11 +83,11 @@
   #promo { background: #2b2b2b; padding: 16px; border-radius: 6px; text-align: center; }
   #promo > div:first-child { margin-bottom: 8px; }
   #promo button { font-size: 40px; padding: 8px 14px; margin: 4px; line-height: 1; }
-  .coords-files, .coords-ranks { color: #888; font-size: 12px; user-select: none; }
-  .coords-files { display: grid; grid-template-columns: repeat(8, var(--sq)); padding-left: 22px; }
+  .coords-files, .coords-ranks { color: #888; font-size: calc(var(--sq) * 0.12); user-select: none; }
+  .coords-files { display: grid; grid-template-columns: repeat(8, var(--sq)); padding-left: calc(var(--sq) * 0.2); }
   .coords-files div { text-align: center; padding: 4px 0; }
   .board-row { display: flex; align-items: center; }
-  .coords-ranks { display: grid; grid-template-rows: repeat(8, var(--sq)); width: 22px; }
+  .coords-ranks { display: grid; grid-template-rows: repeat(8, var(--sq)); width: calc(var(--sq) * 0.2); }
   .coords-ranks div { display: flex; align-items: center; justify-content: center; }
 </style>
 </head>
@@ -90,7 +104,7 @@
     <h2>chess</h2>
     <div id="status">Loading…</div>
 
-    <section class="section">
+    <section class="section" id="sec-players">
       <h3>Players</h3>
       <div class="row"><label>White</label>
         <span class="seg">
@@ -98,13 +112,7 @@
           <label><input type="radio" name="white-side" value="e">Engine</label>
         </span>
       </div>
-      <div class="row"><label>Black</label>
-        <span class="seg">
-          <label><input type="radio" name="black-side" value="h">Human</label>
-          <label><input type="radio" name="black-side" value="e" checked>Engine</label>
-        </span>
-      </div>
-      <div class="row"><label>White think</label>
+      <div class="row" id="row-movetime-w"><label>White think</label>
         <select id="movetime-w">
           <option value="100">0.1s (weak)</option>
           <option value="300">0.3s</option>
@@ -113,7 +121,13 @@
           <option value="10000">10s (strong)</option>
         </select>
       </div>
-      <div class="row"><label>Black think</label>
+      <div class="row"><label>Black</label>
+        <span class="seg">
+          <label><input type="radio" name="black-side" value="h">Human</label>
+          <label><input type="radio" name="black-side" value="e" checked>Engine</label>
+        </span>
+      </div>
+      <div class="row" id="row-movetime-b"><label>Black think</label>
         <select id="movetime-b">
           <option value="100">0.1s (weak)</option>
           <option value="300">0.3s</option>
@@ -122,10 +136,13 @@
           <option value="10000">10s (strong)</option>
         </select>
       </div>
-      <button id="newgame">New Game</button>
+      <div class="btn-row">
+        <button id="pause" class="btn-view">Pause</button>
+        <button id="newgame" style="flex: 2; background: #2d5a2d; border-color: #3a703a; font-weight: 600;">New Game</button>
+      </div>
     </section>
 
-    <section class="section">
+    <section class="section" id="sec-options">
       <h3>Options</h3>
       <div class="row" title="Tournament rule: clicking a piece commits you to moving it. Clicking a piece with no legal moves loses the game."><label>Touch-move</label>
         <input type="checkbox" id="touchmove">
@@ -138,7 +155,7 @@
       </div>
     </section>
 
-    <section class="section">
+    <section class="section" id="sec-analysis">
       <h3>Analysis</h3>
       <div class="btn-row">
         <button id="hint" class="btn-analysis">Hint</button>
@@ -149,16 +166,15 @@
       <div id="assess-info" class="info-line"></div>
     </section>
 
-    <section class="section">
+    <section class="section" id="sec-view">
       <h3>View</h3>
       <div class="btn-row">
-        <button id="pause" class="btn-view">Pause</button>
         <button id="replay" class="btn-view">Replay</button>
         <button id="flip" class="btn-view" title="Flip board (F)">Flip</button>
       </div>
     </section>
 
-    <section class="section">
+    <section class="section" id="sec-file">
       <h3>File</h3>
       <div class="btn-row">
         <button id="save" class="btn-file">Save Game</button>
@@ -178,12 +194,12 @@
       </div>
     </section>
 
-    <section class="section">
+    <section class="section" id="sec-moves">
       <h3>Moves</h3>
       <div id="history"></div>
     </section>
 
-    <section class="section">
+    <section class="section" id="sec-fen">
       <h3>FEN</h3>
       <div id="fen"></div>
     </section>
@@ -283,7 +299,7 @@ function parseBoard(fen) {
     }
     grid.push(arr);
   }
-  return grid; // grid[0] is rank 8
+  return grid; // grid[0] is_ rank 8
 }
 
 function render() {
@@ -365,6 +381,8 @@ function render() {
 
   setPlayerSide('white', state.engine_white ? 'e' : 'h');
   setPlayerSide('black', state.engine_black ? 'e' : 'h');
+  document.getElementById('row-movetime-w').style.display = state.engine_white ? 'flex' : 'none';
+  document.getElementById('row-movetime-b').style.display = state.engine_black ? 'flex' : 'none';
   document.getElementById('touchmove').checked = state.touch_move;
   maybePlaySound();
 }
