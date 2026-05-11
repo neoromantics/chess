@@ -122,7 +122,7 @@ func (g *GUI) registerRoutes() {
 	g.mux.HandleFunc("POST /api/load", g.handleLoad)
 	g.mux.HandleFunc("GET /api/replay.html", g.handleReplay)
 	g.mux.Handle("GET /assets/", http.FileServer(assetsFS))
-	g.mux.HandleFunc("GET /{$}", g.handleIndex)
+	g.mux.HandleFunc("GET /", g.handleIndex)
 }
 
 func (g *GUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
