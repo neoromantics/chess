@@ -175,7 +175,7 @@ jobs:
           echo "${{ secrets.PROD_ENV_FILE }}" > .env
           
           # 2. Render manifests locally
-          kubectl kustomize deploy/kustomize/overlays/prod > manifest.yaml
+          kubectl kustomize infra/kustomize/overlays/prod > manifest.yaml
           
           # 3. Setup SSH
           mkdir -p ~/.ssh

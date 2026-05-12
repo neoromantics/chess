@@ -19,55 +19,55 @@ build:
 # Start the entire distributed stack (Gateway, User, Game, Matchmaker, Rating, Worker, Redis, Postgres)
 up:
     @if [ ! -f .env ]; then echo "No .env found — bootstrapping with secrets-init"; just secrets-init; fi
-    docker-compose up --build -d
+    docker-compose -f infra/docker-compose.yml up --build -d
 
 # Scale up engine calculation nodes
 # Usage: just scale 3
 scale n:
-    docker-compose up -d --scale engine-worker={{n}}
+    docker-compose -f infra/docker-compose.yml up -d --scale engine-worker={{n}}
 
 # Stop all services
 down:
-    docker-compose down
+    docker-compose -f infra/docker-compose.yml down
 
 # --- Development Workflow ---
 
 # View real-time logs from all services
 logs:
-    docker-compose logs -f
+    docker-compose -f infra/docker-compose.yml logs -f
 
 # View real-time logs from the Gateway
 logs-gateway:
-    docker-compose logs -f gateway
+    docker-compose -f infra/docker-compose.yml logs -f gateway
 
 # View real-time logs from the User Service
 logs-user:
-    docker-compose logs -f user-service
+    docker-compose -f infra/docker-compose.yml logs -f user-service
 
 # View real-time logs from the Game Service
 logs-game:
-    docker-compose logs -f game-service
+    docker-compose -f infra/docker-compose.yml logs -f game-service
 
 # View real-time logs from the Engine Worker
 logs-worker:
-    docker-compose logs -f engine-worker
+    docker-compose -f infra/docker-compose.yml logs -f engine-worker
 
 # View real-time logs from the Matchmaker
 logs-matchmaker:
-    docker-compose logs -f matchmaker
+    docker-compose -f infra/docker-compose.yml logs -f matchmaker
 
 # View real-time logs from the Rating Updater
 logs-rating:
-    docker-compose logs -f rating-updater
+    docker-compose -f infra/docker-compose.yml logs -f rating-updater
 
 # View status of running containers
 status:
-    docker-compose ps
+    docker-compose -f infra/docker-compose.yml ps
 
 # Fully reset the platform (warning: deletes all database data, including the
 # bind-mounted ./postgres-data and the local .env)
 reset:
-    docker-compose down -v
+    docker-compose -f infra/docker-compose.yml down -v
     rm -rf postgres-data .env
     just up
 
@@ -81,13 +81,13 @@ test:
 fmt:
     gofmt -w .
 
-# Regenerate sqlc Go code from pkg/db/queries + pkg/db/migrations
+# Regenerate sqlc Go code from pkg/db/queries + pkg/db/schema.sql
 db-generate:
-    sqlc generate
+    sqlc generate -f infra/sqlc.yaml
 
 # Clean up all build artifacts and node modules
 clean:
-    rm -rf chess build pkg/api/dist frontend/dist frontend/node_modules
+    rm -rf build cmd/gateway/dist frontend/dist frontend/node_modules
 
 # Generate a local .env file with strong random credentials
 secrets-init:
@@ -101,7 +101,7 @@ secrets-init:
 
 # Deploy to K8s using standard Kustomize
 deploy-prod:
-    kubectl apply -k deploy/kustomize/overlays/prod
+    kubectl apply -k infra/kustomize/overlays/prod
 
 # Rotate all secrets and rolling-restart pods in production
 secrets-rotate:
@@ -109,5 +109,3 @@ secrets-rotate:
     @just secrets-init
     @just deploy-prod
     kubectl rollout restart deployment chess-gateway chess-user-service chess-game-service chess-matchmaker chess-rating-updater chess-worker chess-db -n chess
-
-

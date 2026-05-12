@@ -1,12 +1,12 @@
 version: "2"
 sql:
   - engine: "postgresql"
-    queries: "pkg/db/queries"
-    schema: "pkg/db/schema.sql"
+    queries: "../pkg/db/queries"
+    schema: "../pkg/db/schema.sql"
     gen:
       go:
         package: "gen"
-        out: "pkg/db/gen"
+        out: "../pkg/db/gen"
         sql_package: "database/sql"
         emit_json_tags: true
         emit_interface: true
