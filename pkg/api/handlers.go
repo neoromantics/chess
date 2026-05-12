@@ -37,6 +37,47 @@ func (s *Server) setThinking(ctx context.Context, gameID string, val bool) {
 	}
 }
 
+// IdempotencyMiddleware ensures that state-mutating POST requests can be
+// safely retried by identifying the unique 'Idempotency-Key' header.
+func (s *Server) IdempotencyMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		key := r.Header.Get("Idempotency-Key")
+		if key == "" || r.Method != http.MethodPost {
+			next(w, r)
+			return
+		}
+
+		user, ok := auth.GetUser(r.Context())
+		if !ok {
+			next(w, r)
+			return
+		}
+
+		// 1. Check Redis for a cached response
+		cached, err := s.bus.GetIdempotencyResponse(r.Context(), user.UserID, key)
+		if err == nil && cached != nil {
+			slog.Info("idempotency cache hit", "user_id", user.UserID, "key", key, "path", r.URL.Path)
+			w.Header().Set("X-Idempotency-Hit", "true")
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(cached.StatusCode)
+			w.Write(cached.Body)
+			return
+		}
+
+		// 2. Record the response
+		recorder := &recordingResponseWriter{ResponseWriter: w, status: http.StatusOK}
+		next(recorder, r)
+
+		// 3. Cache the result if it was a success or a client error (don't cache 5xx)
+		if recorder.status < 500 {
+			s.bus.SetIdempotencyResponse(context.Background(), user.UserID, key, bus.IdempotencyResponse{
+				StatusCode: recorder.status,
+				Body:       recorder.body.Bytes(),
+			})
+		}
+	}
+}
+
 // scheduleEngineTimeout is the API-side safety net for engine requests
 // whose worker died mid-search. Without it, the "thinking" flag persists
 // for its full 2-minute TTL and the user is stuck — UX bug we shipped
@@ -93,27 +134,27 @@ func (s *Server) registerRoutes() {
 
 	// Invites — Phase 2. Durable PG row drives /api/invites/pending for
 	// reconnect sync; Redis user.evt.{id} drives live push.
-	s.mux.HandleFunc("POST /api/invites/send", requireAuth(s.handleSendInvite))
+	s.mux.HandleFunc("POST /api/invites/send", requireAuth(s.IdempotencyMiddleware(s.handleSendInvite)))
 	s.mux.HandleFunc("GET /api/invites/pending", requireAuth(s.handleListPendingInvites))
-	s.mux.HandleFunc("POST /api/invites/{id}/accept", requireAuth(s.handleAcceptInvite))
-	s.mux.HandleFunc("POST /api/invites/{id}/decline", requireAuth(s.handleDeclineInvite))
-	s.mux.HandleFunc("POST /api/invites/{id}/cancel", requireAuth(s.handleCancelInvite))
+	s.mux.HandleFunc("POST /api/invites/{id}/accept", requireAuth(s.IdempotencyMiddleware(s.handleAcceptInvite)))
+	s.mux.HandleFunc("POST /api/invites/{id}/decline", requireAuth(s.IdempotencyMiddleware(s.handleDeclineInvite)))
+	s.mux.HandleFunc("POST /api/invites/{id}/cancel", requireAuth(s.IdempotencyMiddleware(s.handleCancelInvite)))
 
 	// Game management — requires login. Per-game endpoints below also
 	// flow through getGame(), which double-checks ownership.
-	s.mux.HandleFunc("POST /api/games/new", requireAuth(s.handleCreateGame))
+	s.mux.HandleFunc("POST /api/games/new", requireAuth(s.IdempotencyMiddleware(s.handleCreateGame)))
 	s.mux.HandleFunc("GET /api/games", requireAuth(s.handleListGames))
 	s.mux.HandleFunc("DELETE /api/games/delete", requireAuth(s.handleDeleteGame))
 	s.mux.HandleFunc("GET /api/state", requireAuth(s.handleState))
-	s.mux.HandleFunc("POST /api/move", requireAuth(s.handleMove))
-	s.mux.HandleFunc("POST /api/new", requireAuth(s.handleNew))
-	s.mux.HandleFunc("POST /api/games/{id}/resign", requireAuth(s.handleResign))
-	s.mux.HandleFunc("POST /api/games/{id}/offer-draw", requireAuth(s.handleOfferDraw))
-	s.mux.HandleFunc("POST /api/games/{id}/accept-draw", requireAuth(s.handleAcceptDraw))
-	s.mux.HandleFunc("POST /api/games/{id}/decline-draw", requireAuth(s.handleDeclineDraw))
-	s.mux.HandleFunc("POST /api/games/{id}/offer-takeback", requireAuth(s.handleOfferTakeback))
-	s.mux.HandleFunc("POST /api/games/{id}/accept-takeback", requireAuth(s.handleAcceptTakeback))
-	s.mux.HandleFunc("POST /api/games/{id}/decline-takeback", requireAuth(s.handleDeclineTakeback))
+	s.mux.HandleFunc("POST /api/move", requireAuth(s.IdempotencyMiddleware(s.handleMove)))
+	s.mux.HandleFunc("POST /api/new", requireAuth(s.IdempotencyMiddleware(s.handleNew)))
+	s.mux.HandleFunc("POST /api/games/{id}/resign", requireAuth(s.IdempotencyMiddleware(s.handleResign)))
+	s.mux.HandleFunc("POST /api/games/{id}/offer-draw", requireAuth(s.IdempotencyMiddleware(s.handleOfferDraw)))
+	s.mux.HandleFunc("POST /api/games/{id}/accept-draw", requireAuth(s.IdempotencyMiddleware(s.handleAcceptDraw)))
+	s.mux.HandleFunc("POST /api/games/{id}/decline-draw", requireAuth(s.IdempotencyMiddleware(s.handleDeclineDraw)))
+	s.mux.HandleFunc("POST /api/games/{id}/offer-takeback", requireAuth(s.IdempotencyMiddleware(s.handleOfferTakeback)))
+	s.mux.HandleFunc("POST /api/games/{id}/accept-takeback", requireAuth(s.IdempotencyMiddleware(s.handleAcceptTakeback)))
+	s.mux.HandleFunc("POST /api/games/{id}/decline-takeback", requireAuth(s.IdempotencyMiddleware(s.handleDeclineTakeback)))
 	s.mux.HandleFunc("POST /api/hint", requireAuth(s.handleHint))
 	s.mux.HandleFunc("POST /api/assess", requireAuth(s.handleAssess))
 	s.mux.HandleFunc("POST /api/set_players", requireAuth(s.handleSetPlayers))

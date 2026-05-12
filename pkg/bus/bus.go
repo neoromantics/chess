@@ -371,6 +371,33 @@ func (c *Client) DelGracePeriod(ctx context.Context, gameID string, side core.Co
 	return c.rdb.Del(ctx, key).Err()
 }
 
+// IdempotencyResponse represents a cached HTTP response.
+type IdempotencyResponse struct {
+	StatusCode int    `json:"status_code"`
+	Body       []byte `json:"body"`
+}
+
+// SetIdempotencyResponse caches a response in Redis.
+func (c *Client) SetIdempotencyResponse(ctx context.Context, userID int64, key string, resp IdempotencyResponse) error {
+	redisKey := fmt.Sprintf("idem:%d:%s", userID, key)
+	data, _ := json.Marshal(resp)
+	return c.rdb.Set(ctx, redisKey, data, 24*time.Hour).Err()
+}
+
+// GetIdempotencyResponse retrieves a cached response from Redis.
+func (c *Client) GetIdempotencyResponse(ctx context.Context, userID int64, key string) (*IdempotencyResponse, error) {
+	redisKey := fmt.Sprintf("idem:%d:%s", userID, key)
+	val, err := c.rdb.Get(ctx, redisKey).Result()
+	if err != nil {
+		return nil, err
+	}
+	var resp IdempotencyResponse
+	if err := json.Unmarshal([]byte(val), &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 // StreamAdd adds a message to a Redis Stream (XADD).
 func (c *Client) StreamAdd(ctx context.Context, stream string, payload any) (string, error) {
 	data, err := json.Marshal(payload)
