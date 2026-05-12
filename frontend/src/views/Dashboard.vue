@@ -25,7 +25,7 @@
               </div>
               <div class="game-actions">
                 <router-link :to="'/game/' + g.id" class="btn-action">Resume</router-link>
-                <button @click="deleteGame(g.id)" class="btn-delete" title="Delete game">×</button>
+                <button type="button" @click.stop.prevent="deleteGame(g.id)" class="btn-delete" title="Delete game">×</button>
               </div>
             </div>
           </div>
