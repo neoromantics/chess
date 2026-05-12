@@ -4,14 +4,19 @@ default:
     @just --list
 # --- Production Operations (Docker Compose) ---
 
-# Build the production binary with embedded frontend
+# Build all production binaries
 build:
     cd frontend && npm install && npm run build
-    mkdir -p pkg/api/dist
-    cp -r frontend/dist/* pkg/api/dist/
-    go build -o chess ./cmd/chess
+    mkdir -p cmd/gateway/dist
+    cp -r frontend/dist/* cmd/gateway/dist/
+    go build -o build/gateway ./cmd/gateway
+    go build -o build/user-service ./cmd/user
+    go build -o build/game-service ./cmd/game
+    go build -o build/matchmaker ./cmd/matchmaker
+    go build -o build/rating-updater ./cmd/rating-updater
+    go build -o build/engine-worker ./cmd/engine-worker
 
-# Start the entire distributed stack (API, Worker, Redis, Postgres)
+# Start the entire distributed stack (Gateway, User, Game, Matchmaker, Rating, Worker, Redis, Postgres)
 up:
     @if [ ! -f .env ]; then echo "No .env found — bootstrapping with secrets-init"; just secrets-init; fi
     docker-compose up --build -d
@@ -19,7 +24,7 @@ up:
 # Scale up engine calculation nodes
 # Usage: just scale 3
 scale n:
-    docker-compose up -d --scale worker={{n}}
+    docker-compose up -d --scale engine-worker={{n}}
 
 # Stop all services
 down:
@@ -31,13 +36,29 @@ down:
 logs:
     docker-compose logs -f
 
-# View real-time logs from the API server
-logs-api:
-    docker-compose logs -f api
+# View real-time logs from the Gateway
+logs-gateway:
+    docker-compose logs -f gateway
+
+# View real-time logs from the User Service
+logs-user:
+    docker-compose logs -f user-service
+
+# View real-time logs from the Game Service
+logs-game:
+    docker-compose logs -f game-service
 
 # View real-time logs from the Engine Worker
 logs-worker:
-    docker-compose logs -f worker
+    docker-compose logs -f engine-worker
+
+# View real-time logs from the Matchmaker
+logs-matchmaker:
+    docker-compose logs -f matchmaker
+
+# View real-time logs from the Rating Updater
+logs-rating:
+    docker-compose logs -f rating-updater
 
 # View status of running containers
 status:
@@ -49,16 +70,6 @@ reset:
     docker-compose down -v
     rm -rf postgres-data .env
     just up
-
-# --- Development Workflow ---
-
-# Run in local development mode (no containers, for rapid Go/Vue coding)
-# Note: Requires a local Redis instance on :6379
-dev:
-    @echo "Starting local dev environment (requires local Redis)..."
-    @(trap 'kill 0' SIGINT; \
-      go run ./cmd/chess -addr localhost:8080 -no-open -server & \
-      cd frontend && VITE_API_URL=http://localhost:8080 npm run dev)
 
 # --- Engineering Standards ---
 
@@ -97,5 +108,6 @@ secrets-rotate:
     @rm -f .env
     @just secrets-init
     @just deploy-prod
-    kubectl rollout restart deployment chess-api chess-worker chess-db -n chess
+    kubectl rollout restart deployment chess-gateway chess-user-service chess-game-service chess-matchmaker chess-rating-updater chess-worker chess-db -n chess
+
 

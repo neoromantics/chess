@@ -30,9 +30,8 @@ jobs:
 
       - name: Prepare Dummy Frontend
         run: |
-          mkdir -p pkg/api/dist
-          touch pkg/api/dist/index.html
-          touch pkg/api/dist/replay.html
+          mkdir -p cmd/gateway/dist
+          touch cmd/gateway/dist/index.html
 
       - name: Vet
         run: go vet ./...
@@ -40,12 +39,18 @@ jobs:
       - name: Test
         run: go test -v ./pkg/...
 
-      - name: Build Binary
-        run: go build -o chess ./cmd/chess
-
-      - name: Smoke Test (UCI)
+      - name: Build All Services
         run: |
-          out=$(printf 'uci\nposition startpos\ngo depth 4\nquit\n' | ./chess)
+          go build -o /dev/null ./cmd/gateway
+          go build -o /dev/null ./cmd/user
+          go build -o /dev/null ./cmd/game
+          go build -o /dev/null ./cmd/matchmaker
+          go build -o /dev/null ./cmd/rating-updater
+          go build -o chess-worker ./cmd/engine-worker
+
+      - name: Smoke Test (UCI Worker)
+        run: |
+          out=$(printf 'uci\nposition startpos\ngo depth 4\nquit\n' | ./chess-worker)
           echo "$out"
           echo "$out" | grep -q '^bestmove '
 
@@ -85,15 +90,63 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build and push API image
+      - name: Build and push Gateway image
         uses: docker/build-push-action@v5
         with:
           context: .
-          target: api-runtime
+          target: gateway-runtime
           push: true
           tags: |
-            ghcr.io/${{ github.repository }}/api:latest
-            ghcr.io/${{ github.repository }}/api:${{ github.sha }}
+            ghcr.io/${{ github.repository }}/gateway:latest
+            ghcr.io/${{ github.repository }}/gateway:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push User Service image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          target: user-runtime
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}/user-service:latest
+            ghcr.io/${{ github.repository }}/user-service:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push Game Service image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          target: game-runtime
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}/game-service:latest
+            ghcr.io/${{ github.repository }}/game-service:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push Matchmaker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          target: matchmaker-runtime
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}/matchmaker:latest
+            ghcr.io/${{ github.repository }}/matchmaker:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push Rating Updater image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          target: rating-updater-runtime
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}/rating-updater:latest
+            ghcr.io/${{ github.repository }}/rating-updater:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -125,5 +178,5 @@ jobs:
             cd ~/chess
             git fetch origin main
             git reset --hard origin/main
-            kubectl apply -n chess -f deploy/k8s.yaml
-            kubectl rollout restart deployment chess-api chess-worker -n chess
+            kubectl apply -k deploy/kustomize/overlays/prod
+            kubectl rollout restart deployment chess-gateway chess-user-service chess-game-service chess-matchmaker chess-rating-updater chess-worker -n chess
