@@ -467,6 +467,7 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 	}
 	user, err := s.db.CreateUser(req.Username, hash)
 	if err != nil {
+		slog.Error("signup failed", "username", req.Username, "error", err)
 		http.Error(w, "username taken", 409)
 		return
 	}
@@ -485,7 +486,13 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user, err := s.db.GetUserByUsername(req.Username)
-	if err != nil || !auth.CheckPasswordHash(req.Password, user.PasswordHash) {
+	if err != nil {
+		slog.Error("login failed: user lookup error", "username", req.Username, "error", err)
+		http.Error(w, "invalid credentials", 401)
+		return
+	}
+	if !auth.CheckPasswordHash(req.Password, user.PasswordHash) {
+		slog.Warn("login failed: password mismatch", "username", req.Username)
 		http.Error(w, "invalid credentials", 401)
 		return
 	}

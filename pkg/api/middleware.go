@@ -52,9 +52,15 @@ func MetricsMiddleware(next http.Handler) http.Handler {
 
 		// Aggregate paths to avoid high-cardinality labels (e.g. /api/invites/123 -> /api/invites/:id)
 		path := r.URL.Path
-		if strings.HasPrefix(path, "/api/invites/") && strings.HasSuffix(path, "/accept") { path = "/api/invites/:id/accept" }
-		if strings.HasPrefix(path, "/api/invites/") && strings.HasSuffix(path, "/decline") { path = "/api/invites/:id/decline" }
-		if strings.HasPrefix(path, "/api/invites/") && strings.HasSuffix(path, "/cancel") { path = "/api/invites/:id/cancel" }
+		if strings.HasPrefix(path, "/api/invites/") && strings.HasSuffix(path, "/accept") {
+			path = "/api/invites/:id/accept"
+		}
+		if strings.HasPrefix(path, "/api/invites/") && strings.HasSuffix(path, "/decline") {
+			path = "/api/invites/:id/decline"
+		}
+		if strings.HasPrefix(path, "/api/invites/") && strings.HasSuffix(path, "/cancel") {
+			path = "/api/invites/:id/cancel"
+		}
 
 		httpRequestsTotal.WithLabelValues(r.Method, path, status).Inc()
 		httpRequestDuration.WithLabelValues(r.Method, path, status).Observe(duration)

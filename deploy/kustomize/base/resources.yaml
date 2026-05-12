@@ -31,9 +31,15 @@ spec:
         - containerPort: 5432
         env:
         - name: POSTGRES_USER
-          value: chess
+          valueFrom:
+            secretKeyRef:
+              name: chess-secrets
+              key: POSTGRES_USER
         - name: POSTGRES_DB
-          value: chess
+          valueFrom:
+            secretKeyRef:
+              name: chess-secrets
+              key: POSTGRES_DB
         - name: POSTGRES_PASSWORD
           valueFrom:
             secretKeyRef:
@@ -44,7 +50,7 @@ spec:
           mountPath: /var/lib/postgresql/data
         readinessProbe:
           exec:
-            command: ["pg_isready", "-U", "chess"]
+            command: ["pg_isready", "-U", "$(POSTGRES_USER)", "-d", "$(POSTGRES_DB)"]
           initialDelaySeconds: 5
           periodSeconds: 5
       volumes:
@@ -176,13 +182,18 @@ spec:
             secretKeyRef:
               name: chess-secrets
               key: POSTGRES_USER
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: chess-secrets
+              key: POSTGRES_DB
         - name: POSTGRES_PASSWORD
           valueFrom:
             secretKeyRef:
               name: chess-secrets
               key: POSTGRES_PASSWORD
         - name: DATABASE_URL
-          value: "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@chess-db:5432/chess?sslmode=disable"
+          value: "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@chess-db:5432/$(POSTGRES_DB)?sslmode=disable"
         - name: REDIS_URL
           value: chess-redis:6379
         - name: JWT_SECRET
