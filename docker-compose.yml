@@ -1,3 +1,8 @@
+# ==============================================================================
+# NOTICE: This docker-compose.yml is maintained STRICTLY as a local development 
+# reference and testing environment to ensure parity. It is NOT intended for VM 
+# or production deployments. Production relies on idiomatic K8s/Kustomize.
+# ==============================================================================
 services:
   api:
     build:

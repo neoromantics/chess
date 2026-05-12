@@ -71,16 +71,24 @@ fmt:
 clean:
     rm -rf chess build pkg/api/dist frontend/dist frontend/node_modules
 
-# --- Secrets Management ---
-
 # Generate a local .env file with strong random credentials
 secrets-init:
-    ./scripts/secrets.sh init
+    @if [ -f .env ]; then echo ".env already exists"; exit 1; fi
+    @echo "POSTGRES_USER=chess_$(openssl rand -hex 4)" > .env
+    @echo "POSTGRES_PASSWORD=$(openssl rand -hex 24)" >> .env
+    @echo "POSTGRES_DB=chess_$(openssl rand -hex 4)" >> .env
+    @echo "JWT_SECRET=$(openssl rand -base64 48 | tr -d '/+=')" >> .env
+    @chmod 600 .env
+    @echo "Generated new .env with strong secrets."
 
-# Create/update chess-secrets in the K8s cluster from your local .env
-secrets-apply:
-    ./scripts/secrets.sh k8s-apply
+# Deploy to K8s using standard Kustomize
+deploy-prod:
+    kubectl apply -k deploy/kustomize/overlays/prod
 
 # Rotate all secrets and rolling-restart pods in production
 secrets-rotate:
-    ./scripts/secrets.sh k8s-rotate
+    @rm -f .env
+    @just secrets-init
+    @just deploy-prod
+    kubectl rollout restart deployment chess-api chess-worker chess-db -n chess
+

@@ -3,18 +3,13 @@ package api
 import (
 	"context"
 	"embed"
-	"encoding/json"
 	"io/fs"
 	"log/slog"
 	"net/http"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/neoromantics/chess/pkg/bus"
-	"github.com/neoromantics/chess/pkg/core"
 	"github.com/neoromantics/chess/pkg/db"
-	"github.com/neoromantics/chess/pkg/game"
 )
 
 //go:embed all:dist
@@ -50,31 +45,13 @@ const replayPlaceholder = "REPLAY_DATA_PLACEHOLDER"
 // maxRequestBody is the maximum allowed request body size (1 MB).
 const maxRequestBody int64 = 1 << 20
 
-type gameEntry struct {
-	mu         sync.Mutex
-	game       *game.Game
-	stopSearch atomic.Bool
-	eventFired atomic.Bool
-	lastUsed   time.Time
-	id         string
-	userID     int64
-	sessionID  string
-	createdAt  time.Time
-
-	whiteThinkTime time.Duration
-	blackThinkTime time.Duration
-}
+// Server is now entirely stateless regarding active games.
 
 type Server struct {
 	mux *http.ServeMux
 	db  db.Store
 	hub *Hub
 	bus *bus.Client
-
-	mu    sync.RWMutex
-	games map[string]*gameEntry
-
-	lastPing time.Time
 
 	// Rate limiters for expensive endpoints
 	engineLimiter *RateLimiter // /api/hint, /api/assess
@@ -86,15 +63,11 @@ func NewServer(database db.Store, eventBus *bus.Client) *Server {
 		db:            database,
 		hub:           NewHub(),
 		bus:           eventBus,
-		games:         make(map[string]*gameEntry),
-		lastPing:      time.Now(),
 		engineLimiter: NewRateLimiter(10, 10, time.Minute), // 10 engine requests per minute per IP
 		gameLimiter:   NewRateLimiter(5, 5, time.Minute),   // 5 new games per minute per IP
 	}
 	go s.hub.Run()
-	go s.listenToGameUpdates()
 	s.listenToEngine()
-	s.StartClockTicker()
 	s.mux = http.NewServeMux()
 	s.registerRoutes()
 	return s
@@ -112,112 +85,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.ServeHTTP(w, r)
 }
 
-func (s *Server) StartClockTicker() {
-	go func() {
-		defer func() {
-			if err := recover(); err != nil {
-				slog.Error("clock ticker panic recovered", "error", err)
-				// Restart the ticker after recovery
-				s.StartClockTicker()
-			}
-		}()
-
-		ticker := time.NewTicker(1 * time.Second)
-		defer ticker.Stop()
-		for range ticker.C {
-			s.mu.RLock()
-			entries := make([]*gameEntry, 0, len(s.games))
-			for _, entry := range s.games {
-				entries = append(entries, entry)
-			}
-			s.mu.RUnlock()
-
-			now := time.Now()
-			for _, entry := range entries {
-				entry.mu.Lock()
-				gm := entry.game
-				if gm.Status() == game.StatusOngoing {
-					elapsed := now.Sub(gm.LastTick).Milliseconds()
-					if gm.Board.SideToMove == core.White {
-						gm.WhiteTime -= elapsed
-					} else {
-						gm.BlackTime -= elapsed
-					}
-					gm.LastTick = now
-
-					if gm.WhiteTime <= 0 || gm.BlackTime <= 0 {
-						if gm.WhiteTime < 0 {
-							gm.WhiteTime = 0
-						}
-						if gm.BlackTime < 0 {
-							gm.BlackTime = 0
-						}
-						slog.Info("game timeout detected", "game_id", entry.id)
-						entry.mu.Unlock()
-						s.syncGameToDB(entry, nil)
-					} else {
-						s.hub.BroadcastEvent(entry.id, "state", s.snapshotLocked(entry))
-						entry.mu.Unlock()
-					}
-				} else {
-					entry.mu.Unlock()
-				}
-			}
-		}
-	}()
-}
-
-func (s *Server) StartCacheManager() {
-	go func() {
-		for {
-			time.Sleep(1 * time.Minute)
-
-			// 1. Manage In-Memory Game Cache
-			s.mu.Lock()
-			now := time.Now()
-			for id, entry := range s.games {
-				entry.mu.Lock()
-				idle := now.Sub(entry.lastUsed)
-				entry.mu.Unlock()
-				if idle > 10*time.Minute {
-					slog.Info("evicting game from memory cache", "game_id", id)
-					delete(s.games, id)
-				}
-			}
-
-			// 2. Optional: Idle Server Shutdown
-			// idle := time.Since(s.lastPing)
-			s.mu.Unlock()
-
-			// if idle > d {
-			// 	slog.Info("server idle timeout triggered")
-			// 	os.Exit(0)
-			// }
-		}
-	}()
-}
-
-// Shutdown gracefully shuts down the server, closing WebSocket connections
-// and flushing active game states to the database.
+// Shutdown gracefully shuts down the server. Since we are stateless,
+// no active games need to be flushed to the database.
 func (s *Server) Shutdown(ctx context.Context) {
 	slog.Info("starting graceful shutdown")
-
-	// Save all active games to database
-	s.mu.Lock()
-	for id, entry := range s.games {
-		slog.Info("saving game before shutdown", "game_id", id)
-		entry.stopSearch.Store(true)
-	}
-	entries := make([]*gameEntry, 0, len(s.games))
-	for _, e := range s.games {
-		entries = append(entries, e)
-	}
-	s.mu.Unlock()
-
-	for _, entry := range entries {
-		s.syncGameToDB(entry, nil)
-	}
-
+	// Any pending requests will finish up to ctx timeout
 	slog.Info("graceful shutdown complete")
 }
 
@@ -251,54 +123,4 @@ func (s *Server) CheckHealth() HealthStatus {
 	}
 
 	return h
-}
-
-func (s *Server) listenToGameUpdates() {
-	err := s.bus.Subscribe(context.Background(), bus.GameUpdatedChannel, func(payload []byte) {
-		var event bus.GameUpdatedEvent
-		if err := json.Unmarshal(payload, &event); err != nil {
-			return
-		}
-
-		s.mu.RLock()
-		_, exists := s.games[event.GameID]
-		s.mu.RUnlock()
-
-		if exists {
-			s.refreshGameFromDB(event.GameID)
-		}
-	})
-	if err != nil {
-		slog.Error("failed to subscribe to game updates", "error", err)
-	}
-}
-
-func (s *Server) refreshGameFromDB(id string) {
-	record, err := s.db.GetGame(id)
-	if err != nil {
-		return
-	}
-
-	s.mu.RLock()
-	entry, exists := s.games[id]
-	s.mu.RUnlock()
-	if !exists {
-		return
-	}
-
-	var history, historySAN []string
-	json.Unmarshal([]byte(record.History), &history)
-	json.Unmarshal([]byte(record.HistorySAN), &historySAN)
-
-	entry.mu.Lock()
-	// Preserve the engine configurations, but update the FEN and history
-	entry.game.Load(record.FEN, history, record.EngineWhite, record.EngineBlack)
-	entry.game.HistorySAN = historySAN
-	entry.whiteThinkTime = time.Duration(record.WhiteThinkTime) * time.Millisecond
-	entry.blackThinkTime = time.Duration(record.BlackThinkTime) * time.Millisecond
-
-	snapshot := s.snapshotLocked(entry)
-	entry.mu.Unlock()
-
-	s.hub.BroadcastState(id, snapshot)
 }

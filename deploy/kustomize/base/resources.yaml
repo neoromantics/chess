@@ -38,7 +38,7 @@ spec:
           valueFrom:
             secretKeyRef:
               name: chess-secrets
-              key: postgres-password
+              key: POSTGRES_PASSWORD
         volumeMounts:
         - name: pgdata
           mountPath: /var/lib/postgresql/data
@@ -123,18 +123,25 @@ spec:
         env:
         - name: PORT
           value: "8080"
-        - name: DATABASE_URL
+        - name: POSTGRES_USER
           valueFrom:
             secretKeyRef:
               name: chess-secrets
-              key: database-url
+              key: POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: chess-secrets
+              key: POSTGRES_PASSWORD
+        - name: DATABASE_URL
+          value: "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@chess-db:5432/chess?sslmode=disable"
         - name: REDIS_URL
           value: chess-redis:6379
         - name: JWT_SECRET
           valueFrom:
             secretKeyRef:
               name: chess-secrets
-              key: jwt-secret
+              key: JWT_SECRET
         - name: HTTPS_ENABLED
           value: "true"
         - name: CORS_ORIGINS

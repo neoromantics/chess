@@ -11,6 +11,8 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -67,10 +69,24 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /{path...}", s.handleIndex)
 }
 
-func (s *Server) getGame(r *http.Request) (*gameEntry, string, error) {
+// gameEntry is a transient wrapper for a game during a single HTTP request.
+type gameEntry struct {
+	mu         sync.Mutex // Kept for API compatibility; local to the request
+	game       *game.Game
+	stopSearch atomic.Bool
+	eventFired atomic.Bool
+	id         string
+	userID     int64
+	sessionID  string
+	createdAt  time.Time
+
+	whiteThinkTime time.Duration
+	blackThinkTime time.Duration
+}
+
+func (s *Server) getGame(r *http.Request) (*gameEntry, error) {
 	id := r.URL.Query().Get("game_id")
 	if id == "" {
-		// Fallback for RESTful paths /game/{id}
 		parts := strings.Split(r.URL.Path, "/")
 		for i, p := range parts {
 			if p == "game" && i+1 < len(parts) {
@@ -79,26 +95,13 @@ func (s *Server) getGame(r *http.Request) (*gameEntry, string, error) {
 			}
 		}
 	}
-
 	if id == "" {
-		slog.Warn("missing game_id in request", "path", r.URL.Path, "method", r.Method)
-		return nil, "", fmt.Errorf("missing game_id")
+		return nil, fmt.Errorf("missing game_id")
 	}
-
-	s.mu.RLock()
-	entry, ok := s.games[id]
-	if ok {
-		s.mu.RUnlock()
-		entry.mu.Lock()
-		entry.lastUsed = time.Now()
-		entry.mu.Unlock()
-		return entry, id, nil
-	}
-	s.mu.RUnlock()
 
 	record, err := s.db.GetGame(id)
 	if err != nil {
-		return nil, "", fmt.Errorf("game not found")
+		return nil, fmt.Errorf("game not found")
 	}
 
 	user, _ := auth.GetUser(r.Context())
@@ -108,9 +111,8 @@ func (s *Server) getGame(r *http.Request) (*gameEntry, string, error) {
 	if (user != nil && record.UserID == user.UserID) || (record.UserID == 0 && record.SessionID == sessionID) {
 		authorized = true
 	}
-
 	if !authorized {
-		return nil, "", fmt.Errorf("unauthorized")
+		return nil, fmt.Errorf("unauthorized")
 	}
 
 	gameInst := game.NewGame()
@@ -120,28 +122,44 @@ func (s *Server) getGame(r *http.Request) (*gameEntry, string, error) {
 	gameInst.Load(record.FEN, history, record.EngineWhite, record.EngineBlack)
 	gameInst.HistorySAN = historySAN
 
-	entry = &gameEntry{
+	// --- Stateless Clock Calculation ---
+	// Calculate time elapsed since the last move (UpdatedAt)
+	whiteThinkTime := time.Duration(record.WhiteThinkTime) * time.Millisecond
+	blackThinkTime := time.Duration(record.BlackThinkTime) * time.Millisecond
+
+	if gameInst.Status() == game.StatusOngoing {
+		elapsed := time.Since(record.UpdatedAt)
+		if gameInst.Board.SideToMove == core.White {
+			whiteThinkTime -= elapsed
+			if whiteThinkTime < 0 {
+				whiteThinkTime = 0
+			}
+		} else {
+			blackThinkTime -= elapsed
+			if blackThinkTime < 0 {
+				blackThinkTime = 0
+			}
+		}
+	}
+
+	entry := &gameEntry{
 		game:           gameInst,
 		id:             id,
 		userID:         record.UserID,
 		sessionID:      record.SessionID,
 		createdAt:      record.CreatedAt,
-		lastUsed:       time.Now(),
-		whiteThinkTime: time.Duration(record.WhiteThinkTime) * time.Millisecond,
-		blackThinkTime: time.Duration(record.BlackThinkTime) * time.Millisecond,
+		whiteThinkTime: whiteThinkTime,
+		blackThinkTime: blackThinkTime,
 	}
 	entry.stopSearch.Store(false)
-	entry.mu.Lock()
-	s.games[id] = entry
-	entry.mu.Unlock()
-	go s.maybeTriggerEngine(entry)
-	return entry, id, nil
+	return entry, nil
 }
 
 func (s *Server) withGameLock(w http.ResponseWriter, r *http.Request, fn func(entry *gameEntry)) {
-	entry, id, err := s.getGame(r)
-	if err != nil {
-		http.Error(w, err.Error(), 404)
+	// 1. Acquire Redis distributed lock first to prevent concurrent edits
+	id := r.URL.Query().Get("game_id")
+	if id == "" {
+		http.Error(w, "missing game_id", 400)
 		return
 	}
 
@@ -152,26 +170,47 @@ func (s *Server) withGameLock(w http.ResponseWriter, r *http.Request, fn func(en
 	}
 	defer s.bus.UnlockGame(context.Background(), id)
 
-	s.refreshGameFromDB(id)
+	// 2. Fetch fresh state from DB
+	entry, err := s.getGame(r)
+	if err != nil {
+		http.Error(w, err.Error(), 404)
+		return
+	}
+
+	// 3. Execute handler logic (which mutates entry.game)
 	fn(entry)
 }
 
 func (s *Server) executeWithGameLock(ctx context.Context, gameID string, fn func(entry *gameEntry)) {
 	locked, err := s.bus.LockGame(ctx, gameID, 5*time.Second)
 	if err != nil || !locked {
-		// Failed to acquire lock, meaning another pod is processing this event.
 		return
 	}
 	defer s.bus.UnlockGame(context.Background(), gameID)
 
-	s.refreshGameFromDB(gameID)
-
-	s.mu.RLock()
-	entry, ok := s.games[gameID]
-	s.mu.RUnlock()
-	if ok {
-		fn(entry)
+	record, err := s.db.GetGame(gameID)
+	if err != nil {
+		return
 	}
+
+	gameInst := game.NewGame()
+	var history, historySAN []string
+	json.Unmarshal([]byte(record.History), &history)
+	json.Unmarshal([]byte(record.HistorySAN), &historySAN)
+	gameInst.Load(record.FEN, history, record.EngineWhite, record.EngineBlack)
+	gameInst.HistorySAN = historySAN
+
+	entry := &gameEntry{
+		game:           gameInst,
+		id:             gameID,
+		userID:         record.UserID,
+		sessionID:      record.SessionID,
+		createdAt:      record.CreatedAt,
+		whiteThinkTime: time.Duration(record.WhiteThinkTime) * time.Millisecond,
+		blackThinkTime: time.Duration(record.BlackThinkTime) * time.Millisecond,
+	}
+
+	fn(entry)
 }
 
 func (s *Server) syncGameToDB(entry *gameEntry, newAssess any) {
@@ -417,14 +456,10 @@ func (s *Server) handleCreateGame(w http.ResponseWriter, r *http.Request) {
 		userID:         userID,
 		sessionID:      sessionID,
 		createdAt:      time.Now(),
-		lastUsed:       time.Now(),
-		whiteThinkTime: 1000 * time.Millisecond,
-		blackThinkTime: 1000 * time.Millisecond,
+		whiteThinkTime: 10*time.Minute, // Default to 10 minutes
+		blackThinkTime: 10*time.Minute,
 	}
 	entry.stopSearch.Store(false)
-	entry.mu.Lock()
-	s.games[id] = entry
-	entry.mu.Unlock()
 
 	s.syncGameToDB(entry, nil)
 	writeJSON(w, map[string]string{"game_id": id})
@@ -454,30 +489,20 @@ func (s *Server) handleListGames(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDeleteGame(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("game_id")
 	user, _ := auth.GetUser(r.Context())
-	sessionID := auth.GetSessionID(r.Context())
 
-	s.mu.RLock()
-	entry, ok := s.games[id]
-	s.mu.RUnlock()
-	if ok {
-		authorized := false
-		if (user != nil && entry.userID == user.UserID) || (entry.userID == 0 && entry.sessionID == sessionID) {
-			authorized = true
-		}
-		if !authorized {
-			http.Error(w, "unauthorized", 401)
-			return
-		}
-		entry.stopSearch.Store(true)
-		delete(s.games, id)
+	entry, err := s.getGame(r)
+	if err != nil {
+		http.Error(w, err.Error(), 404)
+		return
 	}
-	entry.mu.Unlock()
+
+	entry.stopSearch.Store(true)
 
 	var userID int64
 	if user != nil {
 		userID = user.UserID
 	}
-	err := s.db.DeleteGame(id, userID)
+	err = s.db.DeleteGame(id, userID)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
@@ -488,9 +513,8 @@ func (s *Server) handleDeleteGame(w http.ResponseWriter, r *http.Request) {
 // Play Handlers
 
 func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
-	entry, id, err := s.getGame(r)
+	entry, err := s.getGame(r)
 	if err != nil {
-		slog.Error("handleState error", "error", err, "game_id", id)
 		http.Error(w, err.Error(), 404)
 		return
 	}
@@ -500,7 +524,7 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleTouch(w http.ResponseWriter, r *http.Request) {
-	entry, _, err := s.getGame(r)
+	entry, err := s.getGame(r)
 	if err != nil {
 		http.Error(w, err.Error(), 404)
 		return
@@ -518,7 +542,7 @@ func (s *Server) handleTouch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleTouchMove(w http.ResponseWriter, r *http.Request) {
-	entry, _, err := s.getGame(r)
+	entry, err := s.getGame(r)
 	if err != nil {
 		http.Error(w, err.Error(), 404)
 		return
@@ -670,7 +694,7 @@ func (s *Server) handleHint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entry, _, err := s.getGame(r)
+	entry, err := s.getGame(r)
 	if err != nil {
 		http.Error(w, err.Error(), 404)
 		return
@@ -725,7 +749,7 @@ func (s *Server) handleAssess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entry, _, err := s.getGame(r)
+	entry, err := s.getGame(r)
 	if err != nil {
 		http.Error(w, err.Error(), 404)
 		return
@@ -788,7 +812,7 @@ func (s *Server) handleAssess(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
-	entry, _, err := s.getGame(r)
+	entry, err := s.getGame(r)
 	if err != nil {
 		http.Error(w, err.Error(), 404)
 		return
@@ -848,7 +872,7 @@ func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleReplay(w http.ResponseWriter, r *http.Request) {
-	entry, _, err := s.getGame(r)
+	entry, err := s.getGame(r)
 	if err != nil {
 		http.Error(w, err.Error(), 404)
 		return
@@ -883,9 +907,6 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePing(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	s.lastPing = time.Now()
-	s.mu.Unlock()
 	w.WriteHeader(204)
 }
 

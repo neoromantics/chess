@@ -7,19 +7,20 @@ A professional, distributed chess platform architected for commercial scale. Bui
 
 ## Enterprise Distributed Architecture
 This platform is engineered as a highly available, strictly consistent microservices ecosystem:
-- **API Gateway (Go)**: A strictly stateless, event-driven orchestrator managing WebSockets and Auth. Can be scaled infinitely behind standard load balancers.
-- **Engine Worker Pool (Go)**: CPU-intensive search and evaluation offloaded to a horizontally scalable pool of dedicated worker nodes.
-- **Redis (State Sync & Concurrency)**: Serves as the operational backbone. Provides distributed locking (preventing race conditions) and cross-pod cache invalidation (solving split-brain state issues).
+- **API Gateway (Go)**: A strictly 100% stateless, event-driven orchestrator. Holds ZERO game state in memory. Clocks and game state are derived dynamically from Postgres timestamps, allowing infinite scaling behind standard load balancers without sticky sessions.
+- **Engine Worker Pool (Go)**: CPU-intensive search and evaluation offloaded to a horizontally scalable pool of dedicated worker nodes reading from Redis `BLPOP` queues.
+- **Redis (State Sync & Concurrency)**: Serves as the operational backbone. Provides distributed locking (preventing race conditions) and acts as the global `ws.broadcast` bus, allowing any pod to stream state instantly to all clients.
 - **Postgres (Persistence)**: The authoritative durable store for game lifecycles and analysis records.
 
 ## Key Features
 - **Strictly Consistent State:** Redis-backed distributed locks guarantee absolute consistency across active games, even during concurrent mutations across different K8s nodes.
-- **Reactive Cache Hydration:** Pub/Sub cache invalidation ensures that WebSockets instantly stream the latest board state regardless of which pod processes the move.
-- **Zero-Downtime GitOps:** Automated CI/CD pipeline building multi-stage immutable containers, seamlessly rolled out to a k3s cluster.
+- **Reactive Stateless Broadcasts:** Redis Pub/Sub (`ws.broadcast`) ensures that WebSockets instantly stream the latest board state regardless of which pod processes the move, eliminating all DB caching overhead.
+- **Standardized GitOps:** Automated CI/CD pipeline building multi-stage immutable containers, seamlessly rolled out to a K8s cluster using standard `Kustomize`.
 - **Authoritative Headless Engine:** The backend is the sole arbiter of time and legality. The Vue 3 frontend is a decoupled, reactive terminal.
 
-## Quick Start (Docker)
-The entire stack is containerized for professional environment parity.
+## Quick Start (Docker Compose)
+Docker Compose is maintained strictly as a local development reference to ensure parity. It is **not** used for VM or production deployment.
+
 
 ```bash
 # Build and launch the full distributed stack
@@ -66,8 +67,9 @@ Pushing to the `main` branch triggers a GitHub Actions pipeline that:
 1. Builds multi-stage Docker images.
 2. Pushes the immutable images to `ghcr.io/neoromantics`.
 3. Connects to the remote **k3s** Kubernetes cluster via SSH.
-4. Applies the raw manifests in `deploy/k8s.yaml` and performs a zero-downtime rolling restart.
+4. Applies the manifests using native `Kustomize` (`deploy/kustomize/overlays/prod`) and performs a zero-downtime rollout.
 
+**Note on Secret Management**: For the highest production standard, we advocate migrating from Kustomize's `secretGenerator` to a dedicated Secret Management Service (e.g., SealedSecrets, SOPS, or External Secrets Operator) in the future.
 See [DEPLOY.md](DEPLOY.md) for detailed cluster setup instructions.
 
 ## Repository

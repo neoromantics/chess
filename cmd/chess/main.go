@@ -68,7 +68,6 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Chess Platform Server: %s\n", url)
 
 		server := api.NewServer(store, eventBus)
-		server.StartCacheManager()
 
 		httpServer := &http.Server{Handler: server}
 

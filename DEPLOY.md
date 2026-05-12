@@ -11,34 +11,32 @@ This platform is designed for professional Kubernetes deployment via **GitHub Ac
 
 Our primary production environment uses **k3s**, **Traefik** for ingress, and **cert-manager** for automated Let's Encrypt HTTPS certificates.
 
-### 1. Configure Secret Data
-Generate cryptographically secure secrets and store them directly in the cluster:
+### 1. Configure Secret Data (Interim / Bootstrapping)
+For bootstrapping the cluster, we use `Kustomize secretGenerator`. Generate cryptographically secure secrets locally:
 ```bash
-kubectl create namespace chess
-
-JWT_SECRET=$(openssl rand -hex 32)
-PG_PASSWORD=$(openssl rand -base64 24 | tr -d '=/+' | head -c 32)
-
-kubectl -n chess create secret generic chess-secrets \
-  --from-literal=jwt-secret="$JWT_SECRET" \
-  --from-literal=postgres-password="$PG_PASSWORD" \
-  --from-literal=database-url="postgres://chess:${PG_PASSWORD}@chess-db:5432/chess?sslmode=disable"
+just secrets-init
 ```
+This generates a strict `.env` file locally. It is `.gitignore`d and will never be committed.
 
-### 2. Configure GitHub Actions
+> [!TIP]
+> **Idiomatic Secret Management (Recommended):**
+> For long-term production, do not rely on raw `.env` files injected by CI/CD. Instead, use an idiomatic Kubernetes Secret Management Service such as **SealedSecrets**, **SOPS**, or the **External Secrets Operator** (syncing from AWS Secrets Manager / HashiCorp Vault). Kustomize should reference these encrypted manifests rather than plain text `.env` files.
+
+### 2. Deploy Manifests (Kustomize)
+Deploy the core infrastructure using standard native Kubernetes Kustomize:
+```bash
+kubectl apply -k deploy/kustomize/overlays/prod
+```
+Kustomize will automatically read the `.env` file, generate a hashed `chess-secrets` object, and deploy Postgres, Redis, API replicas, Worker replicas, and an Ingress with TLS.
+
+### 3. Configure GitHub Actions
 Your GitHub repository must have the following Secrets configured to allow the CI/CD pipeline to deploy:
 - `DEPLOY_SSH_HOST` (e.g. `vcm-50800.vm.duke.edu`)
 - `DEPLOY_SSH_USER` (e.g. `tl370`)
 - `DEPLOY_SSH_KEY` (Private SSH key with server access)
+- `PROD_ENV_FILE` (The contents of your securely generated `.env` file)
 
-Once configured, pushing to the `main` branch will automatically build Docker images, push them to `ghcr.io`, and deploy them via SSH.
-
-### 3. Deploy Manifests
-Deploy the core infrastructure from the tracked manifests:
-```bash
-kubectl apply -n chess -f deploy/k8s.yaml
-```
-This provisions Postgres, Redis, API replicas, Worker replicas, and an Ingress with TLS.
+Once configured, pushing to the `main` branch will automatically build Docker images, push them to `ghcr.io`, and deploy them via Kustomize over SSH.
 
 ### 4. Scaling Workers
 The Engine Worker pool can be scaled independently to handle increased load:
@@ -46,8 +44,13 @@ The Engine Worker pool can be scaled independently to handle increased load:
 kubectl scale deployment chess-worker -n chess --replicas=10
 ```
 
-## 📦 Local Binary (Single File)
-For quick internal testing or low-traffic instances, you can build a single Go binary that includes the embedded frontend:
+## 🐳 Local Development vs Production
+
+> [!WARNING]
+> **Docker Compose is for Local Reference Only**
+> We maintain `docker-compose.yml` strictly as a local development reference to ensure parity and testing ease. It is **not** intended for VM or production deployment. All future VM deployments must use the idiomatic K8s/Kustomize workflow.
+
+For quick internal testing or low-traffic instances, you can use the compose file or build a single Go binary that includes the embedded frontend:
 
 ```bash
 just build
@@ -55,7 +58,7 @@ just build
 ```
 
 ## 🔗 Distributed Stack Overview
-- **API Pods (Strictly Stateless)**: Handles WS and Auth. Infinitely scalable behind standard load balancers without requiring sticky sessions, thanks to Redis.
-- **Worker Pods**: CPU-intensive, subscribes to Redis tasks for move calculation.
-- **Redis**: The operational backbone. Acts as the message broker, distributed lock manager (preventing race conditions), and inter-pod cache invalidator.
-- **Postgres**: Authoritative persistent storage.
+- **API Pods (100% Stateless)**: Handles WS and HTTP. Zero in-memory game state. Reads/writes to Postgres on demand. Infinitely scalable behind standard load balancers.
+- **Worker Pods (Stateless Engine)**: CPU-intensive. Subscribes to Redis `BLPOP` queues for move calculation.
+- **Redis (Event Bus & Queues)**: The operational backbone. Acts as the WebSocket broadcast bus, task queue for engine searches, and distributed lock manager.
+- **Postgres (Authoritative State)**: The single source of truth for long-term persistence and active game states.
