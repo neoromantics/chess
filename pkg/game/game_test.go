@@ -1,6 +1,10 @@
 package game
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/neoromantics/chess/pkg/core"
+)
 
 func mustMove(t *testing.T, g *Game, ms string) {
 	t.Helper()
@@ -8,7 +12,7 @@ func mustMove(t *testing.T, g *Game, ms string) {
 	if err != nil {
 		t.Fatalf("parse %s: %v", ms, err)
 	}
-	matched, ok := matchMove(g.Board.GenerateLegalMoves(), m)
+	matched, ok := MatchMove(g.Board.GenerateLegalMoves(), m)
 	if !ok {
 		t.Fatalf("illegal move %s in %s", ms, g.Board.FEN())
 	}
@@ -20,7 +24,7 @@ func TestNewGameStart(t *testing.T) {
 	if g.Status() != StatusOngoing {
 		t.Errorf("startpos status = %s, want ongoing", g.Status())
 	}
-	if g.Board.FEN() != StartFEN {
+	if g.Board.FEN() != core.StartFEN {
 		t.Errorf("startpos FEN = %s", g.Board.FEN())
 	}
 	if len(g.UndoStack) != 0 || len(g.History) != 0 {
@@ -49,13 +53,13 @@ func TestUndoReverts(t *testing.T) {
 	if !g.Undo() {
 		t.Fatal("Undo returned false")
 	}
-	if g.Board.SideToMove != Black {
+	if g.Board.SideToMove != core.Black {
 		t.Errorf("after one undo, side to move = %d, want Black", g.Board.SideToMove)
 	}
 	if !g.Undo() {
 		t.Fatal("second Undo returned false")
 	}
-	if g.Board.FEN() != StartFEN {
+	if g.Board.FEN() != core.StartFEN {
 		t.Errorf("after both undone, FEN = %s", g.Board.FEN())
 	}
 	if g.Undo() {
@@ -143,9 +147,9 @@ func TestRepetitionResetOnPawnMove(t *testing.T) {
 func TestTouchCommits(t *testing.T) {
 	g := NewGame()
 	g.TouchMove = true
-	g.Touch(Sq(4, 1)) // e2 — has legal moves
-	if g.TouchedSq != Sq(4, 1) {
-		t.Errorf("TouchedSq = %d, want e2 (%d)", g.TouchedSq, Sq(4, 1))
+	g.Touch(core.Sq(4, 1)) // e2 — has legal moves
+	if g.TouchedSq != core.Sq(4, 1) {
+		t.Errorf("TouchedSq = %d, want e2 (%d)", g.TouchedSq, core.Sq(4, 1))
 	}
 	if g.TouchLost {
 		t.Error("TouchLost set after touching a movable piece")
@@ -159,7 +163,7 @@ func TestTouchImmovablePieceLoses(t *testing.T) {
 	if err := g.Load("6k1/5p2/5P2/8/8/8/8/4K3 b - - 0 1", nil, false, false); err != nil {
 		t.Fatal(err)
 	}
-	g.Touch(Sq(5, 6)) // f7
+	g.Touch(core.Sq(5, 6)) // f7
 	if !g.TouchLost {
 		t.Error("touching the immovable f7 pawn should set TouchLost")
 	}
@@ -186,13 +190,13 @@ func TestPlayerAt(t *testing.T) {
 	for _, m := range []string{"e2e4", "e7e5", "g1f3"} {
 		mustMove(t, g, m)
 	}
-	if g.PlayerAt(0) != White {
+	if g.PlayerAt(0) != core.White {
 		t.Errorf("PlayerAt(0) = %d, want White", g.PlayerAt(0))
 	}
-	if g.PlayerAt(1) != Black {
+	if g.PlayerAt(1) != core.Black {
 		t.Errorf("PlayerAt(1) = %d, want Black", g.PlayerAt(1))
 	}
-	if g.PlayerAt(2) != White {
+	if g.PlayerAt(2) != core.White {
 		t.Errorf("PlayerAt(2) = %d, want White", g.PlayerAt(2))
 	}
 }
@@ -214,7 +218,7 @@ func TestBoardsAroundMovePreservesLiveBoard(t *testing.T) {
 	if liveBefore != g.Board.FEN() {
 		t.Errorf("live board mutated: %s -> %s", liveBefore, g.Board.FEN())
 	}
-	if before.FEN() != StartFEN {
+	if before.FEN() != core.StartFEN {
 		t.Errorf("before(0) = %s, want startpos", before.FEN())
 	}
 	wantAfter := "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1"
@@ -225,7 +229,7 @@ func TestBoardsAroundMovePreservesLiveBoard(t *testing.T) {
 
 func TestLoadReplaysMoves(t *testing.T) {
 	g := NewGame()
-	if err := g.Load(StartFEN, []string{"e2e4", "e7e5"}, false, false); err != nil {
+	if err := g.Load(core.StartFEN, []string{"e2e4", "e7e5"}, false, false); err != nil {
 		t.Fatal(err)
 	}
 	if len(g.History) != 2 {

@@ -19,7 +19,7 @@ func TestEngineAvoidsRepetitionWhenWinning(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	currentKey := positionKey(b)
+	currentKey := b.Hash
 	history := map[uint64]int{currentKey: 2}
 
 	stop := &atomic.Bool{}
@@ -55,7 +55,7 @@ func TestEngineRepetitionShortCircuits(t *testing.T) {
 	}
 	// Mark the current position as already seen twice. Any legal move from
 	// here that returns to it would draw.
-	hist := map[uint64]int{positionKey(b): 2}
+	hist := map[uint64]int{b.Hash: 2}
 
 	stop := &atomic.Bool{}
 	res := b.IterativeDeepening(

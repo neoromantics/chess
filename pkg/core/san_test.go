@@ -2,17 +2,38 @@ package core
 
 import "testing"
 
-// playSAN plays moves on g and returns the SAN sequence in order.
+// playSAN plays moves on a board and returns the SAN sequence in order.
 func playSAN(t *testing.T, fen string, moves []string) []string {
 	t.Helper()
-	g := NewGame()
-	if err := g.Load(fen, nil, false, false); err != nil {
+	b, err := ParseFEN(fen)
+	if err != nil {
 		t.Fatal(err)
 	}
+	var sanHistory []string
 	for _, ms := range moves {
-		mustMove(t, g, ms)
+		m, err := b.ParseUCIMove(ms)
+		if err != nil {
+			t.Fatalf("parse %s: %v", ms, err)
+		}
+
+		// Find the generated move to ensure we have the correct promotion flags, etc.
+		legal := b.GenerateLegalMoves()
+		matched := false
+		for _, lm := range legal {
+			if lm.From == m.From && lm.To == m.To && lm.Promo == m.Promo {
+				m = lm
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			t.Fatalf("illegal move %s", ms)
+		}
+
+		sanHistory = append(sanHistory, MoveToSAN(b, m))
+		b.MakeMove(m)
 	}
-	return g.HistorySAN
+	return sanHistory
 }
 
 func TestSANBasicMoves(t *testing.T) {
