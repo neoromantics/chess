@@ -136,6 +136,24 @@ func (s *Server) getGame(r *http.Request) (*gameEntry, string, error) {
 	return entry, id, nil
 }
 
+func (s *Server) withGameLock(w http.ResponseWriter, r *http.Request, fn func(entry *gameEntry)) {
+	entry, id, err := s.getGame(r)
+	if err != nil {
+		http.Error(w, err.Error(), 404)
+		return
+	}
+
+	locked, err := s.bus.LockGame(r.Context(), id, 10*time.Second)
+	if err != nil || !locked {
+		http.Error(w, "game is currently locked by another process", http.StatusConflict)
+		return
+	}
+	defer s.bus.UnlockGame(context.Background(), id)
+
+	s.refreshGameFromDB(id)
+	fn(entry)
+}
+
 func (s *Server) syncGameToDB(entry *gameEntry, newAssess any) {
 	s.mu.Lock()
 	gm := entry.game
@@ -180,6 +198,10 @@ func (s *Server) syncGameToDB(entry *gameEntry, newAssess any) {
 
 	s.db.SaveGame(gameRec)
 	s.hub.BroadcastState(entry.id, snapshot)
+
+	s.bus.Publish(context.Background(), bus.GameUpdatedChannel, bus.GameUpdatedEvent{
+		GameID: entry.id,
+	})
 
 	if shouldEmit {
 		slog.Info("detecting game end, publishing event", "game_id", entry.id, "status", status)
@@ -491,58 +513,55 @@ func (s *Server) handleTouchMove(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleMove(w http.ResponseWriter, r *http.Request) {
-	entry, _, err := s.getGame(r)
-	if err != nil {
-		http.Error(w, err.Error(), 404)
-		return
-	}
-	var req struct {
-		Move string `json:"move"`
-	}
-	json.NewDecoder(r.Body).Decode(&req)
+	s.withGameLock(w, r, func(entry *gameEntry) {
+		var req struct {
+			Move string `json:"move"`
+		}
+		json.NewDecoder(r.Body).Decode(&req)
 
-	s.mu.Lock()
-	if s.isThinking(r.Context(), entry.id) {
-		s.mu.Unlock()
-		http.Error(w, "engine is thinking", 409)
-		return
-	}
-	if entry.game.Status() != game.StatusOngoing {
-		s.mu.Unlock()
-		http.Error(w, "game is already finished", 403)
-		return
-	}
-	if entry.game.EngineToMove() {
-		s.mu.Unlock()
-		http.Error(w, "it is the engine's turn", 403)
-		return
-	}
-	if entry.game.TouchLost {
-		s.mu.Unlock()
-		http.Error(w, "touch-move violation: game lost", 403)
-		return
-	}
+		s.mu.Lock()
+		if s.isThinking(r.Context(), entry.id) {
+			s.mu.Unlock()
+			http.Error(w, "engine is thinking", 409)
+			return
+		}
+		if entry.game.Status() != game.StatusOngoing {
+			s.mu.Unlock()
+			http.Error(w, "game is already finished", 403)
+			return
+		}
+		if entry.game.EngineToMove() {
+			s.mu.Unlock()
+			http.Error(w, "it is the engine's turn", 403)
+			return
+		}
+		if entry.game.TouchLost {
+			s.mu.Unlock()
+			http.Error(w, "touch-move violation: game lost", 403)
+			return
+		}
 
-	m, err := entry.game.Board.ParseUCIMove(req.Move)
-	if err != nil {
-		s.mu.Unlock()
-		http.Error(w, "invalid move format", 400)
-		return
-	}
-	matched, ok := game.MatchMove(entry.game.Board.GenerateLegalMoves(), m)
-	if !ok {
-		s.mu.Unlock()
-		http.Error(w, "illegal move", 403)
-		return
-	}
+		m, err := entry.game.Board.ParseUCIMove(req.Move)
+		if err != nil {
+			s.mu.Unlock()
+			http.Error(w, "invalid move format", 400)
+			return
+		}
+		matched, ok := game.MatchMove(entry.game.Board.GenerateLegalMoves(), m)
+		if !ok {
+			s.mu.Unlock()
+			http.Error(w, "illegal move", 403)
+			return
+		}
 
-	entry.game.PlayMove(matched)
-	snapshot := s.snapshotLocked(entry)
-	s.mu.Unlock()
+		entry.game.PlayMove(matched)
+		snapshot := s.snapshotLocked(entry)
+		s.mu.Unlock()
 
-	go s.syncGameToDB(entry, nil)
-	go s.maybeTriggerEngine(entry)
-	writeJSON(w, snapshot)
+		s.syncGameToDB(entry, nil)
+		go s.maybeTriggerEngine(entry)
+		writeJSON(w, snapshot)
+	})
 }
 
 func (s *Server) broadcastEngineAbort(gameID string) {
@@ -554,80 +573,71 @@ func (s *Server) broadcastEngineAbort(gameID string) {
 }
 
 func (s *Server) handleNew(w http.ResponseWriter, r *http.Request) {
-	entry, _, err := s.getGame(r)
-	if err != nil {
-		http.Error(w, err.Error(), 404)
-		return
-	}
-	var req struct {
-		EngineWhite bool `json:"engine_white"`
-		EngineBlack bool `json:"engine_black"`
-	}
-	json.NewDecoder(r.Body).Decode(&req)
+	s.withGameLock(w, r, func(entry *gameEntry) {
+		var req struct {
+			EngineWhite bool `json:"engine_white"`
+			EngineBlack bool `json:"engine_black"`
+		}
+		json.NewDecoder(r.Body).Decode(&req)
 
-	s.mu.Lock()
-	// Signal any current search to stop
-	entry.stopSearch.Store(true)
-	s.broadcastEngineAbort(entry.id)
+		s.mu.Lock()
+		// Signal any current search to stop
+		entry.stopSearch.Store(true)
+		s.broadcastEngineAbort(entry.id)
 
-	entry.game.Reset()
-	entry.game.EngineWhite, entry.game.EngineBlack = req.EngineWhite, req.EngineBlack
-	snapshot := s.snapshotLocked(entry)
-	s.mu.Unlock()
+		entry.game.Reset()
+		entry.game.EngineWhite, entry.game.EngineBlack = req.EngineWhite, req.EngineBlack
+		snapshot := s.snapshotLocked(entry)
+		s.mu.Unlock()
 
-	go s.syncGameToDB(entry, nil)
-	go s.maybeTriggerEngine(entry)
-	writeJSON(w, snapshot)
+		s.syncGameToDB(entry, nil)
+		go s.maybeTriggerEngine(entry)
+		writeJSON(w, snapshot)
+	})
 }
 
 func (s *Server) handleSetPlayers(w http.ResponseWriter, r *http.Request) {
-	entry, _, err := s.getGame(r)
-	if err != nil {
-		http.Error(w, err.Error(), 404)
-		return
-	}
-	var req struct {
-		EngineWhite    bool `json:"engine_white"`
-		EngineBlack    bool `json:"engine_black"`
-		WhiteThinkTime int  `json:"white_think_time"`
-		BlackThinkTime int  `json:"black_think_time"`
-	}
-	json.NewDecoder(r.Body).Decode(&req)
+	s.withGameLock(w, r, func(entry *gameEntry) {
+		var req struct {
+			EngineWhite    bool `json:"engine_white"`
+			EngineBlack    bool `json:"engine_black"`
+			WhiteThinkTime int  `json:"white_think_time"`
+			BlackThinkTime int  `json:"black_think_time"`
+		}
+		json.NewDecoder(r.Body).Decode(&req)
 
-	s.mu.Lock()
-	entry.game.EngineWhite, entry.game.EngineBlack = req.EngineWhite, req.EngineBlack
-	if req.WhiteThinkTime > 0 {
-		entry.whiteThinkTime = time.Duration(req.WhiteThinkTime) * time.Millisecond
-	}
-	if req.BlackThinkTime > 0 {
-		entry.blackThinkTime = time.Duration(req.BlackThinkTime) * time.Millisecond
-	}
+		s.mu.Lock()
+		entry.game.EngineWhite, entry.game.EngineBlack = req.EngineWhite, req.EngineBlack
+		if req.WhiteThinkTime > 0 {
+			entry.whiteThinkTime = time.Duration(req.WhiteThinkTime) * time.Millisecond
+		}
+		if req.BlackThinkTime > 0 {
+			entry.blackThinkTime = time.Duration(req.BlackThinkTime) * time.Millisecond
+		}
 
-	entry.stopSearch.Store(true)
-	s.broadcastEngineAbort(entry.id)
+		entry.stopSearch.Store(true)
+		s.broadcastEngineAbort(entry.id)
 
-	snapshot := s.snapshotLocked(entry)
-	s.mu.Unlock()
-	go s.syncGameToDB(entry, nil)
-	go s.maybeTriggerEngine(entry)
-	writeJSON(w, snapshot)
+		snapshot := s.snapshotLocked(entry)
+		s.mu.Unlock()
+		s.syncGameToDB(entry, nil)
+		go s.maybeTriggerEngine(entry)
+		writeJSON(w, snapshot)
+	})
 }
 
 func (s *Server) handleUndo(w http.ResponseWriter, r *http.Request) {
-	entry, _, err := s.getGame(r)
-	if err != nil {
-		http.Error(w, err.Error(), 404)
-		return
-	}
-	s.mu.Lock()
-	entry.stopSearch.Store(true)
-	s.broadcastEngineAbort(entry.id)
-	entry.game.Undo()
-	snapshot := s.snapshotLocked(entry)
-	s.mu.Unlock()
-	go s.syncGameToDB(entry, nil)
-	go s.maybeTriggerEngine(entry)
-	writeJSON(w, snapshot)
+	s.withGameLock(w, r, func(entry *gameEntry) {
+		s.mu.Lock()
+		entry.stopSearch.Store(true)
+		s.broadcastEngineAbort(entry.id)
+		entry.game.Undo()
+		snapshot := s.snapshotLocked(entry)
+		s.mu.Unlock()
+		s.syncGameToDB(entry, nil)
+		go s.maybeTriggerEngine(entry)
+		writeJSON(w, snapshot)
+	})
 }
 
 func (s *Server) handleHint(w http.ResponseWriter, r *http.Request) {
@@ -796,26 +806,23 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
-	entry, _, err := s.getGame(r)
-	if err != nil {
-		http.Error(w, err.Error(), 404)
-		return
-	}
-	var sg struct {
-		StartFEN                 string
-		Moves                    []string
-		EngineWhite, EngineBlack bool
-	}
-	json.NewDecoder(r.Body).Decode(&sg)
-	s.mu.Lock()
-	entry.stopSearch.Store(true)
-	s.broadcastEngineAbort(entry.id)
-	entry.game.Load(sg.StartFEN, sg.Moves, sg.EngineWhite, sg.EngineBlack)
-	snapshot := s.snapshotLocked(entry)
-	s.mu.Unlock()
-	go s.syncGameToDB(entry, nil)
-	go s.maybeTriggerEngine(entry)
-	writeJSON(w, snapshot)
+	s.withGameLock(w, r, func(entry *gameEntry) {
+		var sg struct {
+			StartFEN                 string
+			Moves                    []string
+			EngineWhite, EngineBlack bool
+		}
+		json.NewDecoder(r.Body).Decode(&sg)
+		s.mu.Lock()
+		entry.stopSearch.Store(true)
+		s.broadcastEngineAbort(entry.id)
+		entry.game.Load(sg.StartFEN, sg.Moves, sg.EngineWhite, sg.EngineBlack)
+		snapshot := s.snapshotLocked(entry)
+		s.mu.Unlock()
+		s.syncGameToDB(entry, nil)
+		go s.maybeTriggerEngine(entry)
+		writeJSON(w, snapshot)
+	})
 }
 
 func (s *Server) handleReplay(w http.ResponseWriter, r *http.Request) {

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"embed"
+	"encoding/json"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -90,6 +91,7 @@ func NewServer(database db.Store, eventBus *bus.Client) *Server {
 		gameLimiter:   NewRateLimiter(5, 5, time.Minute),   // 5 new games per minute per IP
 	}
 	go s.hub.Run()
+	go s.listenToGameUpdates()
 	s.listenToEngine()
 	s.StartClockTicker()
 	s.mux = http.NewServeMux()
@@ -240,4 +242,51 @@ func (s *Server) CheckHealth() HealthStatus {
 	}
 
 	return h
+}
+
+func (s *Server) listenToGameUpdates() {
+	err := s.bus.Subscribe(context.Background(), bus.GameUpdatedChannel, func(payload []byte) {
+		var event bus.GameUpdatedEvent
+		if err := json.Unmarshal(payload, &event); err != nil {
+			return
+		}
+
+		s.mu.Lock()
+		_, exists := s.games[event.GameID]
+		s.mu.Unlock()
+
+		if exists {
+			s.refreshGameFromDB(event.GameID)
+		}
+	})
+	if err != nil {
+		slog.Error("failed to subscribe to game updates", "error", err)
+	}
+}
+
+func (s *Server) refreshGameFromDB(id string) {
+	record, err := s.db.GetGame(id)
+	if err != nil {
+		return
+	}
+
+	s.mu.Lock()
+	entry, exists := s.games[id]
+	if !exists {
+		s.mu.Unlock()
+		return
+	}
+
+	var history, historySAN []string
+	json.Unmarshal([]byte(record.History), &history)
+	json.Unmarshal([]byte(record.HistorySAN), &historySAN)
+
+	// Preserve the engine configurations, but update the FEN and history
+	entry.game.Load(record.FEN, history, record.EngineWhite, record.EngineBlack)
+	entry.game.HistorySAN = historySAN
+
+	snapshot := s.snapshotLocked(entry)
+	s.mu.Unlock()
+
+	s.hub.BroadcastState(id, snapshot)
 }

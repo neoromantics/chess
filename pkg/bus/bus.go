@@ -16,6 +16,7 @@ const (
 	EngineRequestChannel     = "engine.request"
 	EngineResponseChannel    = "engine.response"
 	EngineAbortChannel       = "engine.abort"
+	GameUpdatedChannel       = "game.updated"
 )
 
 // GameFinishedEvent represents the data sent when a game ends.
@@ -50,6 +51,11 @@ type EngineResponse struct {
 
 // EngineAbort represents a request to cancel any active search for a game.
 type EngineAbort struct {
+	GameID string `json:"game_id"`
+}
+
+// GameUpdatedEvent represents an event fired when a game state is modified.
+type GameUpdatedEvent struct {
 	GameID string `json:"game_id"`
 }
 
@@ -126,7 +132,20 @@ func (c *Client) Ping(ctx context.Context) error {
 	return c.rdb.Ping(ctx).Err()
 }
 
-// Close closes the Redis client.
+// Close closes the Redis connection.
 func (c *Client) Close() error {
 	return c.rdb.Close()
+}
+
+// LockGame acquires a distributed lock for a specific game to prevent concurrent mutations.
+// Returns true if the lock was acquired, false if it is currently held by another process.
+func (c *Client) LockGame(ctx context.Context, gameID string, ttl time.Duration) (bool, error) {
+	key := fmt.Sprintf("lock:game:%s", gameID)
+	return c.rdb.SetNX(ctx, key, "locked", ttl).Result()
+}
+
+// UnlockGame releases the distributed lock for a specific game.
+func (c *Client) UnlockGame(ctx context.Context, gameID string) error {
+	key := fmt.Sprintf("lock:game:%s", gameID)
+	return c.rdb.Del(ctx, key).Err()
 }
