@@ -48,7 +48,7 @@ Visit http://localhost:8080.
 │   ├── api/            # Headless API, WebSockets & Event Hub
 │   ├── bus/            # Redis Pub/Sub Event Bus
 │   ├── core/           # Pure Chess Engine (Search & Eval)
-│   ├── db/             # Multi-provider persistence (PG/SQLite)
+│   ├── db/             # Postgres persistence (sqlc + golang-migrate)
 │   ├── game/           # Authoritative Game Logic
 │   └── auth/           # Secure JWT/Bcrypt authentication
 ├── frontend/           # Vue 3 Reactive SPA

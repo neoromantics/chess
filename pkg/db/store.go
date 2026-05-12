@@ -47,7 +47,8 @@ type GameRecord struct {
 }
 
 // Store is the interface for all persistent storage operations.
-// This allows us to swap SQLite for PostgreSQL/Redis without changing the API logic.
+// The production implementation is PostgresStore (sqlc-backed); the
+// interface exists so handlers stay decoupled from the storage driver.
 type Store interface {
 	Close() error
 	Ping() error

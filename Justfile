@@ -67,6 +67,10 @@ test:
 fmt:
     gofmt -w .
 
+# Regenerate sqlc Go code from pkg/db/queries + pkg/db/migrations
+db-generate:
+    sqlc generate
+
 # Clean up all build artifacts and node modules
 clean:
     rm -rf chess build pkg/api/dist frontend/dist frontend/node_modules

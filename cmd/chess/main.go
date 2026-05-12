@@ -38,20 +38,13 @@ func main() {
 	}
 
 	if runServer {
-		var store db.Store
-		var err error
-
 		dsn := os.Getenv("DATABASE_URL")
-		if dsn != "" {
-			store, err = db.OpenPostgres(dsn)
-			if err != nil {
-				log.Fatalf("failed to connect to postgres: %v", err)
-			}
-		} else {
-			store, err = db.OpenSQLite("chess.db")
-			if err != nil {
-				log.Fatal(err)
-			}
+		if dsn == "" {
+			log.Fatal("DATABASE_URL is required (e.g. postgres://chess:pw@chess-db:5432/chess?sslmode=disable)")
+		}
+		store, err := db.OpenPostgres(dsn)
+		if err != nil {
+			log.Fatalf("failed to connect to postgres: %v", err)
 		}
 		defer store.Close()
 

@@ -3,9 +3,11 @@ package auth
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -14,20 +16,28 @@ import (
 )
 
 var (
-	jwtSecret       = []byte(os.Getenv("JWT_SECRET"))
 	ErrUnauthorized = errors.New("unauthorized")
+
+	secretOnce sync.Once
+	jwtSecret  []byte
 )
 
-func init() {
-	if len(jwtSecret) == 0 {
-		// SECURITY: In production, JWT_SECRET MUST be set via environment/K8s Secrets.
-		// Without it, we generate a random ephemeral secret per process start.
-		// This means tokens will NOT survive pod restarts — by design.
+// loadSecret resolves the JWT signing key on first use. Doing this
+// lazily (rather than in package init) keeps the warning out of the
+// UCI/CLI path, which imports this package transitively without ever
+// needing tokens.
+func loadSecret() []byte {
+	secretOnce.Do(func() {
+		if s := os.Getenv("JWT_SECRET"); s != "" {
+			jwtSecret = []byte(s)
+			return
+		}
 		jwtSecret = []byte(uuid.New().String())
-		println("⚠️  WARNING: JWT_SECRET not set. Using ephemeral random secret.")
-		println("   All user sessions will be invalidated on restart.")
-		println("   Set JWT_SECRET via 'just secrets-init' or K8s Secrets for production.")
-	}
+		fmt.Fprintln(os.Stderr, "⚠️  WARNING: JWT_SECRET not set. Using ephemeral random secret.")
+		fmt.Fprintln(os.Stderr, "   All user sessions will be invalidated on restart.")
+		fmt.Fprintln(os.Stderr, "   Set JWT_SECRET via 'just secrets-init' or K8s Secrets for production.")
+	})
+	return jwtSecret
 }
 
 type Claims struct {
@@ -57,13 +67,13 @@ func GenerateToken(userID int64, username string) (string, error) {
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(jwtSecret)
+	return token.SignedString(loadSecret())
 }
 
 func ValidateToken(tokenString string) (*Claims, error) {
 	claims := &Claims{}
 	token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
-		return jwtSecret, nil
+		return loadSecret(), nil
 	})
 
 	if err != nil || !token.Valid {
