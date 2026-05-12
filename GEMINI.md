@@ -1,7 +1,7 @@
 # Gemini Mandates: neoromantics Chess Platform
 
-## Distributed Microservices (5-pod architecture)
-- **Service Boundaries**: The platform is composed of five independent services: `gateway`, `user`, `game`, `matchmaker`, and `worker`.
+## Distributed Microservices (6-pod architecture)
+- **Service Boundaries**: The platform is composed of six independent services: `gateway`, `user`, `game`, `matchmaker`, `rating-updater`, and `worker`.
 - **Event-Driven Core**: Strictly use Event Sourcing via Redis Streams for game state mutations. Synchronous state modification and distributed Redis locks are strictly prohibited.
 - **Gateway as Entrance**: All external traffic (HTTP/HTTPS, WebSockets) must pass through the `gateway`. It handles auth validation, reverse-proxying to `user`, and WebSocket-to-Command translation.
 - **Stateless Gateway**: The `gateway` holds zero game state. It PSUBSCRIBEs to event patterns and delivers to local clients.

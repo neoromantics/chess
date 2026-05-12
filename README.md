@@ -6,47 +6,49 @@
 A professional, distributed chess platform architected for commercial scale. Built with Go, Vue 3 (TypeScript), and Redis.
 
 ## Distributed Architecture
-Three pods, three responsibilities, every cross-pod handoff over Redis:
+Six independent microservices, zero-lock consistency via Event Sourcing:
 
-- **api** (Go, HPA 2-8) - Stateless HTTP + WebSocket entry. Auth, routing, game lifecycle, matchmaking, rating updates. Holds zero game state in memory.
-- **engine-worker** (Go, HPA 2-8) - CPU-bound search. Pulls jobs via Redis Streams (durable), publishes results via Redis pub/sub.
-- **Redis** - Operational backbone. Pub/sub, Streams (engine queue), distributed locks, leader election, and transient state (thinking flag, authoritative clocks).
-- **Postgres** - Durable source of truth. sqlc-generated queries, manual schema management.
+- **gateway** (Go) - Stateless HTTP/WS entrance. Handles JWT validation, command translation, and fan-out.
+- **user-service** (Go) - Owns identities, profiles, and authentication.
+- **game-service** (Go) - Authoritative domain arbiter. Consumes Commands, emits authoritative Events.
+- **matchmaker** (Go) - Manages queues and pairing logic asynchronously.
+- **rating-updater** (Go) - Asynchronously updates Glicko-2 ratings after game completion.
+- **engine-worker** (Go) - Pure CPU calculation nodes consuming search tasks from Redis Streams.
 
 ## Key Invariants
-- **No in-memory game state.** gameEntry is built per-request from Postgres.
-- **All cross-pod fan-out via Redis pub/sub.** The WS Hub is a pub/sub-driven connection registry.
-- **Durable Engine Queue.** Uses Redis Streams with consumer groups and auto-recovery (XCLAIM).
-- **Authoritative Clocks.** Timers managed authoritative on the backend via Redis and a leader-elected clock-manager.
-- **Idempotency.** state-mutating requests (moves, resignations) are protected by Idempotency-Key headers.
+- **Strict Event Sourcing.** All state mutations are processed sequentially via Redis Streams; no distributed locks.
+- **Authoritative Backend.** The `game-service` is the sole source of truth for move validation and clocks.
+- **Asynchronous Analysis.** Engine results are published to the event bus and automatically applied or broadcast.
+- **Horizontally Scalable.** Every pod is stateless and interacts via the Redis operational backbone.
 
 ## Operations
 | Command | Description |
 |---------|-------------|
-| just up | Build and start API, Worker, Redis, and DB locally (Docker Compose) |
-| just logs-api | Watch the API orchestrator logs |
-| just logs-worker | Watch the engine calculation nodes |
-| just build | Production-ready local build (Go + embedded frontend) |
-| just db-generate | Regenerate sqlc code (run after editing SQL) |
-| just deploy-prod | Deploy to k3s cluster using Kustomize |
+| just up | Start the entire microservices stack locally (Docker Compose) |
+| just logs-gateway | Watch the Gateway/Entrance logs |
+| just logs-game | Watch the authoritative Game Service logs |
+| just build | Build all production binaries and frontend |
+| just deploy-prod | Deploy the fleet to k3s using Kustomize |
 
 ## Project Structure
 ```
 .
 ├── cmd/
-│   ├── chess/                # API Server (Orchestrator)
-│   └── engine-worker/        # Distributed Calculation Node
+│   ├── gateway/            # Entry Point & WebSocket Hub
+│   ├── user/               # User Management Microservice
+│   ├── game/               # Authoritative Game Logic Microservice
+│   ├── matchmaker/         # Queueing & Pairing Microservice
+│   ├── rating-updater/     # Asynchronous Glicko-2 Updater
+│   └── engine-worker/      # Distributed Calculation Node
 ├── pkg/
-│   ├── api/                  # HTTP + WebSocket entry, Hub, Metrics, Idempotency
-│   ├── bus/                  # Redis pub/sub, Streams, Distributed locks
-│   ├── leader/               # Redis-backed singleton leader election
-│   ├── rating/               # Glicko-2 competitive rating implementation
-│   ├── core/                 # Pure chess engine (search & eval)
-│   ├── db/                   # sqlc + golang-migrate (Postgres only)
-│   ├── game/                 # Authoritative game logic
-│   └── auth/                 # JWT/bcrypt authentication
-├── frontend/                 # Vue 3 + TypeScript SPA
-└── deploy/kustomize/         # Production k3s manifests
+│   ├── eventbus/           # Redis Streams Command/Event protocol
+│   ├── core/               # Pure chess engine (search & eval)
+│   ├── db/                 # SQLC + Postgres (Authoritative Persistence)
+│   ├── game/               # Domain logic (Move rules, Status)
+│   ├── auth/               # JWT/bcrypt authentication utilities
+│   └── rating/             # Glicko-2 implementation
+├── frontend/               # Vue 3 + TypeScript SPA
+└── deploy/kustomize/       # Production k3s manifests
 ```
 
 ## Repository
