@@ -21,6 +21,19 @@ import (
 	"github.com/neoromantics/chess/pkg/uci"
 )
 
+func (s *Server) isThinking(ctx context.Context, gameID string) bool {
+	val, err := s.bus.GetState(ctx, "thinking:"+gameID)
+	return err == nil && val == "1"
+}
+
+func (s *Server) setThinking(ctx context.Context, gameID string, val bool) {
+	if val {
+		s.bus.SetState(ctx, "thinking:"+gameID, "1", 2*time.Minute)
+	} else {
+		s.bus.DelState(ctx, "thinking:"+gameID)
+	}
+}
+
 func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /health", s.handleHealth)
 	s.mux.HandleFunc("POST /api/auth/signup", s.handleSignup)
@@ -370,7 +383,7 @@ func (s *Server) handleMove(w http.ResponseWriter, r *http.Request) {
 	json.NewDecoder(r.Body).Decode(&req)
 	
 	s.mu.Lock()
-	if entry.thinking.Load() {
+	if s.isThinking(r.Context(), entry.id) {
 		s.mu.Unlock()
 		http.Error(w, "engine is thinking", 409)
 		return
@@ -507,7 +520,7 @@ func (s *Server) handleHint(w http.ResponseWriter, r *http.Request) {
 	var req struct{ MoveTime int `json:"movetime"` }
 	json.NewDecoder(r.Body).Decode(&req)
 	s.mu.Lock()
-	if entry.thinking.Load() {
+	if s.isThinking(r.Context(), entry.id) {
 		s.mu.Unlock()
 		http.Error(w, "busy", 409)
 		return
@@ -516,7 +529,7 @@ func (s *Server) handleHint(w http.ResponseWriter, r *http.Request) {
 	hist := game.CopyHistory(entry.game.HistoryHash())
 	moveTime := time.Duration(req.MoveTime) * time.Millisecond
 
-	entry.thinking.Store(true)
+	s.setThinking(context.Background(), entry.id, true)
 	entry.stopSearch.Store(false)
 	snapshot := s.snapshotLocked(entry)
 	s.mu.Unlock()
@@ -535,7 +548,7 @@ func (s *Server) handleHint(w http.ResponseWriter, r *http.Request) {
 		if err := s.bus.Publish(context.Background(), bus.EngineRequestChannel, job); err != nil {
 			slog.Error("failed to dispatch hint request", "error", err)
 			s.mu.Lock()
-			entry.thinking.Store(false)
+			s.setThinking(context.Background(), entry.id, false)
 			s.mu.Unlock()
 			s.syncGameToDB(entry, nil)
 		}
@@ -556,7 +569,7 @@ func (s *Server) handleAssess(w http.ResponseWriter, r *http.Request) {
 	}
 	json.NewDecoder(r.Body).Decode(&req)
 	s.mu.Lock()
-	if entry.thinking.Load() {
+	if s.isThinking(r.Context(), entry.id) {
 		s.mu.Unlock()
 		http.Error(w, "busy", 409)
 		return
@@ -574,7 +587,7 @@ func (s *Server) handleAssess(w http.ResponseWriter, r *http.Request) {
 	userMove, _ := entry.game.UndoStack[idx].Move, entry.game.PlayerAt(idx)
 	moveTime := time.Duration(req.MoveTime) * time.Millisecond
 
-	entry.thinking.Store(true)
+	s.setThinking(context.Background(), entry.id, true)
 	entry.stopSearch.Store(false)
 	snapshot := s.snapshotLocked(entry)
 	s.mu.Unlock()
@@ -598,7 +611,7 @@ func (s *Server) handleAssess(w http.ResponseWriter, r *http.Request) {
 		if err := s.bus.Publish(context.Background(), bus.EngineRequestChannel, job); err != nil {
 			slog.Error("failed to dispatch assess request", "error", err)
 			s.mu.Lock()
-			entry.thinking.Store(false)
+			s.setThinking(context.Background(), entry.id, false)
 			s.mu.Unlock()
 			s.syncGameToDB(entry, nil)
 		}
@@ -613,10 +626,38 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 404)
 		return
 	}
+
+	// TODO(Monetization): Game Export is a potential premium feature.
+	// user, ok := auth.GetUser(r.Context())
+	// if ok && !user.IsPremium {
+	//    http.Error(w, "Premium subscription required for game export", http.StatusPaymentRequired)
+	//    return
+	// }
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	
+	// Load assessments for the export
+	var assessments []any
+	record, err := s.db.GetGame(entry.id)
+	if err == nil && record.Assessments != "" {
+		json.Unmarshal([]byte(record.Assessments), &assessments)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Content-Disposition", "attachment; filename=chess-game.json")
-	writeJSON(w, map[string]any{"start_fen": entry.game.StartFEN, "moves": entry.game.History, "engine_white": entry.game.EngineWhite, "engine_black": entry.game.EngineBlack})
+	
+	exportData := map[string]any{
+		"game_id":      entry.id,
+		"start_fen":    entry.game.StartFEN,
+		"moves":        entry.game.History,
+		"engine_white": entry.game.EngineWhite,
+		"engine_black": entry.game.EngineBlack,
+		"assessments":  assessments,
+		"exported_at":  time.Now(),
+	}
+	
+	json.NewEncoder(w).Encode(exportData)
 }
 
 func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
@@ -704,7 +745,7 @@ func (s *Server) listenToEngine() {
 					}
 				}
 			}
-			entry.thinking.Store(false)
+			s.setThinking(context.Background(), entry.id, false)
 			s.mu.Unlock()
 			go s.syncGameToDB(entry, nil)
 			time.AfterFunc(100*time.Millisecond, func() {
@@ -724,7 +765,7 @@ func (s *Server) listenToEngine() {
 				"depth": resp.Depth,
 			}
 			s.hub.BroadcastEvent(resp.GameID, "hint", hintPayload)
-			entry.thinking.Store(false)
+			s.setThinking(context.Background(), entry.id, false)
 			s.mu.Unlock()
 			go s.syncGameToDB(entry, nil)
 			return
@@ -750,19 +791,20 @@ func (s *Server) listenToEngine() {
 				"cp_loss":    cpLoss,
 			}
 			s.hub.BroadcastEvent(resp.GameID, "assess", assessPayload)
-			entry.thinking.Store(false)
+			s.setThinking(context.Background(), entry.id, false)
 			s.mu.Unlock()
-			go s.syncGameToDB(entry, nil)
+			go s.syncGameToDB(entry, assessPayload)
 			return
 		}
 
+		s.setThinking(context.Background(), entry.id, false)
 		s.mu.Unlock()
 	})
 }
 
 func (s *Server) maybeTriggerEngine(entry *gameEntry) {
 	s.mu.Lock()
-	if entry.thinking.Load() {
+	if s.isThinking(context.Background(), entry.id) {
 		s.mu.Unlock()
 		return
 	}
@@ -780,7 +822,7 @@ func (s *Server) maybeTriggerEngine(entry *gameEntry) {
 	board := *entry.game.Board
 	hist := game.CopyHistory(entry.game.HistoryHash())
 	
-	entry.thinking.Store(true)
+	s.setThinking(context.Background(), entry.id, true)
 	entry.stopSearch.Store(false)
 
 	snapshot := s.snapshotLocked(entry)
@@ -801,7 +843,7 @@ func (s *Server) maybeTriggerEngine(entry *gameEntry) {
 		if err := s.bus.Publish(context.Background(), bus.EngineRequestChannel, req); err != nil {
 			slog.Error("failed to dispatch engine request", "error", err)
 			s.mu.Lock()
-			entry.thinking.Store(false)
+			s.setThinking(context.Background(), entry.id, false)
 			s.mu.Unlock()
 			s.syncGameToDB(entry, nil)
 		} else {
@@ -833,7 +875,8 @@ func (s *Server) snapshotLocked(entry *gameEntry) stateJSON {
 	return stateJSON{
 		FEN: game.Board.FEN(), Turn: turn, EngineWhite: game.EngineWhite, EngineBlack: game.EngineBlack,
 		EngineToMove: game.EngineToMove(), Status: string(game.Status()), InCheck: game.Board.InCheck(game.Board.SideToMove),
-		LegalMoves: legalStrs, History: history, HistorySAN: historySAN, LastMove: lm, Thinking: entry.thinking.Load(),
+		LegalMoves: legalStrs, History: history, HistorySAN: historySAN, LastMove: lm, 
+		Thinking: s.isThinking(context.Background(), entry.id),
 		TouchMove: game.TouchMove, TouchedSquare: core.SquareName(game.TouchedSq),
 		WhiteThinkTime: int(entry.whiteThinkTime / time.Millisecond),
 		BlackThinkTime: int(entry.blackThinkTime / time.Millisecond),

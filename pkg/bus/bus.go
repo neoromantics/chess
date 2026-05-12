@@ -106,6 +106,21 @@ func (c *Client) Subscribe(ctx context.Context, channel string, handler func(pay
 	return nil
 }
 
+// SetState stores a transient value in Redis with a TTL.
+func (c *Client) SetState(ctx context.Context, key string, value string, ttl time.Duration) error {
+	return c.rdb.Set(ctx, key, value, ttl).Err()
+}
+
+// GetState retrieves a transient value from Redis.
+func (c *Client) GetState(ctx context.Context, key string) (string, error) {
+	return c.rdb.Get(ctx, key).Result()
+}
+
+// DelState removes a transient value from Redis.
+func (c *Client) DelState(ctx context.Context, key string) error {
+	return c.rdb.Del(ctx, key).Err()
+}
+
 // Close closes the Redis client.
 func (c *Client) Close() error {
 	return c.rdb.Close()

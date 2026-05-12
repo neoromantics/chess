@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
-	"time"
 
 	"github.com/neoromantics/chess/pkg/api"
 	"github.com/neoromantics/chess/pkg/bus"
@@ -22,7 +21,6 @@ func main() {
 	uciMode := flag.Bool("uci", false, "force UCI mode on stdio (default when stdin is piped)")
 	addr := flag.String("addr", "localhost:8080", "Server listen address; falls back to a free port if taken")
 	noOpen := flag.Bool("no-open", false, "don't auto-open the browser")
-	idleSec := flag.Int("shutdown-on-idle", 0, "exit after N seconds with no /api/ping (0 = never)")
 	flag.Parse()
 
 	// Detect if we should run the web server.
@@ -66,11 +64,11 @@ func main() {
 		url := "http://" + ln.Addr().String()
 		fmt.Fprintf(os.Stderr, "Chess Platform Server: %s\n", url)
 
-		idle := time.Duration(*idleSec) * time.Second
 		server := api.NewServer(store, eventBus)
-		if idle > 0 {
-			server.StartIdleShutdown(idle)
-		}
+		server.StartCacheManager()
+		// if idle := time.Duration(*idleSec) * time.Second; idle > 0 {
+		// 	server.StartIdleShutdown(idle)
+		// }
 
 		if !*noOpen {
 			openBrowser(url)

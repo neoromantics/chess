@@ -46,7 +46,6 @@ const replayPlaceholder = "REPLAY_DATA_PLACEHOLDER"
 
 type gameEntry struct {
 	game       *game.Game
-	thinking   atomic.Bool
 	stopSearch atomic.Bool
 	eventFired atomic.Bool
 	lastUsed   time.Time
@@ -99,17 +98,29 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	handler.ServeHTTP(w, r)
 }
 
-func (s *Server) StartIdleShutdown(d time.Duration) {
+func (s *Server) StartCacheManager() {
 	go func() {
 		for {
-			time.Sleep(5 * time.Second)
+			time.Sleep(1 * time.Minute)
+			
+			// 1. Manage In-Memory Game Cache
 			s.mu.Lock()
-			idle := time.Since(s.lastPing)
-			s.mu.Unlock()
-			if idle > d {
-				// slog.Info("idle shutdown triggered")
-				// os.Exit(0)
+			now := time.Now()
+			for id, entry := range s.games {
+				if now.Sub(entry.lastUsed) > 10*time.Minute {
+					slog.Info("evicting game from memory cache", "game_id", id)
+					delete(s.games, id)
+				}
 			}
+			
+			// 2. Optional: Idle Server Shutdown
+			// idle := time.Since(s.lastPing)
+			s.mu.Unlock()
+			
+			// if idle > d {
+			// 	slog.Info("server idle timeout triggered")
+			// 	os.Exit(0)
+			// }
 		}
 	}()
 }
