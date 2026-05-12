@@ -1,26 +1,22 @@
 # Gemini Mandates: neoromantics Chess Platform
 
-## Distributed Microservices (3-pod platform: api, engine-worker, infra)
-- Three pods, not five. New "logical services" (matchmaking, invite sweeper, rating updater, notifications, clock manager) live as leader-elected goroutines inside api via pkg/leader — not as separate pods. The carve-out trigger for a pod split is a measurable scaling profile / failure domain difference, not "separation of concerns."
-- Decoupled Engine Hub: All CPU-intensive search resides in cmd/engine-worker. The API server remains a lightweight orchestrator. Worker concurrency = runtime.GOMAXPROCS(0) (cgroup-aware); scale OUT (more pods) not IN (more threads per pod).
-- Event-Driven Communication: Use pkg/bus (Redis pub/sub + Streams + distributed lock) for all cross-service communication. Channel naming via bus.GameEventChannel(id) / bus.UserEventChannel(id) helpers.
-- WebSocket fan-out is Redis-driven: every API pod PSUBSCRIBEs game.evt.* and user.evt.*, demultiplexes to locally-attached WS clients. The Hub is a connection registry plus a pub/sub bridge — never a state store.
-- Two WS channels per signed-in user: /ws/game?game_id=... (game events) and /ws/user (invites, match-found, friend events).
-- Reactive WebSocket Events: Structured envelopes ({type, payload}). Renaming a type is a wire-protocol break; only add new types.
-- Authoritative Backend: The backend is the sole source of truth for the game lifecycle. The frontend is a reactive terminal.
+## Distributed Microservices (5-pod architecture)
+- **Service Boundaries**: The platform is composed of five independent services: `gateway`, `user`, `game`, `matchmaker`, and `worker`.
+- **Event-Driven Core**: Strictly use Event Sourcing via Redis Streams for game state mutations. Synchronous state modification and distributed Redis locks are strictly prohibited.
+- **Gateway as Entrance**: All external traffic (HTTP/HTTPS, WebSockets) must pass through the `gateway`. It handles auth validation, reverse-proxying to `user`, and WebSocket-to-Command translation.
+- **Stateless Gateway**: The `gateway` holds zero game state. It PSUBSCRIBEs to event patterns and delivers to local clients.
+- **Authoritative Game Service**: The `game` service is the sole arbiter of game state. It consumes Commands from Redis Streams, validates them, and emits authoritative Events.
 
 ## Notification delivery contract
-Two delivery tiers, never mix them:
-- Realtime (ephemeral): move broadcasts, hints, assessments, clock sync. Redis pub/sub only. Reconnect re-syncs via /api/state.
-- Durable (must-not-lose): invites, match-found, game-end. Postgres row FIRST, then publish for live push. Reconnect fetches outstanding via REST (/api/invites/pending, etc.).
-Idempotency keys enforced on state-mutating POSTs via Idempotency-Key header.
+- **Events are facts**: Services emit events to `game:events` (durable stream) and publish to `game.evt.*` (realtime Pub/Sub).
+- **Commands are intents**: Gateways append client actions to `game:commands`.
+- **Gateway fan-out**: The `gateway` demultiplexes Redis Pub/Sub messages to WebSocket clients.
 
 ## Scaling & Resilience
-- Horizontally Scalable & 100% Stateless: API Pods hold ZERO in-memory game state. gameEntry is per-request, hydrated from Postgres.
-- Redis as the Operational Backbone: pub/sub (game + user channels), Streams (durable engine queue), SET-NX leases (game lock, leader election), KV (thinking flag, presence). AOF on (appendfsync everysec).
-- Fail-Safe Engine Processing: every StreamAdd call is monitored by a leader-elected janitor using XCLAIM to recover stale tasks if a worker crashes mid-search.
-- Distributed Clocks: authoritative timers stored in Redis gameclock:{id} and managed by a leader-elected clock-manager. Reconnection grace period (60s) pauses clocks authoritative on the backend.
-- HPA: api on CPU+memory (2–8), engine-worker on CPU (2–8). PDBs minAvailable=1 on both.
+- **Independent Scaling**: Scale services based on their specific profile (e.g., `worker` on CPU, `gateway` on memory/connections).
+- **Durable Streams**: Use Redis Streams with Consumer Groups for all inter-service commands and events.
+- **Optimistic Concurrency**: Use Postgres versioning/MVCC instead of Redis locks for database consistency.
+
 
 ## Engineering Standards
 - Pure Go Search: Keep pkg/core zero-dependency and high-performance. It is the core IP of the platform.

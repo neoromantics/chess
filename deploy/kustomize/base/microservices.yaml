@@ -1,0 +1,178 @@
+---
+# === GATEWAY ===
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chess-gateway
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: chess-gateway
+  template:
+    metadata:
+      labels:
+        app: chess-gateway
+    spec:
+      containers:
+      - name: gateway
+        image: ghcr.io/neoromantics/chess/gateway:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: PORT
+          value: "8080"
+        - name: REDIS_URL
+          value: chess-redis:6379
+        - name: USER_SERVICE_URL
+          value: http://chess-user-service:80
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chess-gateway
+spec:
+  selector:
+    app: chess-gateway
+  ports:
+  - port: 80
+    targetPort: 8080
+
+---
+# === USER SERVICE ===
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chess-user-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: chess-user-service
+  template:
+    metadata:
+      labels:
+        app: chess-user-service
+    spec:
+      containers:
+      - name: user-service
+        image: ghcr.io/neoromantics/chess/user-service:latest
+        ports:
+        - containerPort: 8081
+        env:
+        - name: PORT
+          value: "8081"
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: chess-secrets
+              key: DATABASE_URL
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: chess-secrets
+              key: JWT_SECRET
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8081
+          initialDelaySeconds: 5
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chess-user-service
+spec:
+  selector:
+    app: chess-user-service
+  ports:
+  - port: 80
+    targetPort: 8081
+
+---
+# === GAME SERVICE ===
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chess-game-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: chess-game-service
+  template:
+    metadata:
+      labels:
+        app: chess-game-service
+    spec:
+      containers:
+      - name: game-service
+        image: ghcr.io/neoromantics/chess/game-service:latest
+        env:
+        - name: REDIS_URL
+          value: chess-redis:6379
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: chess-secrets
+              key: DATABASE_URL
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chess-game-service
+spec:
+  selector:
+    app: chess-game-service
+  ports:
+  - port: 80
+    targetPort: 8080 # Placeholder if needed
+
+---
+# === MATCHMAKER ===
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chess-matchmaker
+spec:
+  replicas: 1 # Leader election will handle multiple if scaled, but 1 is baseline.
+  selector:
+    matchLabels:
+      app: chess-matchmaker
+---
+# === ENGINE WORKER ===
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chess-worker
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: chess-worker
+  template:
+    metadata:
+      labels:
+        app: chess-worker
+    spec:
+      containers:
+      - name: worker
+        image: ghcr.io/neoromantics/chess/worker:latest
+        env:
+        - name: REDIS_URL
+          value: chess-redis:6379
+        resources:
+          requests:
+            cpu: 1000m
+            memory: 256Mi
+          limits:
+            cpu: 1000m
+            memory: 256Mi
+

@@ -4,35 +4,67 @@
 # or production deployments. Production relies on idiomatic K8s/Kustomize.
 # ==============================================================================
 services:
-  api:
+  # --- MICROSERVICES (Event-Driven) ---
+  gateway:
     build:
       context: .
-      target: api-runtime
+      target: gateway-runtime
     ports:
       - "8080:8080"
     depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_started
+      - redis
     environment:
       - PORT=8080
-      - DATABASE_URL=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable
       - REDIS_URL=redis:6379
+      - USER_SERVICE_URL=http://user-service:8081
+    restart: always
+
+  user-service:
+    build:
+      context: .
+      target: user-runtime
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      - PORT=8081
+      - DATABASE_URL=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable
       - JWT_SECRET=${JWT_SECRET}
     restart: always
 
-  worker:
+  game-service:
+    build:
+      context: .
+      target: game-runtime
+    depends_on:
+      - redis
+      - db
+    environment:
+      - REDIS_URL=redis:6379
+      - DATABASE_URL=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable
+    restart: always
+
+  matchmaker:
+    build:
+      context: .
+      target: matchmaker-runtime
+    depends_on:
+      - redis
+    environment:
+      - REDIS_URL=redis:6379
+    restart: always
+
+  engine-worker:
     build:
       context: .
       target: worker-runtime
     environment:
       - REDIS_URL=redis:6379
     depends_on:
-      - api
       - redis
     restart: always
 
+  # --- INFRASTRUCTURE ---
   db:
     image: postgres:16-alpine
     environment:
@@ -53,3 +85,5 @@ services:
     ports:
       - "6379:6379"
     restart: always
+
+

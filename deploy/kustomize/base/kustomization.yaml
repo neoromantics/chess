@@ -5,3 +5,5 @@ namespace: chess
 
 resources:
   - resources.yaml
+  - microservices.yaml
+
