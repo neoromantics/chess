@@ -72,14 +72,14 @@ Final polish for competitive play.
 ## Phase 5 — Hardening 🚧
 
 Production resilience the platform will need at any non-trivial scale.
-
 - ✅ Redis Streams for engine queue + consumer groups + XCLAIM. Replaces the legacy BLPOP pattern with at-least-once delivery and visibility timeout.
-- ⬜ Idempotency keys enforced on every state-mutating POST (Idempotency-Key header → idem:{user}:{key} -> response in Redis with 24h TTL).
-- ⬜ Prometheus metrics end-to-end: request count/latency, WS connections, queue depth, rating updater lag, invite sweeper rate, leader-election holder identity.
+- ✅ Idempotency keys enforced on every state-mutating POST (Idempotency-Key header → idem:{user}:{key} -> response in Redis with 24h TTL).
+- ✅ Prometheus metrics end-to-end: request count/latency, WS connections, queue depth, rating updater lag, invite sweeper rate, leader-election holder identity.
+- ✅ Drop migration: 000005_drop_legacy_user_id — remove the legacy games.user_id column.
+- ✅ Connection stickiness. Use Ingress stickiness to help WS reconnect to the same pod.
 - ⬜ OpenTelemetry tracing spans across api → bus → worker → bus → api.
 - ⬜ Redis Sentinel (3 replicas, automatic failover) in deploy/kustomize/base/resources.yaml.
 - ⬜ KEDA ScaledObject on engine-worker queue length so we scale on demand directly rather than CPU-proxy.
-- ⬜ Drop migration: 000004_drop_legacy_user_id — remove the legacy games.user_id column.
 - ⬜ Backups. pg_dump to S3-compatible storage daily.
 
 ---

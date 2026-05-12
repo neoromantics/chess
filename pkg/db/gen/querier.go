@@ -39,8 +39,8 @@ type Querier interface {
 	GetInvite(ctx context.Context, id uuid.UUID) (Invite, error)
 	GetUserByID(ctx context.Context, id int64) (User, error)
 	GetUserByUsername(ctx context.Context, username string) (User, error)
-	// Games where the user is on either side OR (transitional) the legacy
-	// single-user owner. ORDER BY updated_at DESC matches the dashboard view.
+	// Games where the user is on either side. ORDER BY updated_at DESC matches
+	// the dashboard view.
 	ListGames(ctx context.Context, dollar_1 int64) ([]ListGamesRow, error)
 	// The reconnect-handshake backlog query. Returns invites the user hasn't
 	// yet acted on, newest first.
@@ -55,8 +55,7 @@ type Querier interface {
 	// after a rated game completes. All four fields move atomically so we
 	// never expose a half-updated rating to readers.
 	UpdateUserRating(ctx context.Context, arg UpdateUserRatingParams) error
-	// white_user_id / black_user_id supersede user_id but we keep both populated
-	// during the Phase 1 transition. user_id will be dropped in a later migration.
+	// white_user_id / black_user_id supersede user_id. user_id has been dropped.
 	UpsertGame(ctx context.Context, arg UpsertGameParams) error
 }
 

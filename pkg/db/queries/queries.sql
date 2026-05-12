@@ -60,34 +60,30 @@ WHERE id = $1;
 -- the param — white_user_id is nullable but the user-id we filter by is not.
 SELECT COUNT(*) FROM games
 WHERE white_user_id = $1::BIGINT
-   OR black_user_id = $1::BIGINT
-   OR user_id       = $1::BIGINT;
+   OR black_user_id = $1::BIGINT;
 
 -- name: CountUserWins :one
 SELECT COUNT(*) FROM games
 WHERE (white_user_id = $1::BIGINT AND result = '1-0')
-   OR (black_user_id = $1::BIGINT AND result = '0-1')
-   OR (user_id       = $1::BIGINT AND status = 'checkmate' AND result IN ('*', '1-0', '0-1'));
+   OR (black_user_id = $1::BIGINT AND result = '0-1');
 
 -- name: CountUserDraws :one
 SELECT COUNT(*) FROM games
-WHERE (white_user_id = $1::BIGINT OR black_user_id = $1::BIGINT OR user_id = $1::BIGINT)
+WHERE (white_user_id = $1::BIGINT OR black_user_id = $1::BIGINT)
   AND (result = '1/2-1/2'
        OR status IN ('stalemate', 'draw50', 'draw_repetition', 'draw_insufficient'));
 
 -- name: UpsertGame :exec
--- white_user_id / black_user_id supersede user_id but we keep both populated
--- during the Phase 1 transition. user_id will be dropped in a later migration.
+-- white_user_id / black_user_id supersede user_id. user_id has been dropped.
 INSERT INTO games (
-    id, user_id, white_user_id, black_user_id,
+    id, white_user_id, black_user_id,
     fen, history, history_san,
     engine_white, engine_black, white_think_time, black_think_time,
     time_control, rated, status, result, assessments,
     created_at, updated_at
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 ON CONFLICT (id) DO UPDATE SET
-    user_id          = EXCLUDED.user_id,
     white_user_id    = EXCLUDED.white_user_id,
     black_user_id    = EXCLUDED.black_user_id,
     fen              = EXCLUDED.fen,
@@ -105,9 +101,9 @@ ON CONFLICT (id) DO UPDATE SET
     updated_at       = EXCLUDED.updated_at;
 
 -- name: ListGames :many
--- Games where the user is on either side OR (transitional) the legacy
--- single-user owner. ORDER BY updated_at DESC matches the dashboard view.
-SELECT id, user_id, white_user_id, black_user_id,
+-- Games where the user is on either side. ORDER BY updated_at DESC matches
+-- the dashboard view.
+SELECT id, white_user_id, black_user_id,
        fen, history, history_san,
        engine_white, engine_black, white_think_time, black_think_time,
        time_control, rated, status, result, assessments,
@@ -115,11 +111,10 @@ SELECT id, user_id, white_user_id, black_user_id,
 FROM games
 WHERE white_user_id = $1::BIGINT
    OR black_user_id = $1::BIGINT
-   OR user_id       = $1::BIGINT
 ORDER BY updated_at DESC;
 
 -- name: GetGame :one
-SELECT id, user_id, white_user_id, black_user_id,
+SELECT id, white_user_id, black_user_id,
        fen, history, history_san,
        engine_white, engine_black, white_think_time, black_think_time,
        time_control, rated, status, result, assessments,

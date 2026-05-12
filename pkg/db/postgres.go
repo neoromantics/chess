@@ -195,7 +195,6 @@ func (s *PostgresStore) GetUserStats(id int64) (*UserStats, error) {
 func (s *PostgresStore) SaveGame(g *GameRecord) error {
 	return s.q.UpsertGame(context.Background(), gen.UpsertGameParams{
 		ID:             g.ID,
-		UserID:         g.UserID,
 		WhiteUserID:    int64PtrToNull(g.WhiteUserID),
 		BlackUserID:    int64PtrToNull(g.BlackUserID),
 		Fen:            g.FEN,
@@ -224,7 +223,6 @@ func (s *PostgresStore) ListGames(userID int64) ([]GameRecord, error) {
 	for i, r := range rows {
 		out[i] = GameRecord{
 			ID:             r.ID,
-			UserID:         r.UserID,
 			WhiteUserID:    nullToInt64Ptr(r.WhiteUserID),
 			BlackUserID:    nullToInt64Ptr(r.BlackUserID),
 			FEN:            r.Fen,
@@ -253,7 +251,6 @@ func (s *PostgresStore) GetGame(id string) (*GameRecord, error) {
 	}
 	return &GameRecord{
 		ID:             r.ID,
-		UserID:         r.UserID,
 		WhiteUserID:    nullToInt64Ptr(r.WhiteUserID),
 		BlackUserID:    nullToInt64Ptr(r.BlackUserID),
 		FEN:            r.Fen,

@@ -13,7 +13,6 @@ import (
 
 type Game struct {
 	ID             string        `json:"id"`
-	UserID         int64         `json:"user_id"`
 	Fen            string        `json:"fen"`
 	History        string        `json:"history"`
 	HistorySan     string        `json:"history_san"`

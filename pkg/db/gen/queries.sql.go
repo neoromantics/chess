@@ -60,7 +60,7 @@ func (q *Queries) CancelInvite(ctx context.Context, arg CancelInviteParams) (int
 
 const countUserDraws = `-- name: CountUserDraws :one
 SELECT COUNT(*) FROM games
-WHERE (white_user_id = $1::BIGINT OR black_user_id = $1::BIGINT OR user_id = $1::BIGINT)
+WHERE (white_user_id = $1::BIGINT OR black_user_id = $1::BIGINT)
   AND (result = '1/2-1/2'
        OR status IN ('stalemate', 'draw50', 'draw_repetition', 'draw_insufficient'))
 `
@@ -76,7 +76,6 @@ const countUserGames = `-- name: CountUserGames :one
 SELECT COUNT(*) FROM games
 WHERE white_user_id = $1::BIGINT
    OR black_user_id = $1::BIGINT
-   OR user_id       = $1::BIGINT
 `
 
 // Explicit BIGINT cast on $1 so sqlc infers int64 (not sql.NullInt64) for
@@ -92,7 +91,6 @@ const countUserWins = `-- name: CountUserWins :one
 SELECT COUNT(*) FROM games
 WHERE (white_user_id = $1::BIGINT AND result = '1-0')
    OR (black_user_id = $1::BIGINT AND result = '0-1')
-   OR (user_id       = $1::BIGINT AND status = 'checkmate' AND result IN ('*', '1-0', '0-1'))
 `
 
 func (q *Queries) CountUserWins(ctx context.Context, dollar_1 int64) (int64, error) {
@@ -269,7 +267,7 @@ func (q *Queries) ExpireStaleInvites(ctx context.Context) ([]Invite, error) {
 }
 
 const getGame = `-- name: GetGame :one
-SELECT id, user_id, white_user_id, black_user_id,
+SELECT id, white_user_id, black_user_id,
        fen, history, history_san,
        engine_white, engine_black, white_think_time, black_think_time,
        time_control, rated, status, result, assessments,
@@ -280,7 +278,6 @@ WHERE id = $1
 
 type GetGameRow struct {
 	ID             string        `json:"id"`
-	UserID         int64         `json:"user_id"`
 	WhiteUserID    sql.NullInt64 `json:"white_user_id"`
 	BlackUserID    sql.NullInt64 `json:"black_user_id"`
 	Fen            string        `json:"fen"`
@@ -304,7 +301,6 @@ func (q *Queries) GetGame(ctx context.Context, id string) (GetGameRow, error) {
 	var i GetGameRow
 	err := row.Scan(
 		&i.ID,
-		&i.UserID,
 		&i.WhiteUserID,
 		&i.BlackUserID,
 		&i.Fen,
@@ -419,7 +415,7 @@ func (q *Queries) GetUserByUsername(ctx context.Context, username string) (User,
 }
 
 const listGames = `-- name: ListGames :many
-SELECT id, user_id, white_user_id, black_user_id,
+SELECT id, white_user_id, black_user_id,
        fen, history, history_san,
        engine_white, engine_black, white_think_time, black_think_time,
        time_control, rated, status, result, assessments,
@@ -427,13 +423,11 @@ SELECT id, user_id, white_user_id, black_user_id,
 FROM games
 WHERE white_user_id = $1::BIGINT
    OR black_user_id = $1::BIGINT
-   OR user_id       = $1::BIGINT
 ORDER BY updated_at DESC
 `
 
 type ListGamesRow struct {
 	ID             string        `json:"id"`
-	UserID         int64         `json:"user_id"`
 	WhiteUserID    sql.NullInt64 `json:"white_user_id"`
 	BlackUserID    sql.NullInt64 `json:"black_user_id"`
 	Fen            string        `json:"fen"`
@@ -452,8 +446,8 @@ type ListGamesRow struct {
 	UpdatedAt      time.Time     `json:"updated_at"`
 }
 
-// Games where the user is on either side OR (transitional) the legacy
-// single-user owner. ORDER BY updated_at DESC matches the dashboard view.
+// Games where the user is on either side. ORDER BY updated_at DESC matches
+// the dashboard view.
 func (q *Queries) ListGames(ctx context.Context, dollar_1 int64) ([]ListGamesRow, error) {
 	rows, err := q.db.QueryContext(ctx, listGames, dollar_1)
 	if err != nil {
@@ -465,7 +459,6 @@ func (q *Queries) ListGames(ctx context.Context, dollar_1 int64) ([]ListGamesRow
 		var i ListGamesRow
 		if err := rows.Scan(
 			&i.ID,
-			&i.UserID,
 			&i.WhiteUserID,
 			&i.BlackUserID,
 			&i.Fen,
@@ -719,15 +712,14 @@ func (q *Queries) UpdateUserRating(ctx context.Context, arg UpdateUserRatingPara
 
 const upsertGame = `-- name: UpsertGame :exec
 INSERT INTO games (
-    id, user_id, white_user_id, black_user_id,
+    id, white_user_id, black_user_id,
     fen, history, history_san,
     engine_white, engine_black, white_think_time, black_think_time,
     time_control, rated, status, result, assessments,
     created_at, updated_at
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 ON CONFLICT (id) DO UPDATE SET
-    user_id          = EXCLUDED.user_id,
     white_user_id    = EXCLUDED.white_user_id,
     black_user_id    = EXCLUDED.black_user_id,
     fen              = EXCLUDED.fen,
@@ -747,7 +739,6 @@ ON CONFLICT (id) DO UPDATE SET
 
 type UpsertGameParams struct {
 	ID             string        `json:"id"`
-	UserID         int64         `json:"user_id"`
 	WhiteUserID    sql.NullInt64 `json:"white_user_id"`
 	BlackUserID    sql.NullInt64 `json:"black_user_id"`
 	Fen            string        `json:"fen"`
@@ -766,12 +757,10 @@ type UpsertGameParams struct {
 	UpdatedAt      time.Time     `json:"updated_at"`
 }
 
-// white_user_id / black_user_id supersede user_id but we keep both populated
-// during the Phase 1 transition. user_id will be dropped in a later migration.
+// white_user_id / black_user_id supersede user_id. user_id has been dropped.
 func (q *Queries) UpsertGame(ctx context.Context, arg UpsertGameParams) error {
 	_, err := q.db.ExecContext(ctx, upsertGame,
 		arg.ID,
-		arg.UserID,
 		arg.WhiteUserID,
 		arg.BlackUserID,
 		arg.Fen,
