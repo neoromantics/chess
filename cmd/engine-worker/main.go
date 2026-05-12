@@ -135,7 +135,7 @@ func main() {
 			}(req, msg.ID)
 		}
 	}
-	}
+}
 
 func startJanitor(ctx context.Context, b *bus.Client, hostname string) {
 	election := leader.NewElection(b.Rdb(), "worker-janitor", leader.WithLeaseTTL(15*time.Second))
