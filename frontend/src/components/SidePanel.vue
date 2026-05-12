@@ -212,8 +212,6 @@ const emitThinkTime = (side: 'white' | 'black', event: Event) => {
 <style scoped>
 .draw-offer-prompt { background: rgba(74, 107, 138, 0.1); border: 1px solid #4a6b8a; padding: 10px; border-radius: 6px; margin: 10px 0; text-align: center; }
 .draw-offer-prompt p { margin: 0 0 10px; font-size: 13px; color: #fff; font-weight: 600; }
-.btn-danger { background: #5a2d2d !important; border-color: #703a3a !important; color: white !important; }
-.btn-danger:hover { background: #6b3a3a !important; }
 #history { font-family: ui-monospace, Menlo, monospace; font-size: 13px; max-height: 280px; overflow-y: auto; background: #2b2b2b; padding: 8px 10px; border-radius: 3px; }
 #history div { line-height: 1.5; }
 #fen { font-family: ui-monospace, Menlo, monospace; font-size: 11px; word-break: break-all; color: #888; background: #2b2b2b; padding: 6px 8px; border-radius: 3px; }

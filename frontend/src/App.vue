@@ -48,6 +48,10 @@ button:hover, select:hover { background: #404040; }
 .btn-file:hover { background: #455a45 !important; }
 .btn-edit { background: #5a4a2d !important; border-color: #75603a !important; }
 .btn-edit:hover { background: #6f5a35 !important; }
+.btn-action { background: #2d5a2d !important; border-color: #3a703a !important; }
+.btn-action:hover { background: #3a6b3a !important; }
+.btn-danger { background: #5a2d2d !important; border-color: #703a3a !important; }
+.btn-danger:hover { background: #6b3a3a !important; }
 .btn-pause-on { background: #7a5a2d !important; border-color: #9a753a !important; }
 
 .info-line { margin-top: 6px; min-height: 18px; font-size: 13px; font-family: ui-monospace, Menlo, monospace; }
