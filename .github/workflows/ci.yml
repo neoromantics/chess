@@ -28,6 +28,12 @@ jobs:
             exit 1
           fi
 
+      - name: Prepare Dummy Frontend
+        run: |
+          mkdir -p pkg/api/dist
+          touch pkg/api/dist/index.html
+          touch pkg/api/dist/replay.html
+
       - name: Vet
         run: go vet ./...
 
@@ -35,12 +41,7 @@ jobs:
         run: go test -v ./pkg/...
 
       - name: Build Binary
-        run: |
-          # Build a minimal version without embedding for a quick check
-          mkdir -p pkg/api/dist
-          touch pkg/api/dist/index.html
-          touch pkg/api/dist/replay.html
-          go build -o chess ./cmd/chess
+        run: go build -o chess ./cmd/chess
 
       - name: Smoke Test (UCI)
         run: |
