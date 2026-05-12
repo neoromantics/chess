@@ -149,3 +149,25 @@ func (c *Client) UnlockGame(ctx context.Context, gameID string) error {
 	key := fmt.Sprintf("lock:game:%s", gameID)
 	return c.rdb.Del(ctx, key).Err()
 }
+
+// Enqueue adds a task to a Redis list (queue).
+func (c *Client) Enqueue(ctx context.Context, queue string, payload any) error {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal payload: %w", err)
+	}
+	return c.rdb.RPush(ctx, queue, data).Err()
+}
+
+// Dequeue blocks until a task is available in the Redis list (queue).
+func (c *Client) Dequeue(ctx context.Context, queue string) ([]byte, error) {
+	// BLPop returns [key, value]
+	res, err := c.rdb.BLPop(ctx, 0, queue).Result()
+	if err != nil {
+		return nil, err
+	}
+	if len(res) < 2 {
+		return nil, fmt.Errorf("invalid blpop result")
+	}
+	return []byte(res[1]), nil
+}

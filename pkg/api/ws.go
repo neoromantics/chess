@@ -85,8 +85,11 @@ func (h *Hub) Run() {
 					select {
 					case client.send <- message.data:
 					default:
-						// If send buffer is full, unregister client
-						h.unregister <- client
+						// If send buffer is full, unregister client non-blockingly
+						// Doing this inline would deadlock the Hub's Run() loop.
+						go func(c *Client) {
+							h.unregister <- c
+						}(client)
 					}
 				}
 			}

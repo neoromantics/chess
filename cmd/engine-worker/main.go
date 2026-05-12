@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -47,31 +48,6 @@ func main() {
 		log.Printf("Worker [ARCHIVE/RATING]: Received GAME_FINISHED event for ID: %s - Result: %s", event.GameID, event.Status)
 	})
 
-	// Subscribe to engine calculation requests
-	eventBus.Subscribe(ctx, bus.EngineRequestChannel, func(payload []byte) {
-		var req bus.EngineRequest
-		if err := json.Unmarshal(payload, &req); err != nil {
-			log.Printf("Worker: failed to unmarshal request: %v", err)
-			return
-		}
-
-		log.Printf("Worker [ENGINE]: Received calculation request for ID: %s - Time: %v", req.GameID, req.MoveTime)
-
-		// Run calculation in a goroutine to allow parallel processing
-		go func(r bus.EngineRequest) {
-			// Register active search
-			stop := &atomic.Bool{}
-			activeSearches.Store(r.GameID, stop)
-			defer activeSearches.Delete(r.GameID)
-
-			resp := ProcessRequest(r, stop)
-			if err := eventBus.Publish(context.Background(), bus.EngineResponseChannel, resp); err != nil {
-				log.Printf("Worker: failed to publish response: %v", err)
-			}
-			log.Printf("Worker [ENGINE]: Published response for ID: %s - Move: %s", resp.GameID, resp.BestMove)
-		}(req)
-	})
-
 	// Subscribe to engine abort signals
 	eventBus.Subscribe(ctx, bus.EngineAbortChannel, func(payload []byte) {
 		var abort bus.EngineAbort
@@ -92,20 +68,57 @@ func main() {
 		cancel()
 	}()
 
-	workerLoop(ctx)
-}
+	// Worker Pool Semaphore
+	maxWorkers := runtime.NumCPU()
+	if maxWorkers < 1 {
+		maxWorkers = 1
+	}
+	sem := make(chan struct{}, maxWorkers)
+	log.Printf("Worker pool initialized with %d slots", maxWorkers)
 
-func workerLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		default:
-			// Main loop keep-alive
-			time.Sleep(1 * time.Second)
+			// Dequeue a task (blocks until one is available)
+			payload, err := eventBus.Dequeue(ctx, bus.EngineRequestChannel)
+			if err != nil {
+				if ctx.Err() == nil {
+					log.Printf("Worker: failed to dequeue task: %v", err)
+					time.Sleep(1 * time.Second)
+				}
+				continue
+			}
+
+			var req bus.EngineRequest
+			if err := json.Unmarshal(payload, &req); err != nil {
+				log.Printf("Worker: failed to unmarshal request: %v", err)
+				continue
+			}
+
+			// Acquire worker slot (blocks if at capacity)
+			sem <- struct{}{}
+			log.Printf("Worker [ENGINE]: Processing request for ID: %s - Time: %v", req.GameID, req.MoveTime)
+
+			go func(r bus.EngineRequest) {
+				defer func() { <-sem }() // Release slot
+
+				// Register active search
+				stop := &atomic.Bool{}
+				activeSearches.Store(r.GameID, stop)
+				defer activeSearches.Delete(r.GameID)
+
+				resp := ProcessRequest(r, stop)
+				if err := eventBus.Publish(context.Background(), bus.EngineResponseChannel, resp); err != nil {
+					log.Printf("Worker: failed to publish response: %v", err)
+				}
+				log.Printf("Worker [ENGINE]: Finished request for ID: %s - Move: %s", resp.GameID, resp.BestMove)
+			}(req)
 		}
 	}
 }
+
 
 // ProcessRequest runs the engine on the given position.
 func ProcessRequest(req bus.EngineRequest, stop *atomic.Bool) bus.EngineResponse {
