@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/taiyanliu/chess/pkg/core"
+	"github.com/neoromantics/chess/pkg/core"
 )
 
 // Job represents a move calculation request.

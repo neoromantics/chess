@@ -11,41 +11,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/taiyanliu/chess/pkg/auth"
-	"github.com/taiyanliu/chess/pkg/core"
-	"github.com/taiyanliu/chess/pkg/db"
-	"github.com/taiyanliu/chess/pkg/game"
-	"github.com/taiyanliu/chess/pkg/uci"
+	"github.com/neoromantics/chess/pkg/auth"
+	"github.com/neoromantics/chess/pkg/core"
+	"github.com/neoromantics/chess/pkg/db"
+	"github.com/neoromantics/chess/pkg/game"
+	"github.com/neoromantics/chess/pkg/uci"
 )
-
-func (s *Server) registerRoutes() {
-	s.mux.HandleFunc("GET /health", s.handleHealth)
-	s.mux.HandleFunc("POST /api/auth/signup", s.handleSignup)
-	s.mux.HandleFunc("POST /api/auth/login", s.handleLogin)
-	s.mux.HandleFunc("POST /api/auth/logout", s.handleLogout)
-	s.mux.HandleFunc("GET /api/user/me", s.handleMe)
-	s.mux.HandleFunc("POST /api/games/new", s.handleCreateGame)
-	s.mux.HandleFunc("GET /api/games", s.handleListGames)
-	s.mux.HandleFunc("DELETE /api/games/delete", s.handleDeleteGame)
-	s.mux.HandleFunc("GET /api/state", s.handleState)
-	s.mux.HandleFunc("POST /api/move", s.handleMove)
-	s.mux.HandleFunc("POST /api/new", s.handleNew)
-	s.mux.HandleFunc("POST /api/hint", s.handleHint)
-	s.mux.HandleFunc("POST /api/assess", s.handleAssess)
-	s.mux.HandleFunc("POST /api/set_players", s.handleSetPlayers)
-	s.mux.HandleFunc("POST /api/touch", s.handleTouch)
-	s.mux.HandleFunc("POST /api/touch_move", s.handleTouchMove)
-	s.mux.HandleFunc("POST /api/undo", s.handleUndo)
-	s.mux.HandleFunc("POST /api/ping", s.handlePing)
-	s.mux.HandleFunc("GET /api/save", s.handleSave)
-	s.mux.HandleFunc("POST /api/load", s.handleLoad)
-	s.mux.HandleFunc("GET /api/replay.html", s.handleReplay)
-	s.mux.HandleFunc("GET /ws", s.handleWS)
-	s.mux.Handle("GET /assets/", http.FileServer(assetsFS))
-	// Catch-all route for SPA navigation (Dashboard, GameView, etc.)
-	s.mux.HandleFunc("GET /{$}", s.handleIndex)
-	s.mux.HandleFunc("GET /{path...}", s.handleIndex)
-}
 
 func (s *Server) getGame(r *http.Request) (*gameEntry, string, error) {
 	id := r.URL.Query().Get("game_id")
@@ -290,6 +261,37 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, s.snapshotLocked(entry))
 }
 
+func (s *Server) handleTouch(w http.ResponseWriter, r *http.Request) {
+	entry, _, err := s.getGame(r)
+	if err != nil {
+		http.Error(w, err.Error(), 404)
+		return
+	}
+	var req struct{ Square string `json:"square"` }
+	json.NewDecoder(r.Body).Decode(&req)
+	sq, _ := core.ParseSquare(req.Square)
+	s.mu.Lock()
+	entry.game.Touch(sq)
+	snapshot := s.snapshotLocked(entry)
+	s.mu.Unlock()
+	writeJSON(w, snapshot)
+}
+
+func (s *Server) handleTouchMove(w http.ResponseWriter, r *http.Request) {
+	entry, _, err := s.getGame(r)
+	if err != nil {
+		http.Error(w, err.Error(), 404)
+		return
+	}
+	var req struct{ Enabled bool `json:"enabled"` }
+	json.NewDecoder(r.Body).Decode(&req)
+	s.mu.Lock()
+	entry.game.TouchMove = req.Enabled
+	snapshot := s.snapshotLocked(entry)
+	s.mu.Unlock()
+	writeJSON(w, snapshot)
+}
+
 func (s *Server) handleMove(w http.ResponseWriter, r *http.Request) {
 	entry, _, err := s.getGame(r)
 	if err != nil {
@@ -502,37 +504,6 @@ func (s *Server) handleAssess(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) handleTouch(w http.ResponseWriter, r *http.Request) {
-	entry, _, err := s.getGame(r)
-	if err != nil {
-		http.Error(w, err.Error(), 404)
-		return
-	}
-	var req struct{ Square string `json:"square"` }
-	json.NewDecoder(r.Body).Decode(&req)
-	sq, _ := core.ParseSquare(req.Square)
-	s.mu.Lock()
-	entry.game.Touch(sq)
-	snapshot := s.snapshotLocked(entry)
-	s.mu.Unlock()
-	writeJSON(w, snapshot)
-}
-
-func (s *Server) handleTouchMove(w http.ResponseWriter, r *http.Request) {
-	entry, _, err := s.getGame(r)
-	if err != nil {
-		http.Error(w, err.Error(), 404)
-		return
-	}
-	var req struct{ Enabled bool `json:"enabled"` }
-	json.NewDecoder(r.Body).Decode(&req)
-	s.mu.Lock()
-	entry.game.TouchMove = req.Enabled
-	snapshot := s.snapshotLocked(entry)
-	s.mu.Unlock()
-	writeJSON(w, snapshot)
-}
-
 func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 	entry, _, err := s.getGame(r)
 	if err != nil {
@@ -589,6 +560,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	slog.Info("serving index.html", "path", r.URL.Path)
 	w.Header().Set("Content-Type", "text/html")
 	w.Write(indexHTML)
 }
@@ -651,12 +623,11 @@ func (s *Server) maybeTriggerEngine(entry *gameEntry) {
 		)
 
 		s.mu.Lock()
-		defer s.mu.Unlock()
-
 		if e.stopSearch.Load() || !e.game.EngineToMove() {
 			slog.Info("engine search aborted or settings changed", "game_id", e.id)
-			// syncGameToDB will broadcast the new 'thinking: false' state
-			go s.syncGameToDB(e) 
+			s.mu.Unlock()
+			// Use a specialized sync to avoid deadlock
+			s.syncGameToDB(e) 
 			return
 		}
 
@@ -666,8 +637,9 @@ func (s *Server) maybeTriggerEngine(entry *gameEntry) {
 				e.game.PlayMove(matched)
 			}
 		}
+		s.mu.Unlock()
 
-		go s.syncGameToDB(e)
+		s.syncGameToDB(e)
 	}(entry, board, hist, moveTime)
 }
 

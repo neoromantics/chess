@@ -9,8 +9,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/taiyanliu/chess/pkg/db"
-	"github.com/taiyanliu/chess/pkg/game"
+	"github.com/neoromantics/chess/pkg/db"
+	"github.com/neoromantics/chess/pkg/game"
 )
 
 //go:embed all:dist

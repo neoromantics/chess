@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/taiyanliu/chess/pkg/core"
+	"github.com/neoromantics/chess/pkg/core"
 )
 
 const (

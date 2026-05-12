@@ -1,4 +1,4 @@
-module github.com/taiyanliu/chess
+module github.com/neoromantics/chess
 
 go 1.25.0
 

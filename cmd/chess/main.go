@@ -11,9 +11,9 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/taiyanliu/chess/pkg/api"
-	"github.com/taiyanliu/chess/pkg/db"
-	"github.com/taiyanliu/chess/pkg/uci"
+	"github.com/neoromantics/chess/pkg/api"
+	"github.com/neoromantics/chess/pkg/db"
+	"github.com/neoromantics/chess/pkg/uci"
 )
 
 func main() {

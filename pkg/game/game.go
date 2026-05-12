@@ -3,7 +3,7 @@ package game
 import (
 	"fmt"
 
-	"github.com/taiyanliu/chess/pkg/core"
+	"github.com/neoromantics/chess/pkg/core"
 )
 
 // GameStatus is the outcome of the current position.
