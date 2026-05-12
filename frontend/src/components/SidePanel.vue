@@ -4,7 +4,6 @@
       <h3>Players</h3>
       <div class="row">
         <label>White</label>
-        <span class="clock">{{ whiteTimeDisplay }}</span>
         <span class="seg">
           <label><input type="radio" name="white-side" value="h" :checked="whitePlayerType === 'h'" @change="emitPlayerType('white', $event)">Human</label>
           <label><input type="radio" name="white-side" value="e" :checked="whitePlayerType === 'e'" @change="emitPlayerType('white', $event)">Engine</label>
@@ -17,7 +16,6 @@
       </div>
       <div class="row">
         <label>Black</label>
-        <span class="clock">{{ blackTimeDisplay }}</span>
         <span class="seg">
           <label><input type="radio" name="black-side" value="h" :checked="blackPlayerType === 'h'" @change="emitPlayerType('black', $event)">Human</label>
           <label><input type="radio" name="black-side" value="e" :checked="blackPlayerType === 'e'" @change="emitPlayerType('black', $event)">Engine</label>
@@ -121,8 +119,6 @@ const props = defineProps<{
   blackPlayerType: string;
   whiteThinkTime: number;
   blackThinkTime: number;
-  whiteTimeDisplay: string;
-  blackTimeDisplay: string;
   touchMoveEnabled: boolean;
   autoAssess: boolean;
   soundEnabled: boolean;
@@ -179,7 +175,6 @@ const emitThinkTime = (side: 'white' | 'black', event: Event) => {
 </script>
 
 <style scoped>
-.clock { font-family: ui-monospace, Menlo, monospace; font-weight: bold; background: #1a1a1a; padding: 2px 6px; border-radius: 4px; color: #fff; margin-left: auto; margin-right: 8px; font-size: 14px; min-width: 50px; text-align: center; }
 #history { font-family: ui-monospace, Menlo, monospace; font-size: 13px; max-height: 280px; overflow-y: auto; background: #2b2b2b; padding: 8px 10px; border-radius: 3px; }
 #history div { line-height: 1.5; }
 #fen { font-family: ui-monospace, Menlo, monospace; font-size: 11px; word-break: break-all; color: #888; background: #2b2b2b; padding: 6px 8px; border-radius: 3px; }

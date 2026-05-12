@@ -20,8 +20,6 @@ export interface StateJSON {
   touched_square: string;
   white_think_time: number;
   black_think_time: number;
-  white_time: number;
-  black_time: number;
   assessments: any[];
 }
 

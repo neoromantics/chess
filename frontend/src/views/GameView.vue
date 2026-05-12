@@ -32,8 +32,6 @@
         :black-player-type="blackPlayerType"
         :white-think-time="whiteThinkTime"
         :black-think-time="blackThinkTime"
-        :white-time-display="formatTime(whiteTime)"
-        :black-time-display="formatTime(blackTime)"
         :touch-move-enabled="touchMoveEnabled"
         :auto-assess="autoAssess"
         :sound-enabled="soundEnabled"
@@ -107,8 +105,6 @@ const flipped = ref(localStorage.getItem('chess-flipped') === '1');
 const soundEnabled = ref(localStorage.getItem('chess-muted') !== '1');
 const autoAssess = ref(false);
 const assessments = reactive<Record<number, any>>({});
-const whiteTime = ref(600000);
-const blackTime = ref(600000);
 const hint = ref<{ from: string; to: string } | null>(null);
 const hintInfo = ref('');
 const assessInfo = ref('');
@@ -216,10 +212,7 @@ const updateState = (s: StateJSON) => {
   blackPlayerType.value = s.engine_black ? 'e' : 'h';
   whiteThinkTime.value = s.white_think_time;
   blackThinkTime.value = s.black_think_time;
-  
-  whiteTime.value = s.white_time;
-  blackTime.value = s.black_time;
-  
+
   if (s.assessments) {
     s.assessments.forEach((a: any) => {
       assessments[a.index] = a;
@@ -265,28 +258,6 @@ const connectWS = () => {
     setTimeout(connectWS, 3000);
   };
 };
-
-const formatTime = (ms: number) => {
-  const totalSec = Math.floor(ms / 1000);
-  const min = Math.floor(totalSec / 60);
-  const sec = totalSec % 60;
-  return `${min}:${sec.toString().padStart(2, '0')}`;
-};
-
-let clockInterval: any = null;
-onMounted(() => {
-  clockInterval = setInterval(() => {
-    if (!state.value || state.value.status !== 'ongoing') return;
-    if (state.value.turn === 'w') {
-      whiteTime.value = Math.max(0, whiteTime.value - 100);
-    } else {
-      blackTime.value = Math.max(0, blackTime.value - 100);
-    }
-  }, 100);
-});
-onUnmounted(() => {
-  if (clockInterval) clearInterval(clockInterval);
-});
 
 const onHintReceived = (data: any) => {
   if (data) {

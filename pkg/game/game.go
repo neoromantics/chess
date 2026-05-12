@@ -2,7 +2,6 @@ package game
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/neoromantics/chess/pkg/core"
 )
@@ -18,7 +17,6 @@ const (
 	StatusDrawRepetition   GameStatus = "draw_repetition"
 	StatusDrawInsufficient GameStatus = "draw_insufficient"
 	StatusTouchLost        GameStatus = "touch_lost"
-	StatusTimeout          GameStatus = "timeout"
 )
 
 // Game is the live chess game plus play-mode flags. It is *not* safe for
@@ -33,12 +31,6 @@ type Game struct {
 
 	EngineWhite bool
 	EngineBlack bool
-
-	// Clock support (time remaining in milliseconds).
-	WhiteTime int64
-	BlackTime int64
-	// Time of last tick/move to calculate elapsed duration.
-	LastTick time.Time
 
 	// Tournament-style touch-move rule (opt-in).
 	TouchMove bool
@@ -68,11 +60,6 @@ func (g *Game) Reset() {
 	g.TouchedSq = core.NoSquare
 	g.TouchLost = false
 	g.posCount = map[uint64]int{core.PositionKey(g.Board): 1}
-
-	// Default 10 minutes for now
-	g.WhiteTime = 600000
-	g.BlackTime = 600000
-	g.LastTick = time.Now()
 }
 
 // Load reinitialises from a starting FEN and replays moves. Engine-side
@@ -116,16 +103,6 @@ func (g *Game) PlayMove(m core.Move) {
 	// SAN must be computed against the *pre-move* board (it inspects
 	// disambiguation candidates and tentatively makes the move for +/#).
 	san := core.MoveToSAN(g.Board, m)
-
-	// Update clock for the side that just moved
-	now := time.Now()
-	elapsed := now.Sub(g.LastTick).Milliseconds()
-	if g.Board.SideToMove == core.White {
-		g.WhiteTime -= elapsed
-	} else {
-		g.BlackTime -= elapsed
-	}
-	g.LastTick = now
 
 	u := g.Board.MakeMove(m)
 	g.History = append(g.History, m.String())
@@ -226,9 +203,6 @@ func (g *Game) IsHuman(c core.Color) bool {
 func (g *Game) Status() GameStatus {
 	if g.TouchLost {
 		return StatusTouchLost
-	}
-	if g.WhiteTime <= 0 || g.BlackTime <= 0 {
-		return StatusTimeout
 	}
 	legal := g.Board.GenerateLegalMoves()
 	if len(legal) == 0 {

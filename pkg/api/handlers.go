@@ -122,34 +122,14 @@ func (s *Server) getGame(r *http.Request) (*gameEntry, error) {
 	gameInst.Load(record.FEN, history, record.EngineWhite, record.EngineBlack)
 	gameInst.HistorySAN = historySAN
 
-	// --- Stateless Clock Calculation ---
-	// Calculate time elapsed since the last move (UpdatedAt)
-	whiteThinkTime := time.Duration(record.WhiteThinkTime) * time.Millisecond
-	blackThinkTime := time.Duration(record.BlackThinkTime) * time.Millisecond
-
-	if gameInst.Status() == game.StatusOngoing {
-		elapsed := time.Since(record.UpdatedAt)
-		if gameInst.Board.SideToMove == core.White {
-			whiteThinkTime -= elapsed
-			if whiteThinkTime < 0 {
-				whiteThinkTime = 0
-			}
-		} else {
-			blackThinkTime -= elapsed
-			if blackThinkTime < 0 {
-				blackThinkTime = 0
-			}
-		}
-	}
-
 	entry := &gameEntry{
 		game:           gameInst,
 		id:             id,
 		userID:         record.UserID,
 		sessionID:      record.SessionID,
 		createdAt:      record.CreatedAt,
-		whiteThinkTime: whiteThinkTime,
-		blackThinkTime: blackThinkTime,
+		whiteThinkTime: time.Duration(record.WhiteThinkTime) * time.Millisecond,
+		blackThinkTime: time.Duration(record.BlackThinkTime) * time.Millisecond,
 	}
 	entry.stopSearch.Store(false)
 	return entry, nil
@@ -1092,8 +1072,6 @@ func (s *Server) snapshotLocked(entry *gameEntry) stateJSON {
 		TouchMove: game.TouchMove, TouchedSquare: core.SquareName(game.TouchedSq),
 		WhiteThinkTime: int(entry.whiteThinkTime / time.Millisecond),
 		BlackThinkTime: int(entry.blackThinkTime / time.Millisecond),
-		WhiteTime:      game.WhiteTime,
-		BlackTime:      game.BlackTime,
 		Assessments:    assessments,
 	}
 }
@@ -1115,8 +1093,6 @@ type stateJSON struct {
 	TouchedSquare  string    `json:"touched_square"`
 	WhiteThinkTime int       `json:"white_think_time"`
 	BlackThinkTime int       `json:"black_think_time"`
-	WhiteTime      int64     `json:"white_time"`
-	BlackTime      int64     `json:"black_time"`
 	Assessments    []any     `json:"assessments"`
 }
 
