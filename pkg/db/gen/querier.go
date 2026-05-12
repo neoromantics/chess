@@ -13,7 +13,12 @@ type Querier interface {
 	CountUserGames(ctx context.Context, userID int64) (int64, error)
 	CountUserWins(ctx context.Context, userID int64) (int64, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
-	DeleteGame(ctx context.Context, arg DeleteGameParams) error
+	// Authorization is enforced by the handler via getGame() before this runs,
+	// so we delete strictly by primary key. Re-filtering by user_id here was a
+	// footgun for anonymous games that became owned (or vice-versa) across a
+	// login/logout boundary — the row matches authz but not the DELETE filter,
+	// and the API silently 204'd with nothing deleted.
+	DeleteGame(ctx context.Context, id string) (int64, error)
 	GetGame(ctx context.Context, id string) (Game, error)
 	GetUserByID(ctx context.Context, id int64) (User, error)
 	GetUserByUsername(ctx context.Context, username string) (User, error)

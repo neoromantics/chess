@@ -76,19 +76,22 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 	return i, err
 }
 
-const deleteGame = `-- name: DeleteGame :exec
+const deleteGame = `-- name: DeleteGame :execrows
 DELETE FROM games
-WHERE id = $1 AND user_id = $2
+WHERE id = $1
 `
 
-type DeleteGameParams struct {
-	ID     string `json:"id"`
-	UserID int64  `json:"user_id"`
-}
-
-func (q *Queries) DeleteGame(ctx context.Context, arg DeleteGameParams) error {
-	_, err := q.db.ExecContext(ctx, deleteGame, arg.ID, arg.UserID)
-	return err
+// Authorization is enforced by the handler via getGame() before this runs,
+// so we delete strictly by primary key. Re-filtering by user_id here was a
+// footgun for anonymous games that became owned (or vice-versa) across a
+// login/logout boundary — the row matches authz but not the DELETE filter,
+// and the API silently 204'd with nothing deleted.
+func (q *Queries) DeleteGame(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteGame, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const getGame = `-- name: GetGame :one

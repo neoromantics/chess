@@ -451,13 +451,17 @@ func (s *Server) handleCreateGame(w http.ResponseWriter, r *http.Request) {
 	gm := game.NewGame()
 	gm.EngineBlack = true // Default setup: White human vs Black engine
 	entry := &gameEntry{
-		game:           gm,
-		id:             id,
-		userID:         userID,
-		sessionID:      sessionID,
-		createdAt:      time.Now(),
-		whiteThinkTime: 10 * time.Minute, // Default to 10 minutes
-		blackThinkTime: 10 * time.Minute,
+		game:      gm,
+		id:        id,
+		userID:    userID,
+		sessionID: sessionID,
+		createdAt: time.Now(),
+		// This is the engine's *per-move* search budget, not a game clock.
+		// 10 minutes here meant every engine reply took 10 minutes to come
+		// back — looked like "engine not responding." 3s is a reasonable
+		// starting point; the UI can raise it via /api/set_players.
+		whiteThinkTime: 3 * time.Second,
+		blackThinkTime: 3 * time.Second,
 	}
 	entry.stopSearch.Store(false)
 
@@ -488,25 +492,31 @@ func (s *Server) handleListGames(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDeleteGame(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("game_id")
-	user, _ := auth.GetUser(r.Context())
 
-	entry, err := s.getGame(r)
-	if err != nil {
+	// getGame() is the authorization gate — it checks user_id OR session_id
+	// against the record. If it succeeds, the caller owns the game.
+	if _, err := s.getGame(r); err != nil {
+		slog.Warn("delete game: unauthorized or missing", "game_id", id, "error", err)
 		http.Error(w, err.Error(), 404)
 		return
 	}
 
-	entry.stopSearch.Store(true)
+	// Abort any in-flight engine search on this game so workers don't
+	// keep burning CPU on a deleted record.
+	s.broadcastEngineAbort(id)
 
-	var userID int64
-	if user != nil {
-		userID = user.UserID
-	}
-	err = s.db.DeleteGame(id, userID)
+	rows, err := s.db.DeleteGame(id)
 	if err != nil {
+		slog.Error("delete game: db error", "game_id", id, "error", err)
 		http.Error(w, err.Error(), 500)
 		return
 	}
+	if rows == 0 {
+		slog.Warn("delete game: no rows affected (already deleted?)", "game_id", id)
+		http.Error(w, "game not found", 404)
+		return
+	}
+	slog.Info("game deleted", "game_id", id)
 	w.WriteHeader(204)
 }
 

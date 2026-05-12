@@ -72,6 +72,11 @@ SELECT id, user_id, session_id, fen, history, history_san,
 FROM games
 WHERE id = $1;
 
--- name: DeleteGame :exec
+-- name: DeleteGame :execrows
+-- Authorization is enforced by the handler via getGame() before this runs,
+-- so we delete strictly by primary key. Re-filtering by user_id here was a
+-- footgun for anonymous games that became owned (or vice-versa) across a
+-- login/logout boundary — the row matches authz but not the DELETE filter,
+-- and the API silently 204'd with nothing deleted.
 DELETE FROM games
-WHERE id = $1 AND user_id = $2;
+WHERE id = $1;

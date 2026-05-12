@@ -189,11 +189,8 @@ func (s *PostgresStore) GetGame(id string) (*GameRecord, error) {
 	return &g, nil
 }
 
-func (s *PostgresStore) DeleteGame(id string, userID int64) error {
-	return s.q.DeleteGame(context.Background(), gen.DeleteGameParams{
-		ID:     id,
-		UserID: userID,
-	})
+func (s *PostgresStore) DeleteGame(id string) (int64, error) {
+	return s.q.DeleteGame(context.Background(), id)
 }
 
 // --- mappers between sqlc-generated row types and the Store DTOs ---

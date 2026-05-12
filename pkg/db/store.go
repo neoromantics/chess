@@ -64,5 +64,7 @@ type Store interface {
 	SaveGame(g *GameRecord) error
 	ListGames(userID int64, sessionID string) ([]GameRecord, error)
 	GetGame(id string) (*GameRecord, error)
-	DeleteGame(id string, userID int64) error
+	// DeleteGame returns the number of rows removed; callers should treat 0
+	// as a missing record (or one that was already deleted).
+	DeleteGame(id string) (int64, error)
 }
