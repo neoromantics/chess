@@ -62,7 +62,6 @@ type GameFinishedEvent struct {
 	FEN         string `json:"fen"`
 	EngineWhite bool   `json:"engine_white"`
 	EngineBlack bool   `json:"engine_black"`
-	UserID      int64  `json:"user_id,omitempty"`
 }
 
 // EngineRequest represents a request for the engine to calculate a move.
@@ -433,6 +432,32 @@ func (c *Client) StreamReadGroup(ctx context.Context, stream, group, consumer st
 		Streams:  []string{stream, ">"},
 		Count:    1,
 		Block:    timeout,
+		NoAck:    false,
+	}).Result()
+
+	if err != nil {
+		if err == redis.Nil {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	if len(entries) == 0 || len(entries[0].Messages) == 0 {
+		return nil, nil
+	}
+
+	return entries[0].Messages, nil
+}
+
+// StreamReadGroupPending reads messages that were delivered to this consumer
+// but not yet acknowledged (XREADGROUP with "0"). Useful for recovery.
+func (c *Client) StreamReadGroupPending(ctx context.Context, stream, group, consumer string, count int64) ([]redis.XMessage, error) {
+	entries, err := c.rdb.XReadGroup(ctx, &redis.XReadGroupArgs{
+		Group:    group,
+		Consumer: consumer,
+		Streams:  []string{stream, "0"},
+		Count:    count,
+		Block:    -1, // Non-blocking
 		NoAck:    false,
 	}).Result()
 

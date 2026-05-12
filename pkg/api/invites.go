@@ -243,7 +243,6 @@ func (s *Server) createPvPGame(inv *db.Invite) (string, error) {
 	now := time.Now()
 	rec := &db.GameRecord{
 		ID:             id,
-		UserID:         inv.FromUserID, // legacy column, retained until 000004
 		WhiteUserID:    &white,
 		BlackUserID:    &black,
 		FEN:            gm.Board.FEN(),

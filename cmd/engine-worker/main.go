@@ -89,7 +89,7 @@ func main() {
 		case <-ctx.Done():
 			return
 		case sem <- struct{}{}:
-			// Read one message from the stream group
+			// 1. First try to read NEW messages (never delivered)
 			msgs, err := eventBus.StreamReadGroup(ctx, bus.EngineRequestChannel, "engine-workers", hostname, 2*time.Second)
 			if err != nil {
 				<-sem
@@ -98,9 +98,14 @@ func main() {
 				}
 				continue
 			}
+
+			// 2. If no new messages, try to read PENDING messages (delivered but not ACKed, or claimed by Janitor)
 			if len(msgs) == 0 {
-				<-sem
-				continue
+				msgs, err = eventBus.StreamReadGroupPending(ctx, bus.EngineRequestChannel, "engine-workers", hostname, 10)
+				if err != nil || len(msgs) == 0 {
+					<-sem
+					continue
+				}
 			}
 
 			msg := msgs[0]
@@ -116,6 +121,8 @@ func main() {
 				defer func() { <-sem }()
 				defer eventBus.StreamAck(context.Background(), bus.EngineRequestChannel, "engine-workers", streamID)
 
+				log.Printf("Worker [ENGINE]: Processing %s request for Game %s (ID: %s)", r.Context, r.GameID, streamID)
+
 				stop := &atomic.Bool{}
 				activeSearches.Store(r.GameID, stop)
 				defer activeSearches.Delete(r.GameID)
@@ -124,10 +131,11 @@ func main() {
 				if err := eventBus.Publish(context.Background(), bus.EngineResponseChannel, resp); err != nil {
 					log.Printf("Worker: failed to publish response: %v", err)
 				}
+				log.Printf("Worker [ENGINE]: Finished %s request for Game %s", r.Context, r.GameID)
 			}(req, msg.ID)
 		}
 	}
-}
+	}
 
 func startJanitor(ctx context.Context, b *bus.Client, hostname string) {
 	election := leader.NewElection(b.Rdb(), "worker-janitor", leader.WithLeaseTTL(15*time.Second))

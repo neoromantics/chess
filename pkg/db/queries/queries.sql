@@ -1,6 +1,6 @@
 -- name: CreateUser :one
-INSERT INTO users (username, password_hash, elo)
-VALUES ($1, $2, 1200)
+INSERT INTO users (username, password_hash, elo, created_at, last_login)
+VALUES ($1, $2, 1200, NOW(), NOW())
 RETURNING id, username, password_hash, display_name, avatar_url, country,
           is_premium, elo, bio, last_login, created_at,
           rating, rd, volatility, games_played, wins, losses, draws;

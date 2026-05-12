@@ -53,12 +53,10 @@ type UserStats struct {
 }
 
 // GameRecord represents a persistent game state in the database.
-// WhiteUserID/BlackUserID are the new platform-level owners; UserID is
-// kept during the Phase-1 transition for backward compatibility with
-// engine-only games and will be dropped in migration 000004.
+// WhiteUserID/BlackUserID are the new platform-level owners; UserID has
+// been dropped.
 type GameRecord struct {
 	ID             string    `json:"id"`
-	UserID         int64     `json:"user_id"`                 // legacy
 	WhiteUserID    *int64    `json:"white_user_id,omitempty"` // nil when engine plays white
 	BlackUserID    *int64    `json:"black_user_id,omitempty"` // nil when engine plays black
 	FEN            string    `json:"fen"`

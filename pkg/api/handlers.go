@@ -291,6 +291,7 @@ func (s *Server) withGameLock(w http.ResponseWriter, r *http.Request, fn func(en
 func (s *Server) executeWithGameLock(ctx context.Context, gameID string, fn func(entry *gameEntry)) {
 	lock, err := s.bus.LockGame(ctx, gameID, 5*time.Second)
 	if err != nil || lock == nil {
+		slog.Warn("failed to acquire game lock in executeWithGameLock", "game_id", gameID, "error", err)
 		return
 	}
 	defer lock.Release(context.Background())
@@ -422,7 +423,6 @@ func (s *Server) syncGameToDB(entry *gameEntry, newAssess any) {
 			FEN:         gameRec.FEN,
 			EngineWhite: gameRec.EngineWhite,
 			EngineBlack: gameRec.EngineBlack,
-			UserID:      gameRec.UserID,
 		}
 		if err := s.bus.Publish(context.Background(), bus.GameFinishedEventChannel, event); err != nil {
 			slog.Error("failed to publish game finished event", "error", err)
@@ -1413,7 +1413,10 @@ func (s *Server) listenToEngine() {
 			return
 		}
 
-		s.executeWithGameLock(context.Background(), resp.GameID, func(entry *gameEntry) {
+		slog.Info("received engine response", "game_id", resp.GameID, "context", resp.Context, "move", resp.BestMove)
+
+		// Process response in a separate goroutine to avoid blocking the Redis subscription pipe.
+		go s.executeWithGameLock(context.Background(), resp.GameID, func(entry *gameEntry) {
 			entry.mu.Lock()
 
 			// Handle Context
@@ -1422,12 +1425,18 @@ func (s *Server) listenToEngine() {
 					m, err := entry.game.Board.ParseUCIMove(resp.BestMove)
 					if err == nil {
 						if matched, ok := game.MatchMove(entry.game.Board.GenerateLegalMoves(), m); ok {
-							slog.Info("engine move received from worker", "game_id", resp.GameID, "move", matched.String())
+							slog.Info("engine move applied", "game_id", resp.GameID, "move", matched.String())
 							movingSide := entry.game.Board.SideToMove
 							entry.game.PlayMove(matched)
 							s.deductClock(context.Background(), entry.id, movingSide)
+						} else {
+							slog.Error("invalid engine move from worker", "game_id", resp.GameID, "move", resp.BestMove)
 						}
+					} else {
+						slog.Error("failed to parse engine move", "game_id", resp.GameID, "move", resp.BestMove, "error", err)
 					}
+				} else {
+					slog.Warn("engine response ignored: not engine's turn or game finished", "game_id", resp.GameID)
 				}
 				s.setThinking(context.Background(), entry.id, false)
 				entry.mu.Unlock()
