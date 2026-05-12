@@ -51,6 +51,7 @@ const replayPlaceholder = "REPLAY_DATA_PLACEHOLDER"
 const maxRequestBody int64 = 1 << 20
 
 type gameEntry struct {
+	mu         sync.Mutex
 	game       *game.Game
 	stopSearch atomic.Bool
 	eventFired atomic.Bool
@@ -70,7 +71,7 @@ type Server struct {
 	hub *Hub
 	bus *bus.Client
 
-	mu    sync.Mutex
+	mu    sync.RWMutex
 	games map[string]*gameEntry
 
 	lastPing time.Time
@@ -124,9 +125,16 @@ func (s *Server) StartClockTicker() {
 		ticker := time.NewTicker(1 * time.Second)
 		defer ticker.Stop()
 		for range ticker.C {
-			s.mu.Lock()
+			s.mu.RLock()
+			entries := make([]*gameEntry, 0, len(s.games))
+			for _, entry := range s.games {
+				entries = append(entries, entry)
+			}
+			s.mu.RUnlock()
+
 			now := time.Now()
-			for id, entry := range s.games {
+			for _, entry := range entries {
+				entry.mu.Lock()
 				gm := entry.game
 				if gm.Status() == game.StatusOngoing {
 					elapsed := now.Sub(gm.LastTick).Milliseconds()
@@ -137,7 +145,6 @@ func (s *Server) StartClockTicker() {
 					}
 					gm.LastTick = now
 
-					// Detect timeout
 					if gm.WhiteTime <= 0 || gm.BlackTime <= 0 {
 						if gm.WhiteTime < 0 {
 							gm.WhiteTime = 0
@@ -145,18 +152,17 @@ func (s *Server) StartClockTicker() {
 						if gm.BlackTime < 0 {
 							gm.BlackTime = 0
 						}
-						slog.Info("game timeout detected", "game_id", id)
-						// syncGameToDB will broadcast the terminal state
-						s.mu.Unlock()
+						slog.Info("game timeout detected", "game_id", entry.id)
+						entry.mu.Unlock()
 						s.syncGameToDB(entry, nil)
-						s.mu.Lock()
 					} else {
-						// Periodic sync/broadcast to keep clients updated
-						s.hub.BroadcastEvent(id, "state", s.snapshotLocked(entry))
+						s.hub.BroadcastEvent(entry.id, "state", s.snapshotLocked(entry))
+						entry.mu.Unlock()
 					}
+				} else {
+					entry.mu.Unlock()
 				}
 			}
-			s.mu.Unlock()
 		}
 	}()
 }
@@ -170,7 +176,10 @@ func (s *Server) StartCacheManager() {
 			s.mu.Lock()
 			now := time.Now()
 			for id, entry := range s.games {
-				if now.Sub(entry.lastUsed) > 10*time.Minute {
+				entry.mu.Lock()
+				idle := now.Sub(entry.lastUsed)
+				entry.mu.Unlock()
+				if idle > 10*time.Minute {
 					slog.Info("evicting game from memory cache", "game_id", id)
 					delete(s.games, id)
 				}
@@ -251,9 +260,9 @@ func (s *Server) listenToGameUpdates() {
 			return
 		}
 
-		s.mu.Lock()
+		s.mu.RLock()
 		_, exists := s.games[event.GameID]
-		s.mu.Unlock()
+		s.mu.RUnlock()
 
 		if exists {
 			s.refreshGameFromDB(event.GameID)
@@ -270,10 +279,10 @@ func (s *Server) refreshGameFromDB(id string) {
 		return
 	}
 
-	s.mu.Lock()
+	s.mu.RLock()
 	entry, exists := s.games[id]
+	s.mu.RUnlock()
 	if !exists {
-		s.mu.Unlock()
 		return
 	}
 
@@ -281,6 +290,7 @@ func (s *Server) refreshGameFromDB(id string) {
 	json.Unmarshal([]byte(record.History), &history)
 	json.Unmarshal([]byte(record.HistorySAN), &historySAN)
 
+	entry.mu.Lock()
 	// Preserve the engine configurations, but update the FEN and history
 	entry.game.Load(record.FEN, history, record.EngineWhite, record.EngineBlack)
 	entry.game.HistorySAN = historySAN
@@ -288,7 +298,7 @@ func (s *Server) refreshGameFromDB(id string) {
 	entry.blackThinkTime = time.Duration(record.BlackThinkTime) * time.Millisecond
 
 	snapshot := s.snapshotLocked(entry)
-	s.mu.Unlock()
+	entry.mu.Unlock()
 
 	s.hub.BroadcastState(id, snapshot)
 }
