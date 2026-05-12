@@ -55,15 +55,20 @@ Visit http://localhost:8080.
 ```
 
 ## Development
-For rapid host-native development:
+For local development, we use Docker Compose to run the entire distributed stack:
 ```bash
-# Local Docker Compose Stack
 just up
-
-# Or run components locally
-go run ./cmd/chess -server
-go run ./cmd/engine-worker
 ```
+
+## Production Deployment
+The production deployment uses a **GitOps** methodology. 
+Pushing to the `main` branch triggers a GitHub Actions pipeline that:
+1. Builds multi-stage Docker images.
+2. Pushes the immutable images to `ghcr.io/neoromantics`.
+3. Connects to the remote **k3s** Kubernetes cluster via SSH.
+4. Applies the raw manifests in `deploy/k8s.yaml` and performs a zero-downtime rolling restart.
+
+See [DEPLOY.md](DEPLOY.md) for detailed cluster setup instructions.
 
 ## Repository
 [github.com/neoromantics/chess](https://github.com/neoromantics/chess)
