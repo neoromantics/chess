@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -12,6 +13,8 @@ import (
 // Event names
 const (
 	GameFinishedEventChannel = "game.finished"
+	EngineRequestChannel      = "engine.request"
+	EngineResponseChannel     = "engine.response"
 )
 
 // GameFinishedEvent represents the data sent when a game ends.
@@ -23,6 +26,25 @@ type GameFinishedEvent struct {
 	EngineBlack bool   `json:"engine_black"`
 	UserID      int64  `json:"user_id,omitempty"`
 }
+
+// EngineRequest represents a request for the engine to calculate a move.
+type EngineRequest struct {
+	GameID   string         `json:"game_id"`
+	FEN      string         `json:"fen"`
+	History  map[uint64]int `json:"history"`
+	MoveTime time.Duration  `json:"movetime"`
+	Context  string         `json:"context"` // "move", "hint", "assess"
+}
+
+// EngineResponse represents the result of an engine calculation.
+type EngineResponse struct {
+	GameID   string `json:"game_id"`
+	BestMove string `json:"best_move"` // UCI format
+	Score    int    `json:"score"`
+	Depth    int    `json:"depth"`
+	Context  string `json:"context"`
+}
+
 
 // Client wraps the Redis client for pub/sub.
 type Client struct {

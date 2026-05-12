@@ -80,6 +80,7 @@ func NewServer(database db.Store, eventBus *bus.Client) *Server {
 		lastPing: time.Now(),
 	}
 	go s.hub.Run()
+	s.listenToEngine()
 	s.mux = http.NewServeMux()
 	s.registerRoutes()
 	return s

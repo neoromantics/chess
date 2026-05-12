@@ -15,26 +15,7 @@ import (
 	"github.com/neoromantics/chess/pkg/core"
 )
 
-// Job represents a move calculation request.
-type Job struct {
-	GameID   string            `json:"game_id"`
-	FEN      string            `json:"fen"`
-	History  map[uint64]int    `json:"history"`
-	MoveTime time.Duration     `json:"movetime"`
-}
-
-// Result represents the calculated best move.
-type Result struct {
-	GameID   string          `json:"game_id"`
-	BestMove core.Move       `json:"best_move"`
-	Score    int             `json:"score"`
-	Depth    int             `json:"depth"`
-	Error    string          `json:"error,omitempty"`
-}
-
 func main() {
-	// In a million-dollar business, this would subscribe to Redis/RabbitMQ.
-	// For now, we'll implement the structure to be easily swappable.
 	flag.Parse()
 
 	log.Println("Engine Worker starting...")
@@ -49,11 +30,10 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	// Simulate worker loop
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Subscribe to game finished events
+	// Subscribe to game finished events (Archive/Rating placeholder)
 	eventBus.Subscribe(ctx, bus.GameFinishedEventChannel, func(payload []byte) {
 		var event bus.GameFinishedEvent
 		if err := json.Unmarshal(payload, &event); err != nil {
@@ -61,6 +41,26 @@ func main() {
 			return
 		}
 		log.Printf("Worker [ARCHIVE/RATING]: Received GAME_FINISHED event for ID: %s - Result: %s", event.GameID, event.Status)
+	})
+
+	// Subscribe to engine calculation requests
+	eventBus.Subscribe(ctx, bus.EngineRequestChannel, func(payload []byte) {
+		var req bus.EngineRequest
+		if err := json.Unmarshal(payload, &req); err != nil {
+			log.Printf("Worker: failed to unmarshal request: %v", err)
+			return
+		}
+
+		log.Printf("Worker [ENGINE]: Received calculation request for ID: %s - Time: %v", req.GameID, req.MoveTime)
+		
+		// Run calculation in a goroutine to allow parallel processing
+		go func(r bus.EngineRequest) {
+			resp := ProcessRequest(r)
+			if err := eventBus.Publish(context.Background(), bus.EngineResponseChannel, resp); err != nil {
+				log.Printf("Worker: failed to publish response: %v", err)
+			}
+			log.Printf("Worker [ENGINE]: Published response for ID: %s - Move: %s", resp.GameID, resp.BestMove)
+		}(req)
 	})
 
 	go func() {
@@ -78,29 +78,31 @@ func workerLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		default:
-			// In the future: job := queue.Pop()
+			// Main loop keep-alive
 			time.Sleep(1 * time.Second)
 		}
 	}
 }
 
-// ProcessJob runs the engine on the given position.
-func ProcessJob(job Job) Result {
-	b, err := core.ParseFEN(job.FEN)
+// ProcessRequest runs the engine on the given position.
+func ProcessRequest(req bus.EngineRequest) bus.EngineResponse {
+	b, err := core.ParseFEN(req.FEN)
 	if err != nil {
-		return Result{GameID: job.GameID, Error: err.Error()}
+		log.Printf("Worker: failed to parse FEN: %v", err)
+		return bus.EngineResponse{GameID: req.GameID, Context: req.Context}
 	}
 
 	stop := &atomic.Bool{}
 	res := b.IterativeDeepening(core.SearchLimits{
-		MoveTime: job.MoveTime,
-		History:  job.History,
+		MoveTime: req.MoveTime,
+		History:  req.History,
 	}, stop, nil)
 
-	return Result{
-		GameID:   job.GameID,
-		BestMove: res.BestMove,
+	return bus.EngineResponse{
+		GameID:   req.GameID,
+		BestMove: res.BestMove.String(),
 		Score:    res.Score,
 		Depth:    res.Depth,
+		Context:  req.Context,
 	}
 }

@@ -627,6 +627,51 @@ func (s *Server) handlePing(w http.ResponseWriter, r *http.Request) {
 
 // Authoritative Engine Logic
 
+func (s *Server) listenToEngine() {
+	s.bus.Subscribe(context.Background(), bus.EngineResponseChannel, func(payload []byte) {
+		var resp bus.EngineResponse
+		if err := json.Unmarshal(payload, &resp); err != nil {
+			slog.Error("failed to unmarshal engine response", "error", err)
+			return
+		}
+
+		s.mu.Lock()
+		entry, ok := s.games[resp.GameID]
+		if !ok {
+			s.mu.Unlock()
+			return
+		}
+
+		// Ensure we are still waiting for a move and it's still the engine's turn
+		if !entry.game.EngineToMove() || entry.game.Status() != game.StatusOngoing {
+			entry.thinking.Store(false)
+			s.mu.Unlock()
+			go s.syncGameToDB(entry)
+			return
+		}
+
+		if resp.BestMove != "" {
+			m, err := entry.game.Board.ParseUCIMove(resp.BestMove)
+			if err == nil {
+				if matched, ok := game.MatchMove(entry.game.Board.GenerateLegalMoves(), m); ok {
+					slog.Info("engine move received from worker", "game_id", resp.GameID, "move", matched.String())
+					entry.game.PlayMove(matched)
+				}
+			}
+		}
+
+		entry.thinking.Store(false)
+		s.mu.Unlock()
+
+		go s.syncGameToDB(entry)
+
+		// Re-trigger in case of Engine vs Engine or settings changed
+		time.AfterFunc(100*time.Millisecond, func() {
+			s.maybeTriggerEngine(entry)
+		})
+	})
+}
+
 func (s *Server) maybeTriggerEngine(entry *gameEntry) {
 	s.mu.Lock()
 	if entry.thinking.Load() {
@@ -655,38 +700,26 @@ func (s *Server) maybeTriggerEngine(entry *gameEntry) {
 
 	s.hub.BroadcastState(entry.id, snapshot)
 
-	go func(e *gameEntry, b core.Board, h map[uint64]int, t time.Duration) {
-		slog.Info("engine starting calculation", "game_id", e.id, "movetime", t)
-		
-		result := b.IterativeDeepening(
-			core.SearchLimits{MoveTime: t, History: h},
-			&e.stopSearch,
-			nil,
-		)
+	// Dispatch request to worker pool
+	req := bus.EngineRequest{
+		GameID:   entry.id,
+		FEN:      board.FEN(),
+		History:  hist,
+		MoveTime: moveTime,
+		Context:  "move",
+	}
 
-		s.mu.Lock()
-		e.thinking.Store(false)
-
-		if e.stopSearch.Load() || !e.game.EngineToMove() || e.game.Status() != game.StatusOngoing {
+	go func() {
+		if err := s.bus.Publish(context.Background(), bus.EngineRequestChannel, req); err != nil {
+			slog.Error("failed to dispatch engine request", "error", err)
+			s.mu.Lock()
+			entry.thinking.Store(false)
 			s.mu.Unlock()
-			s.syncGameToDB(e) 
-			return
+			s.syncGameToDB(entry)
+		} else {
+			slog.Info("engine request dispatched to worker", "game_id", entry.id, "movetime", moveTime)
 		}
-
-		if result.BestMove != (core.Move{}) {
-			if matched, ok := game.MatchMove(e.game.Board.GenerateLegalMoves(), result.BestMove); ok {
-				slog.Info("engine playing move", "game_id", e.id, "move", matched.String())
-				e.game.PlayMove(matched)
-			}
-		}
-		s.mu.Unlock()
-
-		s.syncGameToDB(e)
-
-		time.AfterFunc(100*time.Millisecond, func() {
-			s.maybeTriggerEngine(e)
-		})
-	}(entry, board, hist, moveTime)
+	}()
 }
 
 func (s *Server) snapshotLocked(entry *gameEntry) stateJSON {
