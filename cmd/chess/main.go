@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -8,7 +9,9 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"runtime"
+	"syscall"
 
 	"github.com/neoromantics/chess/pkg/api"
 	"github.com/neoromantics/chess/pkg/bus"
@@ -66,14 +69,25 @@ func main() {
 
 		server := api.NewServer(store, eventBus)
 		server.StartCacheManager()
-		// if idle := time.Duration(*idleSec) * time.Second; idle > 0 {
-		// 	server.StartIdleShutdown(idle)
-		// }
+
+		httpServer := &http.Server{Handler: server}
+
+		// Graceful shutdown on SIGINT/SIGTERM
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+		go func() {
+			<-sigChan
+			fmt.Fprintln(os.Stderr, "\nShutting down gracefully...")
+			ctx, cancel := context.WithTimeout(context.Background(), 10*1e9)
+			defer cancel()
+			server.Shutdown(ctx)
+			httpServer.Shutdown(ctx)
+		}()
 
 		if !*noOpen {
 			openBrowser(url)
 		}
-		log.Fatal(http.Serve(ln, server))
+		log.Fatal(httpServer.Serve(ln))
 	}
 
 	uci.NewUCI(os.Stdout).Run(os.Stdin)

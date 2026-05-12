@@ -121,6 +121,11 @@ func (c *Client) DelState(ctx context.Context, key string) error {
 	return c.rdb.Del(ctx, key).Err()
 }
 
+// Ping checks the Redis connection.
+func (c *Client) Ping(ctx context.Context) error {
+	return c.rdb.Ping(ctx).Err()
+}
+
 // Close closes the Redis client.
 func (c *Client) Close() error {
 	return c.rdb.Close()

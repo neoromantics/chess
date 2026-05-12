@@ -7,13 +7,19 @@ metadata:
     cert-manager.io/cluster-issuer: letsencrypt-prod
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/websocket-services: {{ .Chart.Name }}-api
+    nginx.ingress.kubernetes.io/proxy-body-size: "1m"
+    nginx.ingress.kubernetes.io/limit-rps: "20"
+    nginx.ingress.kubernetes.io/limit-burst-multiplier: "5"
 spec:
+  {{- if .Values.ingress.tls.enabled }}
   tls:
   - hosts:
-    - chess.neoromantics.com # Placeholder domain
-    secretName: chess-tls
+    - {{ .Values.ingress.host }}
+    secretName: {{ .Values.ingress.tls.secretName | default "chess-tls" }}
+  {{- end }}
   rules:
-  - host: chess.neoromantics.com
+  - host: {{ .Values.ingress.host }}
     http:
       paths:
       - path: /

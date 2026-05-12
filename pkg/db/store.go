@@ -5,12 +5,26 @@ import (
 )
 type User struct {
 	ID           int64     `json:"id"`
+	UserID       int64     `json:"user_id"` // alias used by auth
 	Username     string    `json:"username"`
 	PasswordHash string    `json:"-"`
+	DisplayName  string    `json:"display_name"`
+	AvatarURL    string    `json:"avatar_url"`
+	Country      string    `json:"country"`
 	IsPremium    bool      `json:"is_premium"`
 	Elo          int       `json:"elo"`
 	Bio          string    `json:"bio"`
+	LastLogin    time.Time `json:"last_login"`
 	CreatedAt    time.Time `json:"created_at"`
+}
+
+// UserStats holds aggregated game statistics for a user.
+type UserStats struct {
+	GamesPlayed   int `json:"games_played"`
+	Wins          int `json:"wins"`
+	Losses        int `json:"losses"`
+	Draws         int `json:"draws"`
+	CurrentStreak int `json:"current_streak"`
 }
 
 // GameRecord represents a persistent game state in the database.
@@ -33,10 +47,14 @@ type GameRecord struct {
 // This allows us to swap SQLite for PostgreSQL/Redis without changing the API logic.
 type Store interface {
 	Close() error
+	Ping() error
 	
 	// User management
 	CreateUser(username, passwordHash string) (*User, error)
 	GetUserByUsername(username string) (*User, error)
+	GetUserByID(id int64) (*User, error)
+	UpdateUserProfile(id int64, displayName, bio, avatarURL, country string) error
+	GetUserStats(id int64) (*UserStats, error)
 	
 	// Game management
 	SaveGame(g *GameRecord) error

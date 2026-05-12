@@ -32,9 +32,13 @@ func (s *SQLiteStore) init() error {
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			username TEXT UNIQUE NOT NULL,
 			password_hash TEXT NOT NULL,
+			display_name TEXT NOT NULL DEFAULT '',
+			avatar_url TEXT NOT NULL DEFAULT '',
+			country TEXT NOT NULL DEFAULT '',
 			is_premium BOOLEAN NOT NULL DEFAULT FALSE,
 			elo INTEGER NOT NULL DEFAULT 1200,
 			bio TEXT NOT NULL DEFAULT '',
+			last_login DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			created_at DATETIME NOT NULL
 		);
 
@@ -61,6 +65,10 @@ func (s *SQLiteStore) init() error {
 	s.db.Exec("ALTER TABLE users ADD COLUMN is_premium BOOLEAN NOT NULL DEFAULT FALSE")
 	s.db.Exec("ALTER TABLE users ADD COLUMN elo INTEGER NOT NULL DEFAULT 1200")
 	s.db.Exec("ALTER TABLE users ADD COLUMN bio TEXT NOT NULL DEFAULT ''")
+	s.db.Exec("ALTER TABLE users ADD COLUMN display_name TEXT NOT NULL DEFAULT ''")
+	s.db.Exec("ALTER TABLE users ADD COLUMN avatar_url TEXT NOT NULL DEFAULT ''")
+	s.db.Exec("ALTER TABLE users ADD COLUMN country TEXT NOT NULL DEFAULT ''")
+	s.db.Exec("ALTER TABLE users ADD COLUMN last_login DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP")
 	s.db.Exec("ALTER TABLE games ADD COLUMN assessments TEXT NOT NULL DEFAULT '[]'")
 
 	return nil
@@ -70,20 +78,26 @@ func (s *SQLiteStore) Close() error {
 	return s.db.Close()
 }
 
+func (s *SQLiteStore) Ping() error {
+	return s.db.Ping()
+}
+
 func (s *SQLiteStore) CreateUser(username, passwordHash string) (*User, error) {
 	now := time.Now()
 	res, err := s.db.Exec(`
-		INSERT INTO users (username, password_hash, created_at, elo)
-		VALUES (?, ?, ?, ?)
-	`, username, passwordHash, now, 1200)
+		INSERT INTO users (username, password_hash, created_at, last_login, elo)
+		VALUES (?, ?, ?, ?, ?)
+	`, username, passwordHash, now, now, 1200)
 	if err != nil {
 		return nil, err
 	}
 	id, _ := res.LastInsertId()
 	return &User{
 		ID:           id,
+		UserID:       id,
 		Username:     username,
 		PasswordHash: passwordHash,
+		LastLogin:    now,
 		CreatedAt:    now,
 		Elo:          1200,
 	}, nil
@@ -92,14 +106,69 @@ func (s *SQLiteStore) CreateUser(username, passwordHash string) (*User, error) {
 func (s *SQLiteStore) GetUserByUsername(username string) (*User, error) {
 	u := &User{}
 	err := s.db.QueryRow(`
-		SELECT id, username, password_hash, is_premium, elo, bio, created_at
+		SELECT id, username, password_hash, display_name, avatar_url, country,
+		       is_premium, elo, bio, last_login, created_at
 		FROM users
 		WHERE username = ?
-	`, username).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.IsPremium, &u.Elo, &u.Bio, &u.CreatedAt)
+	`, username).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.DisplayName,
+		&u.AvatarURL, &u.Country, &u.IsPremium, &u.Elo, &u.Bio,
+		&u.LastLogin, &u.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
+	u.UserID = u.ID
 	return u, nil
+}
+
+func (s *SQLiteStore) GetUserByID(id int64) (*User, error) {
+	u := &User{}
+	err := s.db.QueryRow(`
+		SELECT id, username, password_hash, display_name, avatar_url, country,
+		       is_premium, elo, bio, last_login, created_at
+		FROM users
+		WHERE id = ?
+	`, id).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.DisplayName,
+		&u.AvatarURL, &u.Country, &u.IsPremium, &u.Elo, &u.Bio,
+		&u.LastLogin, &u.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	u.UserID = u.ID
+	return u, nil
+}
+
+func (s *SQLiteStore) UpdateUserProfile(id int64, displayName, bio, avatarURL, country string) error {
+	_, err := s.db.Exec(`
+		UPDATE users SET display_name = ?, bio = ?, avatar_url = ?, country = ?
+		WHERE id = ?
+	`, displayName, bio, avatarURL, country, id)
+	return err
+}
+
+func (s *SQLiteStore) GetUserStats(id int64) (*UserStats, error) {
+	stats := &UserStats{}
+
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM games WHERE user_id = ?`, id).Scan(&stats.GamesPlayed)
+	if err != nil {
+		return nil, err
+	}
+
+	s.db.QueryRow(`
+		SELECT COUNT(*) FROM games
+		WHERE user_id = ? AND status = 'checkmate'
+	`, id).Scan(&stats.Wins)
+
+	s.db.QueryRow(`
+		SELECT COUNT(*) FROM games
+		WHERE user_id = ? AND status IN ('stalemate', 'draw50', 'draw_repetition', 'draw_insufficient')
+	`, id).Scan(&stats.Draws)
+
+	stats.Losses = stats.GamesPlayed - stats.Wins - stats.Draws
+	if stats.Losses < 0 {
+		stats.Losses = 0
+	}
+
+	return stats, nil
 }
 
 func (s *SQLiteStore) SaveGame(g *GameRecord) error {

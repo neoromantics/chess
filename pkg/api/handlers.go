@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"path"
 	"strconv"
 	"strings"
@@ -40,6 +41,9 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/auth/login", s.handleLogin)
 	s.mux.HandleFunc("POST /api/auth/logout", s.handleLogout)
 	s.mux.HandleFunc("GET /api/user/me", s.handleMe)
+	s.mux.HandleFunc("GET /api/user/profile", s.handleGetProfile)
+	s.mux.HandleFunc("PUT /api/user/profile", s.handleUpdateProfile)
+	s.mux.HandleFunc("GET /api/user/stats", s.handleUserStats)
 	s.mux.HandleFunc("POST /api/games/new", s.handleCreateGame)
 	s.mux.HandleFunc("GET /api/games", s.handleListGames)
 	s.mux.HandleFunc("DELETE /api/games/delete", s.handleDeleteGame)
@@ -195,6 +199,20 @@ func (s *Server) syncGameToDB(entry *gameEntry, newAssess any) {
 
 // Auth Handlers
 
+func (s *Server) secureCookie(name, value string) *http.Cookie {
+	c := &http.Cookie{
+		Name:     name,
+		Value:    value,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	}
+	if os.Getenv("HTTPS_ENABLED") == "true" {
+		c.Secure = true
+	}
+	return c
+}
+
 func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Username string `json:"username"`
@@ -202,6 +220,14 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, err.Error(), 400)
+		return
+	}
+	if len(req.Username) < 3 || len(req.Username) > 32 {
+		http.Error(w, "username must be 3-32 characters", 400)
+		return
+	}
+	if len(req.Password) < 6 {
+		http.Error(w, "password must be at least 6 characters", 400)
 		return
 	}
 	hash, err := auth.HashPassword(req.Password)
@@ -215,7 +241,7 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	token, _ := auth.GenerateToken(user.ID, user.Username)
-	http.SetCookie(w, &http.Cookie{Name: "token", Value: token, Path: "/", HttpOnly: true})
+	http.SetCookie(w, s.secureCookie("token", token))
 	writeJSON(w, map[string]any{"user": user, "token": token})
 }
 
@@ -234,12 +260,14 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	token, _ := auth.GenerateToken(user.ID, user.Username)
-	http.SetCookie(w, &http.Cookie{Name: "token", Value: token, Path: "/", HttpOnly: true})
+	http.SetCookie(w, s.secureCookie("token", token))
 	writeJSON(w, map[string]any{"user": user, "token": token})
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
-	http.SetCookie(w, &http.Cookie{Name: "token", Value: "", Path: "/", MaxAge: -1})
+	c := s.secureCookie("token", "")
+	c.MaxAge = -1
+	http.SetCookie(w, c)
 	w.WriteHeader(204)
 }
 
@@ -249,12 +277,85 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not logged in", 401)
 		return
 	}
-	writeJSON(w, user)
+	// Fetch full profile from DB
+	dbUser, err := s.db.GetUserByID(user.UserID)
+	if err != nil {
+		writeJSON(w, user)
+		return
+	}
+	writeJSON(w, dbUser)
+}
+
+func (s *Server) handleGetProfile(w http.ResponseWriter, r *http.Request) {
+	user, ok := auth.GetUser(r.Context())
+	if !ok {
+		http.Error(w, "not logged in", 401)
+		return
+	}
+	dbUser, err := s.db.GetUserByID(user.UserID)
+	if err != nil {
+		http.Error(w, "user not found", 404)
+		return
+	}
+	writeJSON(w, dbUser)
+}
+
+func (s *Server) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
+	user, ok := auth.GetUser(r.Context())
+	if !ok {
+		http.Error(w, "not logged in", 401)
+		return
+	}
+	var req struct {
+		DisplayName string `json:"display_name"`
+		Bio         string `json:"bio"`
+		AvatarURL   string `json:"avatar_url"`
+		Country     string `json:"country"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	if len(req.DisplayName) > 64 {
+		http.Error(w, "display name too long", 400)
+		return
+	}
+	if len(req.Bio) > 500 {
+		http.Error(w, "bio too long", 400)
+		return
+	}
+	if err := s.db.UpdateUserProfile(user.UserID, req.DisplayName, req.Bio, req.AvatarURL, req.Country); err != nil {
+		http.Error(w, "failed to update profile", 500)
+		return
+	}
+	dbUser, _ := s.db.GetUserByID(user.UserID)
+	writeJSON(w, dbUser)
+}
+
+func (s *Server) handleUserStats(w http.ResponseWriter, r *http.Request) {
+	user, ok := auth.GetUser(r.Context())
+	if !ok {
+		http.Error(w, "not logged in", 401)
+		return
+	}
+	stats, err := s.db.GetUserStats(user.UserID)
+	if err != nil {
+		http.Error(w, "failed to fetch stats", 500)
+		return
+	}
+	writeJSON(w, stats)
 }
 
 // Game Management Handlers
 
 func (s *Server) handleCreateGame(w http.ResponseWriter, r *http.Request) {
+	// Rate limit game creation
+	ip := clientIP(r)
+	if !s.gameLimiter.Allow(ip) {
+		http.Error(w, "rate limit exceeded for game creation", http.StatusTooManyRequests)
+		return
+	}
+
 	user, _ := auth.GetUser(r.Context())
 	sessionID := auth.GetSessionID(r.Context())
 	var userID int64
@@ -524,6 +625,13 @@ func (s *Server) handleUndo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleHint(w http.ResponseWriter, r *http.Request) {
+	// Rate limit engine analysis requests
+	ip := clientIP(r)
+	if !s.engineLimiter.Allow(ip) {
+		http.Error(w, "rate limit exceeded for engine analysis", http.StatusTooManyRequests)
+		return
+	}
+
 	entry, _, err := s.getGame(r)
 	if err != nil {
 		http.Error(w, err.Error(), 404)
@@ -570,6 +678,13 @@ func (s *Server) handleHint(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAssess(w http.ResponseWriter, r *http.Request) {
+	// Rate limit engine analysis requests
+	ip := clientIP(r)
+	if !s.engineLimiter.Allow(ip) {
+		http.Error(w, "rate limit exceeded for engine analysis", http.StatusTooManyRequests)
+		return
+	}
+
 	entry, _, err := s.getGame(r)
 	if err != nil {
 		http.Error(w, err.Error(), 404)
@@ -708,7 +823,11 @@ func (s *Server) handleReplay(w http.ResponseWriter, r *http.Request) {
 // Infrastructure Handlers
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, map[string]string{"status": "ok", "time": time.Now().Format(time.RFC3339)})
+	health := s.CheckHealth()
+	if health.Status != "ok" {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}
+	writeJSON(w, health)
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {

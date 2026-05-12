@@ -33,6 +33,12 @@ postgres:
   db: chess
   port: 5432
 
+ingress:
+  host: chess.neoromantics.com
+  tls:
+    enabled: false
+    secretName: chess-tls
+
 secrets:
   jwtSecret: "change-me-in-production"
   databaseUrl: "postgres://chess:chess@chess-db:5432/chess?sslmode=disable"

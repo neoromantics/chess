@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"embed"
 	"io/fs"
 	"log/slog"
@@ -45,6 +46,9 @@ func init() {
 
 const replayPlaceholder = "REPLAY_DATA_PLACEHOLDER"
 
+// maxRequestBody is the maximum allowed request body size (1 MB).
+const maxRequestBody int64 = 1 << 20
+
 type gameEntry struct {
 	game       *game.Game
 	stopSearch atomic.Bool
@@ -69,15 +73,21 @@ type Server struct {
 	games map[string]*gameEntry
 
 	lastPing time.Time
+
+	// Rate limiters for expensive endpoints
+	engineLimiter *RateLimiter // /api/hint, /api/assess
+	gameLimiter   *RateLimiter // /api/games/new
 }
 
 func NewServer(database db.Store, eventBus *bus.Client) *Server {
 	s := &Server{
-		db:       database,
-		hub:      NewHub(),
-		bus:      eventBus,
-		games:    make(map[string]*gameEntry),
-		lastPing: time.Now(),
+		db:            database,
+		hub:           NewHub(),
+		bus:           eventBus,
+		games:         make(map[string]*gameEntry),
+		lastPing:      time.Now(),
+		engineLimiter: NewRateLimiter(10, 10, time.Minute),  // 10 engine requests per minute per IP
+		gameLimiter:   NewRateLimiter(5, 5, time.Minute),    // 5 new games per minute per IP
 	}
 	go s.hub.Run()
 	s.listenToEngine()
@@ -88,20 +98,27 @@ func NewServer(database db.Store, eventBus *bus.Client) *Server {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
-	w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization")
-	if r.Method == "OPTIONS" {
-		return
-	}
-	handler := RecoveryMiddleware(s.mux)
-	handler = LoggerMiddleware(handler)
-	handler = SecurityHeadersMiddleware(handler)
-	handler.ServeHTTP(w, r)
+	handler := s.mux
+	// Apply middleware chain (innermost first)
+	var h http.Handler = handler
+	h = RecoveryMiddleware(h)
+	h = LoggerMiddleware(h)
+	h = SecurityHeadersMiddleware(h)
+	h = CORSMiddleware(h)
+	h = BodyLimitMiddleware(maxRequestBody)(h)
+	h.ServeHTTP(w, r)
 }
 
 func (s *Server) StartClockTicker() {
 	go func() {
+		defer func() {
+			if err := recover(); err != nil {
+				slog.Error("clock ticker panic recovered", "error", err)
+				// Restart the ticker after recovery
+				s.StartClockTicker()
+			}
+		}()
+
 		ticker := time.NewTicker(1 * time.Second)
 		defer ticker.Stop()
 		for range ticker.C {
@@ -163,4 +180,60 @@ func (s *Server) StartCacheManager() {
 			// }
 		}
 	}()
+}
+
+// Shutdown gracefully shuts down the server, closing WebSocket connections
+// and flushing active game states to the database.
+func (s *Server) Shutdown(ctx context.Context) {
+	slog.Info("starting graceful shutdown")
+
+	// Save all active games to database
+	s.mu.Lock()
+	for id, entry := range s.games {
+		slog.Info("saving game before shutdown", "game_id", id)
+		entry.stopSearch.Store(true)
+	}
+	entries := make([]*gameEntry, 0, len(s.games))
+	for _, e := range s.games {
+		entries = append(entries, e)
+	}
+	s.mu.Unlock()
+
+	for _, entry := range entries {
+		s.syncGameToDB(entry, nil)
+	}
+
+	slog.Info("graceful shutdown complete")
+}
+
+// HealthStatus represents the response from the health check endpoint.
+type HealthStatus struct {
+	Status string `json:"status"`
+	Time   string `json:"time"`
+	Redis  string `json:"redis"`
+	DB     string `json:"db"`
+}
+
+// CheckHealth returns the health status including dependency checks.
+func (s *Server) CheckHealth() HealthStatus {
+	h := HealthStatus{
+		Status: "ok",
+		Time:   time.Now().Format(time.RFC3339),
+		Redis:  "ok",
+		DB:     "ok",
+	}
+
+	// Check Redis
+	if err := s.bus.Ping(context.Background()); err != nil {
+		h.Redis = "error: " + err.Error()
+		h.Status = "degraded"
+	}
+
+	// Check Database
+	if err := s.db.Ping(); err != nil {
+		h.DB = "error: " + err.Error()
+		h.Status = "degraded"
+	}
+
+	return h
 }

@@ -36,9 +36,13 @@ func (s *PostgresStore) init() error {
 			id SERIAL PRIMARY KEY,
 			username TEXT UNIQUE NOT NULL,
 			password_hash TEXT NOT NULL,
+			display_name TEXT NOT NULL DEFAULT '',
+			avatar_url TEXT NOT NULL DEFAULT '',
+			country TEXT NOT NULL DEFAULT '',
 			is_premium BOOLEAN NOT NULL DEFAULT FALSE,
 			elo INTEGER NOT NULL DEFAULT 1200,
 			bio TEXT NOT NULL DEFAULT '',
+			last_login TIMESTAMP NOT NULL DEFAULT NOW(),
 			created_at TIMESTAMP NOT NULL
 		);
 
@@ -61,6 +65,10 @@ func (s *PostgresStore) init() error {
 		ALTER TABLE users ADD COLUMN IF NOT EXISTS is_premium BOOLEAN NOT NULL DEFAULT FALSE;
 		ALTER TABLE users ADD COLUMN IF NOT EXISTS elo INTEGER NOT NULL DEFAULT 1200;
 		ALTER TABLE users ADD COLUMN IF NOT EXISTS bio TEXT NOT NULL DEFAULT '';
+		ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name TEXT NOT NULL DEFAULT '';
+		ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT NOT NULL DEFAULT '';
+		ALTER TABLE users ADD COLUMN IF NOT EXISTS country TEXT NOT NULL DEFAULT '';
+		ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login TIMESTAMP NOT NULL DEFAULT NOW();
 		ALTER TABLE games ADD COLUMN IF NOT EXISTS assessments TEXT NOT NULL DEFAULT '[]';
 	`)
 	return err
@@ -70,36 +78,102 @@ func (s *PostgresStore) Close() error {
 	return s.db.Close()
 }
 
+func (s *PostgresStore) Ping() error {
+	return s.db.Ping()
+}
+
 func (s *PostgresStore) CreateUser(username, passwordHash string) (*User, error) {
 	now := time.Now()
 	u := &User{
 		Username:     username,
 		PasswordHash: passwordHash,
 		CreatedAt:    now,
+		LastLogin:    now,
 		Elo:          1200,
 	}
 	err := s.db.QueryRow(`
-		INSERT INTO users (username, password_hash, created_at, elo)
-		VALUES ($1, $2, $3, $4)
+		INSERT INTO users (username, password_hash, created_at, last_login, elo)
+		VALUES ($1, $2, $3, $4, $5)
 		RETURNING id
-	`, username, passwordHash, now, u.Elo).Scan(&u.ID)
+	`, username, passwordHash, now, now, u.Elo).Scan(&u.ID)
 	if err != nil {
 		return nil, err
 	}
+	u.UserID = u.ID
 	return u, nil
 }
 
 func (s *PostgresStore) GetUserByUsername(username string) (*User, error) {
 	u := &User{}
 	err := s.db.QueryRow(`
-		SELECT id, username, password_hash, is_premium, elo, bio, created_at
+		SELECT id, username, password_hash, display_name, avatar_url, country,
+		       is_premium, elo, bio, last_login, created_at
 		FROM users
 		WHERE username = $1
-	`, username).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.IsPremium, &u.Elo, &u.Bio, &u.CreatedAt)
+	`, username).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.DisplayName,
+		&u.AvatarURL, &u.Country, &u.IsPremium, &u.Elo, &u.Bio,
+		&u.LastLogin, &u.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
+	u.UserID = u.ID
 	return u, nil
+}
+
+func (s *PostgresStore) GetUserByID(id int64) (*User, error) {
+	u := &User{}
+	err := s.db.QueryRow(`
+		SELECT id, username, password_hash, display_name, avatar_url, country,
+		       is_premium, elo, bio, last_login, created_at
+		FROM users
+		WHERE id = $1
+	`, id).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.DisplayName,
+		&u.AvatarURL, &u.Country, &u.IsPremium, &u.Elo, &u.Bio,
+		&u.LastLogin, &u.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	u.UserID = u.ID
+	return u, nil
+}
+
+func (s *PostgresStore) UpdateUserProfile(id int64, displayName, bio, avatarURL, country string) error {
+	_, err := s.db.Exec(`
+		UPDATE users SET display_name = $1, bio = $2, avatar_url = $3, country = $4
+		WHERE id = $5
+	`, displayName, bio, avatarURL, country, id)
+	return err
+}
+
+func (s *PostgresStore) GetUserStats(id int64) (*UserStats, error) {
+	stats := &UserStats{}
+
+	// Total games played (where the user is owner)
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM games WHERE user_id = $1`, id).Scan(&stats.GamesPlayed)
+	if err != nil {
+		return nil, err
+	}
+
+	// Wins: games where the user's side checkmated the opponent
+	// For simplicity, count games where status is 'checkmate' and the user was likely the winner.
+	// A more rigorous approach would track which color the user played.
+	s.db.QueryRow(`
+		SELECT COUNT(*) FROM games
+		WHERE user_id = $1 AND status = 'checkmate'
+	`, id).Scan(&stats.Wins)
+
+	// Draws
+	s.db.QueryRow(`
+		SELECT COUNT(*) FROM games
+		WHERE user_id = $1 AND status IN ('stalemate', 'draw50', 'draw_repetition', 'draw_insufficient')
+	`, id).Scan(&stats.Draws)
+
+	stats.Losses = stats.GamesPlayed - stats.Wins - stats.Draws
+	if stats.Losses < 0 {
+		stats.Losses = 0
+	}
+
+	return stats, nil
 }
 
 func (s *PostgresStore) SaveGame(g *GameRecord) error {

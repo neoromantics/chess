@@ -1,0 +1,47 @@
+# Production values for neoromantics-chess.
+# Usage: werf converge --env prod -f .helm/values-prod.yaml
+
+api:
+  replicaCount: 5
+  port: 8080
+  env:
+    HTTPS_ENABLED: "true"
+    CORS_ORIGINS: "https://chess.neoromantics.com"
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+worker:
+  replicaCount: 10
+  resources:
+    requests:
+      cpu: 500m
+      memory: 256Mi
+    limits:
+      cpu: 2000m
+      memory: 512Mi
+
+redis:
+  image: redis:7-alpine
+  port: 6379
+
+postgres:
+  image: postgres:16-alpine
+  user: chess
+  password: "CHANGE_ME_IN_PRODUCTION"
+  db: chess
+  port: 5432
+
+ingress:
+  host: chess.neoromantics.com
+  tls:
+    enabled: true
+    secretName: chess-tls-prod
+
+secrets:
+  jwtSecret: "CHANGE_ME_IN_PRODUCTION"
+  databaseUrl: "postgres://chess:CHANGE_ME@chess-db:5432/chess?sslmode=require"
