@@ -41,6 +41,7 @@
         :history-pairs="historyPairs"
         :fen-input="fenInput"
         :draw-offer-pending="drawOfferPending"
+        :takeback-offer-pending="takebackOfferPending"
         @update:white-player-type="updatePlayerType('white', $event)"
         @update:black-player-type="updatePlayerType('black', $event)"
         @update:white-think-time="updateThinkTime('white', $event)"
@@ -57,6 +58,9 @@
         @offer-draw="offerDraw"
         @accept-draw="acceptDraw"
         @decline-draw="declineDraw"
+        @offer-takeback="offerTakeback"
+        @accept-takeback="acceptTakeback"
+        @decline-takeback="declineTakeback"
         @open-replay="openReplay"
         @toggle-flip="flipped = !flipped"
         @save-game="saveGame"
@@ -111,6 +115,7 @@ const soundEnabled = ref(localStorage.getItem('chess-muted') !== '1');
 const autoAssess = ref(false);
 const assessments = reactive<Record<number, any>>({});
 const drawOfferPending = ref(false);
+const takebackOfferPending = ref(false);
 const hint = ref<{ from: string; to: string } | null>(null);
 const hintInfo = ref('');
 const assessInfo = ref('');
@@ -258,6 +263,9 @@ const connectWS = () => {
       } else if (data.type === 'draw_offered') {
         drawOfferPending.value = true;
         toastStore.info('Opponent offered a draw.');
+      } else if (data.type === 'takeback_offered') {
+        takebackOfferPending.value = true;
+        toastStore.info('Opponent requested a takeback.');
       }
     } catch (e) {
       console.error('Failed to parse WS message', e);
@@ -326,6 +334,36 @@ const declineDraw = async () => {
     toastStore.info('Draw declined.');
   } catch (e) {
     toastStore.error('Failed to decline draw');
+  }
+};
+
+const offerTakeback = async () => {
+  try {
+    await api.offerTakeback(props.id);
+    toastStore.success('Takeback request sent to opponent');
+  } catch (e) {
+    toastStore.error('Failed to request takeback');
+  }
+};
+
+const acceptTakeback = async () => {
+  try {
+    const res = await api.acceptTakeback(props.id);
+    updateState(res);
+    takebackOfferPending.value = false;
+    toastStore.info('Takeback accepted.');
+  } catch (e) {
+    toastStore.error('Failed to accept takeback');
+  }
+};
+
+const declineTakeback = async () => {
+  try {
+    await api.declineTakeback(props.id);
+    takebackOfferPending.value = false;
+    toastStore.info('Takeback declined.');
+  } catch (e) {
+    toastStore.error('Failed to decline takeback');
   }
 };
 

@@ -76,6 +76,7 @@ func NewServer(database db.Store, eventBus *bus.Client) *Server {
 	s.startInviteSweeper(context.Background())
 	s.startMatchmaker(context.Background())
 	s.startRatingUpdater(context.Background())
+	s.startClockManager(context.Background())
 
 	s.mux = http.NewServeMux()
 	s.registerRoutes()

@@ -69,32 +69,25 @@ Open-queue PvP that doesn't require knowing your opponent's username.
   match-found toast + auto-redirect to `/game/{id}`.
 - ✅ Profile view exposes current rating + W/L/D record.
 - ⬜ Tests: pairing under N concurrent joiners (sorted-set atomicity),
-  Glicko-2 numerical accuracy.
+  ---
 
----
+  ## Phase 4 — PvP polish 🚧
 
-## Phase 4 — PvP polish ⬜
+  Final polish for competitive play.
 
-Make PvP games actually playable, not just creatable.
+  - ✅ **Server-authoritative clocks.** Each game has a Redis hash
+    `gameclock:{id}`. Server deducts elapsed from the moving side,
+    broadcasts fresh clock on `game.evt.{id}`.
+  - ✅ **Flag-fall detection.** Leader-elected `clock-manager` scans
+    `active_games` set.
+  - ✅ **Resign:** `POST /api/games/{id}/resign`
+  - ✅ **Draw offers:** `POST /api/games/{id}/offer-draw`, `/accept-draw`, `/decline-draw`.
+  - ✅ **Takeback requests** (casual games only): same mechanism as draw.
+  - ⬜ **Disconnect grace period.** If a player's WS drops mid-game,
+    pause their clock for up to 60s while they reconnect.
+  - ✅ Frontend: clock display, resign button, draw/takeback offer UI.
 
-- ⬜ **Server-authoritative clocks.** Each game has a Redis hash
-  `gameclock:{id}` with `white_ms`, `black_ms`, `turn_started_at`. On
-  each move: server deducts elapsed from the moving side, broadcasts
-  fresh clock on `game.evt.{id}`. Frontend extrapolates between ticks
-  via local `setInterval` so the display is smooth, but the server's
-  number is canon.
-- ⬜ **Flag-fall detection.** When `white_ms` or `black_ms` reaches 0
-  on the server side, terminate the game with `result = '0-1'` /
-  `'1-0'` accordingly and broadcast.
-- ⬜ **Resign:** `POST /api/games/{id}/resign` — sets result by status.
-- ⬜ **Draw offers:** `POST /api/games/{id}/offer-draw`,
-  `/accept-draw`, `/decline-draw`. Stored ephemerally in Redis
-  (`draw-offer:{id}` with TTL = full clock).
-- ⬜ **Takeback requests** (casual games only): same mechanism as draw.
-- ⬜ **Disconnect grace period.** If a player's WS drops mid-game,
-  pause their clock for up to 60s while they reconnect. After 60s
-  without reconnect, resume the clock and they lose on time normally.
-- ⬜ Frontend: clock display, resign button, draw/takeback offer UI.
+  ---
 - ⬜ Tests: clock arithmetic round-tripped under network jitter,
   simultaneous resign/move race, draw offer in flight when opponent
   resigns.

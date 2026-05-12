@@ -60,12 +60,20 @@
       <div class="btn-row" v-if="state?.status === 'ongoing'">
         <button @click="$emit('resign')" class="btn-danger">Resign</button>
         <button @click="$emit('offer-draw')" class="btn-view">Offer Draw</button>
+        <button @click="$emit('offer-takeback')" class="btn-view" v-if="!state?.rated">Takeback</button>
       </div>
       <div class="draw-offer-prompt" v-if="drawOfferPending">
         <p>Opponent offered a draw</p>
         <div class="btn-row">
           <button @click="$emit('accept-draw')" class="btn-action">Accept</button>
           <button @click="$emit('decline-draw')" class="btn-danger">Decline</button>
+        </div>
+      </div>
+      <div class="draw-offer-prompt" v-if="takebackOfferPending">
+        <p>Opponent requested a takeback</p>
+        <div class="btn-row">
+          <button @click="$emit('accept-takeback')" class="btn-action">Accept</button>
+          <button @click="$emit('decline-takeback')" class="btn-danger">Decline</button>
         </div>
       </div>
       <div class="btn-row">
@@ -146,6 +154,7 @@ const props = defineProps<{
   historyPairs: any[];
   fenInput: string;
   drawOfferPending: boolean;
+  takebackOfferPending: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -171,6 +180,9 @@ const emit = defineEmits<{
   (e: 'offer-draw'): void;
   (e: 'accept-draw'): void;
   (e: 'decline-draw'): void;
+  (e: 'offer-takeback'): void;
+  (e: 'accept-takeback'): void;
+  (e: 'decline-takeback'): void;
 }>();
 
 const thinkOptions = [

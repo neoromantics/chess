@@ -120,6 +120,10 @@ export const api = {
   acceptDraw: (gameId: string) => request<StateJSON>(`/api/games/${gameId}/accept-draw`, { method: 'POST' }),
   declineDraw: (gameId: string) => request<void>(`/api/games/${gameId}/decline-draw`, { method: 'POST' }),
 
+  offerTakeback: (gameId: string) => request<void>(`/api/games/${gameId}/offer-takeback`, { method: 'POST' }),
+  acceptTakeback: (gameId: string) => request<StateJSON>(`/api/games/${gameId}/accept-takeback`, { method: 'POST' }),
+  declineTakeback: (gameId: string) => request<void>(`/api/games/${gameId}/decline-takeback`, { method: 'POST' }),
+
   loadGame: (gameId: string, gameData: any) => request<StateJSON>(`/api/load?game_id=${gameId}`, {
     method: 'POST',
     body: typeof gameData === 'string' ? gameData : JSON.stringify(gameData)

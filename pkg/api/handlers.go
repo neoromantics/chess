@@ -111,6 +111,9 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/games/{id}/offer-draw", requireAuth(s.handleOfferDraw))
 	s.mux.HandleFunc("POST /api/games/{id}/accept-draw", requireAuth(s.handleAcceptDraw))
 	s.mux.HandleFunc("POST /api/games/{id}/decline-draw", requireAuth(s.handleDeclineDraw))
+	s.mux.HandleFunc("POST /api/games/{id}/offer-takeback", requireAuth(s.handleOfferTakeback))
+	s.mux.HandleFunc("POST /api/games/{id}/accept-takeback", requireAuth(s.handleAcceptTakeback))
+	s.mux.HandleFunc("POST /api/games/{id}/decline-takeback", requireAuth(s.handleDeclineTakeback))
 	s.mux.HandleFunc("POST /api/hint", requireAuth(s.handleHint))
 	s.mux.HandleFunc("POST /api/assess", requireAuth(s.handleAssess))
 	s.mux.HandleFunc("POST /api/set_players", requireAuth(s.handleSetPlayers))
@@ -1201,6 +1204,84 @@ func (s *Server) handleDeclineDraw(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.bus.DelDrawOffer(r.Context(), entry.id)
+	w.WriteHeader(204)
+}
+
+func (s *Server) handleOfferTakeback(w http.ResponseWriter, r *http.Request) {
+	entry, err := s.getGame(r)
+	if err != nil {
+		http.Error(w, err.Error(), 404)
+		return
+	}
+
+	user, _ := auth.GetUser(r.Context())
+	entry.mu.Lock()
+	if entry.game.Status() != game.StatusOngoing {
+		entry.mu.Unlock()
+		http.Error(w, "game already finished", 400)
+		return
+	}
+
+	side := core.White
+	if entry.BlackUserID != nil && *entry.BlackUserID == user.UserID { side = core.Black }
+
+	s.bus.SetTakebackOffer(r.Context(), entry.id, side)
+	entry.mu.Unlock()
+
+	// Notify opponent
+	opponentID := int64(0)
+	if side == core.White && entry.BlackUserID != nil { opponentID = *entry.BlackUserID }
+	if side == core.Black && entry.WhiteUserID != nil { opponentID = *entry.WhiteUserID }
+	if opponentID != 0 {
+		s.hub.PublishUser(r.Context(), opponentID, "takeback_offered", map[string]any{"game_id": entry.id})
+	}
+	w.WriteHeader(204)
+}
+
+func (s *Server) handleAcceptTakeback(w http.ResponseWriter, r *http.Request) {
+	entry, err := s.getGame(r)
+	if err != nil {
+		http.Error(w, err.Error(), 404)
+		return
+	}
+
+	user, _ := auth.GetUser(r.Context())
+	offer, err := s.bus.GetTakebackOffer(r.Context(), entry.id)
+	if err != nil || offer == nil {
+		http.Error(w, "no active takeback offer", 400)
+		return
+	}
+
+	side := core.White
+	if entry.BlackUserID != nil && *entry.BlackUserID == user.UserID { side = core.Black }
+	if offer.OfferedBy == side {
+		http.Error(w, "cannot accept your own offer", 400)
+		return
+	}
+
+	entry.mu.Lock()
+	entry.game.Undo()
+	s.bus.DelTakebackOffer(r.Context(), entry.id)
+	
+	// Reset turn start time so current player isn't penalized for the takeback time
+	clock := s.getClock(r.Context(), entry.id)
+	clock.TurnStartedAt = time.Now().UnixMilli()
+	s.bus.SetClock(r.Context(), entry.id, *clock)
+
+	snapshot := s.snapshotLocked(entry, clock)
+	entry.mu.Unlock()
+
+	s.syncGameToDB(entry, nil)
+	writeJSON(w, snapshot)
+}
+
+func (s *Server) handleDeclineTakeback(w http.ResponseWriter, r *http.Request) {
+	entry, err := s.getGame(r)
+	if err != nil {
+		http.Error(w, err.Error(), 404)
+		return
+	}
+	s.bus.DelTakebackOffer(r.Context(), entry.id)
 	w.WriteHeader(204)
 }
 

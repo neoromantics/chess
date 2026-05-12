@@ -219,6 +219,8 @@ type GameClock struct {
 func (c *Client) SetClock(ctx context.Context, gameID string, clock GameClock) error {
 	key := "gameclock:" + gameID
 	data, _ := json.Marshal(clock)
+	// Add to active set for background workers
+	c.rdb.SAdd(ctx, "active_games", gameID)
 	return c.rdb.Set(ctx, key, data, 24*time.Hour).Err()
 }
 
@@ -238,7 +240,13 @@ func (c *Client) GetClock(ctx context.Context, gameID string) (*GameClock, error
 
 // DelClock removes the clock from Redis.
 func (c *Client) DelClock(ctx context.Context, gameID string) error {
+	c.rdb.SRem(ctx, "active_games", gameID)
 	return c.rdb.Del(ctx, "gameclock:"+gameID).Err()
+}
+
+// GetActiveGames returns all game IDs currently in progress.
+func (c *Client) GetActiveGames(ctx context.Context) ([]string, error) {
+	return c.rdb.SMembers(ctx, "active_games").Result()
 }
 
 // SetState stores a transient value in Redis with a TTL.
@@ -296,6 +304,37 @@ func (c *Client) GetDrawOffer(ctx context.Context, gameID string) (*DrawOffer, e
 // DelDrawOffer removes a draw offer from Redis.
 func (c *Client) DelDrawOffer(ctx context.Context, gameID string) error {
 	return c.rdb.Del(ctx, "drawoffer:"+gameID).Err()
+}
+
+// TakebackOffer represents an active takeback request.
+type TakebackOffer struct {
+	OfferedBy core.Color `json:"offered_by"`
+}
+
+// SetTakebackOffer stores a takeback request in Redis.
+func (c *Client) SetTakebackOffer(ctx context.Context, gameID string, side core.Color) error {
+	key := "takebackoffer:" + gameID
+	data, _ := json.Marshal(TakebackOffer{OfferedBy: side})
+	return c.rdb.Set(ctx, key, data, 24*time.Hour).Err()
+}
+
+// GetTakebackOffer retrieves a takeback request from Redis.
+func (c *Client) GetTakebackOffer(ctx context.Context, gameID string) (*TakebackOffer, error) {
+	key := "takebackoffer:" + gameID
+	val, err := c.rdb.Get(ctx, key).Result()
+	if err != nil {
+		return nil, err
+	}
+	var offer TakebackOffer
+	if err := json.Unmarshal([]byte(val), &offer); err != nil {
+		return nil, err
+	}
+	return &offer, nil
+}
+
+// DelTakebackOffer removes a takeback request from Redis.
+func (c *Client) DelTakebackOffer(ctx context.Context, gameID string) error {
+	return c.rdb.Del(ctx, "takebackoffer:"+gameID).Err()
 }
 
 // Enqueue pushes a JSON-encoded payload onto a Redis List (RPUSH).

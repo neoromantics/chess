@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/neoromantics/chess/pkg/bus"
+	"github.com/neoromantics/chess/pkg/core"
 	"github.com/neoromantics/chess/pkg/leader"
 )
 
@@ -37,6 +39,64 @@ func (s *Server) startInviteSweeper(ctx context.Context) {
 			}
 		}
 	})
+}
+
+// startClockManager runs the periodic flag-fall detection on exactly
+// one api pod. It scans the 'active_games' Redis set and checks if
+// either player's authoritative clock has hit zero.
+func (s *Server) startClockManager(ctx context.Context) {
+	election := leader.NewElection(s.bus.Rdb(), "clock-manager",
+		leader.WithLeaseTTL(10*time.Second),
+		leader.WithRetry(2*time.Second),
+	)
+
+	go election.Run(ctx, func(leaderCtx context.Context) {
+		slog.Info("clock manager assumed leadership")
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-leaderCtx.Done():
+				return
+			case <-ticker.C:
+				s.sweepClocks(leaderCtx)
+			}
+		}
+	})
+}
+
+func (s *Server) sweepClocks(ctx context.Context) {
+	gameIDs, err := s.bus.GetActiveGames(ctx)
+	if err != nil {
+		return
+	}
+
+	now := time.Now().UnixMilli()
+	for _, id := range gameIDs {
+		clock, err := s.bus.GetClock(ctx, id)
+		if err != nil {
+			continue
+		}
+
+		if clock.WhiteMS <= 0 || clock.BlackMS <= 0 || (now-clock.TurnStartedAt) > 600000 {
+			// Fast check passed, do authoritative check under lock
+			s.executeWithGameLock(ctx, id, func(entry *gameEntry) {
+				movingSide := entry.game.Board.SideToMove
+				c := s.getClock(ctx, id)
+				e := time.Now().UnixMilli() - c.TurnStartedAt
+				if e < 0 { e = 0 }
+
+				if movingSide == core.White { c.WhiteMS -= e } else { c.BlackMS -= e }
+				
+				if c.WhiteMS <= 0 || c.BlackMS <= 0 {
+					if c.WhiteMS < 0 { c.WhiteMS = 0 }
+					if c.BlackMS < 0 { c.BlackMS = 0 }
+					s.bus.SetClock(ctx, id, *c)
+					s.syncGameToDB(entry, nil)
+				}
+			})
+		}
+	}
 }
 
 // sweepInvites flips pending → expired for invites past their TTL in a
