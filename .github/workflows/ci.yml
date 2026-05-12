@@ -175,6 +175,9 @@ jobs:
           username: ${{ secrets.DEPLOY_SSH_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script: |
+            if [ ! -d "~/chess" ]; then
+              git clone https://github.com/neoromantics/chess.git ~/chess
+            fi
             cd ~/chess
             git fetch origin main
             git reset --hard origin/main
