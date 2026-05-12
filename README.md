@@ -1,5 +1,8 @@
 # neoromantics Chess Platform
 
+**Live Deployment:** [https://vcm-50800.vm.duke.edu](https://vcm-50800.vm.duke.edu)
+(Running on a Kubernetes/k3s cluster with Traefik and Let's Encrypt TLS)
+
 A professional, distributed chess platform architected for commercial scale. Built with Go, Vue 3 (TypeScript), and Redis.
 
 ## Distributed Architecture
@@ -52,9 +55,14 @@ Visit http://localhost:8080.
 ```
 
 ## Development
-For rapid host-native development (concurrent Go/Vite):
+For rapid host-native development:
 ```bash
-just dev
+# Local Docker Compose Stack
+just up
+
+# Or run components locally
+go run ./cmd/chess -server
+go run ./cmd/engine-worker
 ```
 
 ## Repository

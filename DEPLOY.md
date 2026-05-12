@@ -8,35 +8,45 @@ This platform is designed for professional Kubernetes deployment using **Werf** 
 - **Helm**: Template engine for K8s manifests.
 - **Redis & Postgres**: Provided in the Helm chart, but can be swapped for managed services.
 
-## 🚀 Deployment Workflow
+## 🚀 Deployment Workflow (k3s + Let's Encrypt)
+
+Our primary production environment uses **k3s**, **Traefik** for ingress, and **cert-manager** for automated Let's Encrypt HTTPS certificates.
 
 ### 1. Configure Secret Data
-Update `.helm/values.yaml` or create a custom values file for your environment (e.g., `values-prod.yaml`). Ensure `jwtSecret` and `databaseUrl` are secure.
-
-### 2. Build & Deploy with Werf
-Werf handles the entire lifecycle: building images, tagging them, and deploying the Helm chart.
-
+Generate cryptographically secure secrets and store them directly in the cluster:
 ```bash
-# Deploy to the 'dev' namespace
-just converge env=dev
+kubectl create namespace chess
 
-# Deploy to 'prod' with custom settings
-just converge env=prod
+JWT_SECRET=$(openssl rand -hex 32)
+PG_PASSWORD=$(openssl rand -base64 24 | tr -d '=/+' | head -c 32)
+
+kubectl -n chess create secret generic chess-secrets \
+  --from-literal=jwt-secret="$JWT_SECRET" \
+  --from-literal=postgres-password="$PG_PASSWORD" \
+  --from-literal=database-url="postgres://chess:${PG_PASSWORD}@chess-db:5432/chess?sslmode=disable"
 ```
 
-### 3. Scaling Workers
-The Engine Worker pool can be scaled independently via Helm values or the command line.
-
+### 2. Build & Push Images
+We use a local Docker registry running on the k3s host to manage images:
 ```bash
-# Scale to 10 workers in production
-werf converge --env prod --set "worker.replicaCount=10"
+docker build --network=host -t localhost:5000/chess-api:latest --target api-runtime .
+docker build --network=host -t localhost:5000/chess-worker:latest --target worker-runtime .
+docker push localhost:5000/chess-api:latest
+docker push localhost:5000/chess-worker:latest
 ```
 
-## 🛠 CI/CD Integration
-Werf is designed for GitOps. In a professional pipeline (GitHub Actions, GitLab CI):
-1. Werf builds the images based on the Git commit SHA.
-2. It caches stages in your container registry.
-3. It performs a zero-downtime rolling update on your K8s cluster.
+### 3. Deploy Manifests
+Deploy the core infrastructure from the tracked manifests:
+```bash
+kubectl apply -n chess -f deploy/k8s.yaml
+```
+This provisions Postgres, Redis, API replicas, Worker replicas, and an Ingress with TLS.
+
+### 4. Scaling Workers
+The Engine Worker pool can be scaled independently to handle increased load:
+```bash
+kubectl scale deployment chess-worker -n chess --replicas=10
+```
 
 ## 📦 Local Binary (Single File)
 For quick internal testing or low-traffic instances, you can build a single Go binary that includes the embedded frontend:

@@ -1,0 +1,236 @@
+---
+# === POSTGRES ===
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: chess-db-pvc
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chess-db
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: chess-db
+  template:
+    metadata:
+      labels:
+        app: chess-db
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:16-alpine
+        ports:
+        - containerPort: 5432
+        env:
+        - name: POSTGRES_USER
+          value: chess
+        - name: POSTGRES_DB
+          value: chess
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: chess-secrets
+              key: postgres-password
+        volumeMounts:
+        - name: pgdata
+          mountPath: /var/lib/postgresql/data
+        readinessProbe:
+          exec:
+            command: ["pg_isready", "-U", "chess"]
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: pgdata
+        persistentVolumeClaim:
+          claimName: chess-db-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chess-db
+spec:
+  selector:
+    app: chess-db
+  ports:
+  - port: 5432
+    targetPort: 5432
+---
+# === REDIS ===
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chess-redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: chess-redis
+  template:
+    metadata:
+      labels:
+        app: chess-redis
+    spec:
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        ports:
+        - containerPort: 6379
+        readinessProbe:
+          exec:
+            command: ["redis-cli", "ping"]
+          initialDelaySeconds: 3
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chess-redis
+spec:
+  selector:
+    app: chess-redis
+  ports:
+  - port: 6379
+    targetPort: 6379
+---
+# === API SERVER ===
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chess-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: chess-api
+  template:
+    metadata:
+      labels:
+        app: chess-api
+    spec:
+      containers:
+      - name: api
+        image: localhost:5000/chess-api:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: PORT
+          value: "8080"
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: chess-secrets
+              key: database-url
+        - name: REDIS_URL
+          value: chess-redis:6379
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: chess-secrets
+              key: jwt-secret
+        - name: HTTPS_ENABLED
+          value: "true"
+        - name: CORS_ORIGINS
+          value: "https://vcm-50800.vm.duke.edu"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 30
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chess-api
+spec:
+  selector:
+    app: chess-api
+  ports:
+  - port: 80
+    targetPort: 8080
+---
+# === ENGINE WORKER ===
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chess-worker
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: chess-worker
+  template:
+    metadata:
+      labels:
+        app: chess-worker
+    spec:
+      containers:
+      - name: worker
+        image: localhost:5000/chess-worker:latest
+        env:
+        - name: REDIS_URL
+          value: chess-redis:6379
+        resources:
+          requests:
+            cpu: 200m
+            memory: 128Mi
+          limits:
+            cpu: 1000m
+            memory: 256Mi
+---
+# === INGRESS WITH TLS ===
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: chess-ingress
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+    traefik.ingress.kubernetes.io/router.middlewares: chess-redirect-https@kubernetescrd
+spec:
+  tls:
+  - hosts:
+    - vcm-50800.vm.duke.edu
+    secretName: chess-tls
+  rules:
+  - host: vcm-50800.vm.duke.edu
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: chess-api
+            port:
+              number: 80
+---
+# === HTTPS REDIRECT MIDDLEWARE ===
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: redirect-https
+spec:
+  redirectScheme:
+    scheme: https
+    permanent: true
