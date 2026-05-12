@@ -5,8 +5,8 @@
 
 A professional, distributed chess platform architected for commercial scale. Built with Go, Vue 3 (TypeScript), and Redis.
 
-## Distributed Architecture
-Six independent microservices, zero-lock consistency via Event Sourcing:
+## 🏗 Distributed Architecture
+Six independent microservices coordinate via **Event Sourcing** and **Redis Streams**, ensuring zero-lock consistency and horizontal scalability.
 
 - **gateway** (Go) - Stateless HTTP/WS entrance. Handles JWT validation, command translation, and fan-out.
 - **user-service** (Go) - Owns identities, profiles, and authentication.
@@ -15,44 +15,41 @@ Six independent microservices, zero-lock consistency via Event Sourcing:
 - **rating-updater** (Go) - Asynchronously updates Glicko-2 ratings after game completion.
 - **engine-worker** (Go) - Pure CPU calculation nodes consuming search tasks from Redis Streams.
 
-## Key Invariants
-- **Strict Event Sourcing.** All state mutations are processed sequentially via Redis Streams; no distributed locks.
-- **Authoritative Backend.** The `game-service` is the sole source of truth for move validation and clocks.
-- **Asynchronous Analysis.** Engine results are published to the event bus and automatically applied or broadcast.
-- **Horizontally Scalable.** Every pod is stateless and interacts via the Redis operational backbone.
+## 🚀 Key Invariants
+- **Sequential Command Processing**: All state mutations (moves, resigns) are processed via Redis Streams; no distributed locks required.
+- **Authoritative Backend**: The `game-service` is the sole source of truth for move validation and clocks.
+- **Durable Tasking**: Calculation nodes use acknowledged streams with consumer groups for crash recovery.
+- **Optimistic Concurrency**: Database consistency is managed via Postgres MVCC.
 
-## Operations
+## 🛠 Operations
 | Command | Description |
 |---------|-------------|
-| just up | Start the entire microservices stack locally (Docker Compose) |
-| just logs-gateway | Watch the Gateway/Entrance logs |
-| just logs-game | Watch the authoritative Game Service logs |
-| just build | Build all production binaries and frontend |
-| just deploy-prod | Deploy the fleet to k3s using Kustomize |
+| `just up` | Start the entire microservices stack locally (Docker Compose) |
+| `just build` | Build all production binaries and the Vue frontend |
+| `just deploy-prod` | Deploy the 6-pod fleet to k3s using Kustomize |
+| `just logs-gateway` | Watch the primary entrance logs |
+| `just logs-game` | Watch the authoritative game logic logs |
 
-## Project Structure
+### Production Deployment
+The platform uses **GitHub Actions** to deploy to a remote k3s cluster. Manifests in `infra/kustomize` are rendered locally and piped to the cluster via SSH. Secrets are managed via a local `.env` and injected into the cluster manifests during deployment.
+
+## 🗺 Roadmap
+- ✅ **6-Pod Microservices Fleet**: Successfully transitioned from legacy monolith.
+- ✅ **Event-Sourced Core**: Eliminated locks in favor of sequential streams.
+- ⬜ **OpenTelemetry**: Trace commands across the distributed fleet.
+- ⬜ **Spectator Mode**: Read-only WebSocket subscriptions for public games.
+- ⬜ **KEDA Autoscaling**: Scale workers based on real-time stream depth.
+- ⬜ **Anti-Cheat**: Asynchronous engine correlation scans over move history.
+
+## 📂 Repository Structure
 ```
 .
-├── cmd/
-│   ├── gateway/            # Entry Point & WebSocket Hub
-│   ├── user/               # User Management Microservice
-│   ├── game/               # Authoritative Game Logic Microservice
-│   ├── matchmaker/         # Queueing & Pairing Microservice
-│   ├── rating-updater/     # Asynchronous Glicko-2 Updater
-│   └── engine-worker/      # Distributed Calculation Node
-├── pkg/
-│   ├── eventbus/           # Redis Streams Command/Event protocol
-│   ├── core/               # Pure chess engine (search & eval)
-│   ├── db/                 # SQLC + Postgres (Authoritative Persistence)
-│   ├── game/               # Domain logic (Move rules, Status)
-│   ├── auth/               # JWT/bcrypt authentication utilities
-│   └── rating/             # Glicko-2 implementation
-├── frontend/               # Vue 3 + TypeScript SPA
-└── deploy/kustomize/       # Production k3s manifests
+├── cmd/                # Microservice Entry Points
+├── pkg/                # Shared Domain Logic & Packages
+├── infra/              # K8s Manifests, Docker Compose, SQLC Config
+├── frontend/           # Vue 3 + TypeScript SPA
+└── pkg/db/schema.sql   # Authoritative Postgres Schema
 ```
 
-## Repository
-[github.com/neoromantics/chess](https://github.com/neoromantics/chess)
-
-## License
+## 📜 License
 MIT
