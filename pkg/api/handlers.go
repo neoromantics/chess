@@ -190,7 +190,6 @@ type gameEntry struct {
 	stopSearch atomic.Bool
 	eventFired atomic.Bool
 	id         string
-	userID     int64
 	createdAt  time.Time
 
 	whiteThinkTime time.Duration
@@ -202,6 +201,16 @@ type gameEntry struct {
 	TimeControl string
 	Rated       bool
 	Result      string
+}
+
+func userOwnsGame(userID int64, rec *db.GameRecord) bool {
+	if rec.WhiteUserID != nil && *rec.WhiteUserID == userID {
+		return true
+	}
+	if rec.BlackUserID != nil && *rec.BlackUserID == userID {
+		return true
+	}
+	return false
 }
 
 func (s *Server) getGame(r *http.Request) (*gameEntry, error) {
@@ -225,10 +234,7 @@ func (s *Server) getGame(r *http.Request) (*gameEntry, error) {
 	}
 
 	user, ok := auth.GetUser(r.Context())
-	// Games are strictly user-owned. The handler-side requireAuth wrapper
-	// keeps anonymous callers out of game routes; this is a defence in
-	// depth so direct calls into getGame can't accidentally leak state.
-	if !ok || record.UserID != user.UserID {
+	if !ok || !userOwnsGame(user.UserID, record) {
 		return nil, fmt.Errorf("game not found")
 	}
 
@@ -242,7 +248,6 @@ func (s *Server) getGame(r *http.Request) (*gameEntry, error) {
 	entry := &gameEntry{
 		game:           gameInst,
 		id:             id,
-		userID:         record.UserID,
 		createdAt:      record.CreatedAt,
 		whiteThinkTime: time.Duration(record.WhiteThinkTime) * time.Millisecond,
 		blackThinkTime: time.Duration(record.BlackThinkTime) * time.Millisecond,
@@ -305,7 +310,6 @@ func (s *Server) executeWithGameLock(ctx context.Context, gameID string, fn func
 	entry := &gameEntry{
 		game:           gameInst,
 		id:             gameID,
-		userID:         record.UserID,
 		createdAt:      record.CreatedAt,
 		whiteThinkTime: time.Duration(record.WhiteThinkTime) * time.Millisecond,
 		blackThinkTime: time.Duration(record.BlackThinkTime) * time.Millisecond,
@@ -375,7 +379,6 @@ func (s *Server) syncGameToDB(entry *gameEntry, newAssess any) {
 
 	gameRec := &db.GameRecord{
 		ID:             entry.id,
-		UserID:         entry.userID,
 		WhiteUserID:    entry.WhiteUserID,
 		BlackUserID:    entry.BlackUserID,
 		FEN:            gm.Board.FEN(),
@@ -672,7 +675,6 @@ func (s *Server) handleCreateGame(w http.ResponseWriter, r *http.Request) {
 	entry := &gameEntry{
 		game:           gm,
 		id:             id,
-		userID:         user.UserID,
 		createdAt:      time.Now(),
 		whiteThinkTime: whiteThink,
 		blackThinkTime: blackThink,

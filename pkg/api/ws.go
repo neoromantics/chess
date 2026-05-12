@@ -13,7 +13,6 @@ import (
 	"github.com/neoromantics/chess/pkg/auth"
 	"github.com/neoromantics/chess/pkg/bus"
 	"github.com/neoromantics/chess/pkg/core"
-	"github.com/neoromantics/chess/pkg/db"
 )
 
 const (
@@ -36,14 +35,12 @@ var upgrader = websocket.Upgrader{
 }
 
 // channelKind tags a Client subscription so the hub knows which keyspace
-// (game vs user) the routing key lives in. Game and user IDs share no
-// keyspace today, but tagging makes the hub robust to that ever changing
-// — and makes the registry's debug output legible.
-type channelKind int
+// (game vs user) the routing key lives in.
+type channelKind string
 
 const (
-	kindGame channelKind = iota
-	kindUser
+	kindGame channelKind = "game"
+	kindUser channelKind = "user"
 )
 
 // Client represents a single WebSocket connection. It is tied to exactly
@@ -280,21 +277,6 @@ func (s *Server) handleWSUser(w http.ResponseWriter, r *http.Request) {
 	s.hub.register <- c
 	go c.writePump()
 	go c.readPump()
-}
-
-// userOwnsGame is the unified ownership predicate. Will simplify when
-// migration 000004 drops the legacy user_id column.
-func userOwnsGame(userID int64, rec *db.GameRecord) bool {
-	if rec.UserID == userID {
-		return true
-	}
-	if rec.WhiteUserID != nil && *rec.WhiteUserID == userID {
-		return true
-	}
-	if rec.BlackUserID != nil && *rec.BlackUserID == userID {
-		return true
-	}
-	return false
 }
 
 func (c *Client) readPump() {
