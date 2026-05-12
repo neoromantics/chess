@@ -29,10 +29,10 @@ type UserStats struct {
 }
 
 // GameRecord represents a persistent game state in the database.
+// Every game has a non-zero UserID — anonymous play is no longer supported.
 type GameRecord struct {
 	ID             string    `json:"id"`
 	UserID         int64     `json:"user_id"`
-	SessionID      string    `json:"session_id"`
 	FEN            string    `json:"fen"`
 	History        string    `json:"history"`     // JSON string
 	HistorySAN     string    `json:"history_san"` // JSON string
@@ -58,11 +58,13 @@ type Store interface {
 	GetUserByUsername(username string) (*User, error)
 	GetUserByID(id int64) (*User, error)
 	UpdateUserProfile(id int64, displayName, bio, avatarURL, country string) error
+	UpdateLastLogin(id int64) error
+	UpdatePassword(id int64, passwordHash string) error
 	GetUserStats(id int64) (*UserStats, error)
 
 	// Game management
 	SaveGame(g *GameRecord) error
-	ListGames(userID int64, sessionID string) ([]GameRecord, error)
+	ListGames(userID int64) ([]GameRecord, error)
 	GetGame(id string) (*GameRecord, error)
 	// DeleteGame returns the number of rows removed; callers should treat 0
 	// as a missing record (or one that was already deleted).

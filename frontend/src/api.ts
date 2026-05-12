@@ -4,7 +4,9 @@ const API_BASE = (import.meta.env.VITE_API_URL as string) || '';
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const url = `${API_BASE}${path}`;
-  const response = await fetch(url, options);
+  // credentials: 'include' so cookies (session, JWT) are sent even in
+  // dev where Vite runs on a different port than the API.
+  const response = await fetch(url, { credentials: 'include', ...options });
   if (!response.ok) {
     const text = await response.text();
     throw new Error(text || `Request failed with status ${response.status}`);
@@ -27,7 +29,18 @@ export const api = {
   getMe: () => request<any>('/api/user/me'),
 
   // Game Management
-  createGame: () => request<{ game_id: string }>('/api/games/new', { method: 'POST' }),
+  createGame: (opts?: { white_think_time?: number; black_think_time?: number; engine_white?: boolean; engine_black?: boolean; }) =>
+    request<{ game_id: string }>('/api/games/new', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(opts ?? {}),
+    }),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    request<void>('/api/user/password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+    }),
   listGames: () => request<any[]>('/api/games'),
   deleteGame: (gameId: string) => request<void>(`/api/games/delete?game_id=${gameId}`, { method: 'DELETE' }),
 

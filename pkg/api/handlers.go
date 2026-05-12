@@ -39,30 +39,42 @@ func (s *Server) setThinking(ctx context.Context, gameID string, val bool) {
 
 func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /health", s.handleHealth)
+
+	// Auth — no requireAuth wrapper (these are how you become authed).
 	s.mux.HandleFunc("POST /api/auth/signup", s.handleSignup)
 	s.mux.HandleFunc("POST /api/auth/login", s.handleLogin)
 	s.mux.HandleFunc("POST /api/auth/logout", s.handleLogout)
-	s.mux.HandleFunc("GET /api/user/me", s.handleMe)
-	s.mux.HandleFunc("GET /api/user/profile", s.handleGetProfile)
-	s.mux.HandleFunc("PUT /api/user/profile", s.handleUpdateProfile)
-	s.mux.HandleFunc("GET /api/user/stats", s.handleUserStats)
-	s.mux.HandleFunc("POST /api/games/new", s.handleCreateGame)
-	s.mux.HandleFunc("GET /api/games", s.handleListGames)
-	s.mux.HandleFunc("DELETE /api/games/delete", s.handleDeleteGame)
-	s.mux.HandleFunc("GET /api/state", s.handleState)
-	s.mux.HandleFunc("POST /api/move", s.handleMove)
-	s.mux.HandleFunc("POST /api/new", s.handleNew)
-	s.mux.HandleFunc("POST /api/hint", s.handleHint)
-	s.mux.HandleFunc("POST /api/assess", s.handleAssess)
-	s.mux.HandleFunc("POST /api/set_players", s.handleSetPlayers)
-	s.mux.HandleFunc("POST /api/touch", s.handleTouch)
-	s.mux.HandleFunc("POST /api/touch_move", s.handleTouchMove)
-	s.mux.HandleFunc("POST /api/undo", s.handleUndo)
+
+	// User self-service — requires login.
+	s.mux.HandleFunc("GET /api/user/me", requireAuth(s.handleMe))
+	s.mux.HandleFunc("GET /api/user/profile", requireAuth(s.handleGetProfile))
+	s.mux.HandleFunc("PUT /api/user/profile", requireAuth(s.handleUpdateProfile))
+	s.mux.HandleFunc("POST /api/user/password", requireAuth(s.handleChangePassword))
+	s.mux.HandleFunc("GET /api/user/stats", requireAuth(s.handleUserStats))
+
+	// Game management — requires login. Per-game endpoints below also
+	// flow through getGame(), which double-checks ownership.
+	s.mux.HandleFunc("POST /api/games/new", requireAuth(s.handleCreateGame))
+	s.mux.HandleFunc("GET /api/games", requireAuth(s.handleListGames))
+	s.mux.HandleFunc("DELETE /api/games/delete", requireAuth(s.handleDeleteGame))
+	s.mux.HandleFunc("GET /api/state", requireAuth(s.handleState))
+	s.mux.HandleFunc("POST /api/move", requireAuth(s.handleMove))
+	s.mux.HandleFunc("POST /api/new", requireAuth(s.handleNew))
+	s.mux.HandleFunc("POST /api/hint", requireAuth(s.handleHint))
+	s.mux.HandleFunc("POST /api/assess", requireAuth(s.handleAssess))
+	s.mux.HandleFunc("POST /api/set_players", requireAuth(s.handleSetPlayers))
+	s.mux.HandleFunc("POST /api/touch", requireAuth(s.handleTouch))
+	s.mux.HandleFunc("POST /api/touch_move", requireAuth(s.handleTouchMove))
+	s.mux.HandleFunc("POST /api/undo", requireAuth(s.handleUndo))
+	s.mux.HandleFunc("GET /api/save", requireAuth(s.handleSave))
+	s.mux.HandleFunc("POST /api/load", requireAuth(s.handleLoad))
+	s.mux.HandleFunc("GET /api/replay.html", requireAuth(s.handleReplay))
+
+	// WS opens are auth-gated too; otherwise an anonymous browser could
+	// subscribe to a game's event stream.
+	s.mux.HandleFunc("GET /ws", requireAuth(s.handleWS))
+
 	s.mux.HandleFunc("POST /api/ping", s.handlePing)
-	s.mux.HandleFunc("GET /api/save", s.handleSave)
-	s.mux.HandleFunc("POST /api/load", s.handleLoad)
-	s.mux.HandleFunc("GET /api/replay.html", s.handleReplay)
-	s.mux.HandleFunc("GET /ws", s.handleWS)
 	s.mux.Handle("GET /assets/", http.FileServer(assetsFS))
 	// Catch-all route for SPA navigation (Dashboard, GameView, etc.)
 	s.mux.HandleFunc("GET /{$}", s.handleIndex)
@@ -77,7 +89,6 @@ type gameEntry struct {
 	eventFired atomic.Bool
 	id         string
 	userID     int64
-	sessionID  string
 	createdAt  time.Time
 
 	whiteThinkTime time.Duration
@@ -104,15 +115,12 @@ func (s *Server) getGame(r *http.Request) (*gameEntry, error) {
 		return nil, fmt.Errorf("game not found")
 	}
 
-	user, _ := auth.GetUser(r.Context())
-	sessionID := auth.GetSessionID(r.Context())
-
-	authorized := false
-	if (user != nil && record.UserID == user.UserID) || (record.UserID == 0 && record.SessionID == sessionID) {
-		authorized = true
-	}
-	if !authorized {
-		return nil, fmt.Errorf("unauthorized")
+	user, ok := auth.GetUser(r.Context())
+	// Games are strictly user-owned. The handler-side requireAuth wrapper
+	// keeps anonymous callers out of game routes; this is a defence in
+	// depth so direct calls into getGame can't accidentally leak state.
+	if !ok || record.UserID != user.UserID {
+		return nil, fmt.Errorf("game not found")
 	}
 
 	gameInst := game.NewGame()
@@ -126,7 +134,6 @@ func (s *Server) getGame(r *http.Request) (*gameEntry, error) {
 		game:           gameInst,
 		id:             id,
 		userID:         record.UserID,
-		sessionID:      record.SessionID,
 		createdAt:      record.CreatedAt,
 		whiteThinkTime: time.Duration(record.WhiteThinkTime) * time.Millisecond,
 		blackThinkTime: time.Duration(record.BlackThinkTime) * time.Millisecond,
@@ -184,7 +191,6 @@ func (s *Server) executeWithGameLock(ctx context.Context, gameID string, fn func
 		game:           gameInst,
 		id:             gameID,
 		userID:         record.UserID,
-		sessionID:      record.SessionID,
 		createdAt:      record.CreatedAt,
 		whiteThinkTime: time.Duration(record.WhiteThinkTime) * time.Millisecond,
 		blackThinkTime: time.Duration(record.BlackThinkTime) * time.Millisecond,
@@ -214,7 +220,6 @@ func (s *Server) syncGameToDB(entry *gameEntry, newAssess any) {
 	gameRec := &db.GameRecord{
 		ID:             entry.id,
 		UserID:         entry.userID,
-		SessionID:      entry.sessionID,
 		FEN:            gm.Board.FEN(),
 		History:        string(hist),
 		HistorySAN:     string(histSAN),
@@ -322,6 +327,10 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid credentials", 401)
 		return
 	}
+	// Bump last_login; non-fatal if it fails.
+	if err := s.db.UpdateLastLogin(user.ID); err != nil {
+		slog.Warn("update last_login failed", "user_id", user.ID, "error", err)
+	}
 	token, _ := auth.GenerateToken(user.ID, user.Username)
 	http.SetCookie(w, s.secureCookie("token", token))
 	writeJSON(w, map[string]any{"user": user, "token": token})
@@ -395,6 +404,42 @@ func (s *Server) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, dbUser)
 }
 
+func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
+	user, _ := auth.GetUser(r.Context())
+	var req struct {
+		CurrentPassword string `json:"current_password"`
+		NewPassword     string `json:"new_password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	if len(req.NewPassword) < 6 {
+		http.Error(w, "password must be at least 6 characters", 400)
+		return
+	}
+	dbUser, err := s.db.GetUserByID(user.UserID)
+	if err != nil {
+		http.Error(w, "user not found", 404)
+		return
+	}
+	if !auth.CheckPasswordHash(req.CurrentPassword, dbUser.PasswordHash) {
+		http.Error(w, "current password is incorrect", 401)
+		return
+	}
+	hash, err := auth.HashPassword(req.NewPassword)
+	if err != nil {
+		http.Error(w, "internal error", 500)
+		return
+	}
+	if err := s.db.UpdatePassword(user.UserID, hash); err != nil {
+		http.Error(w, "failed to update password", 500)
+		return
+	}
+	slog.Info("password changed", "user_id", user.UserID)
+	w.WriteHeader(204)
+}
+
 func (s *Server) handleUserStats(w http.ResponseWriter, r *http.Request) {
 	user, ok := auth.GetUser(r.Context())
 	if !ok {
@@ -420,45 +465,59 @@ func (s *Server) handleCreateGame(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user, _ := auth.GetUser(r.Context())
-	sessionID := auth.GetSessionID(r.Context())
-	var userID int64
-	if user != nil {
-		userID = user.UserID
+
+	// Optional per-move engine think-time, in milliseconds. If the
+	// frontend supplies a positive value we honor it; otherwise we
+	// fall back to a sensible default. This makes the UI selector the
+	// source of truth instead of a hardcoded backend constant.
+	var req struct {
+		WhiteThinkTime int   `json:"white_think_time"`
+		BlackThinkTime int   `json:"black_think_time"`
+		EngineWhite    *bool `json:"engine_white,omitempty"`
+		EngineBlack    *bool `json:"engine_black,omitempty"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+
+	const defaultThink = 3 * time.Second
+	whiteThink := defaultThink
+	if req.WhiteThinkTime > 0 {
+		whiteThink = time.Duration(req.WhiteThinkTime) * time.Millisecond
+	}
+	blackThink := defaultThink
+	if req.BlackThinkTime > 0 {
+		blackThink = time.Duration(req.BlackThinkTime) * time.Millisecond
 	}
 
 	id := uuid.New().String()
-	slog.Info("creating new game", "game_id", id, "user_id", userID, "session_id", sessionID)
+	slog.Info("creating new game", "game_id", id, "user_id", user.UserID)
 	gm := game.NewGame()
-	gm.EngineBlack = true // Default setup: White human vs Black engine
+	// Default to White human vs Black engine; UI may override.
+	gm.EngineWhite = false
+	gm.EngineBlack = true
+	if req.EngineWhite != nil {
+		gm.EngineWhite = *req.EngineWhite
+	}
+	if req.EngineBlack != nil {
+		gm.EngineBlack = *req.EngineBlack
+	}
 	entry := &gameEntry{
-		game:      gm,
-		id:        id,
-		userID:    userID,
-		sessionID: sessionID,
-		createdAt: time.Now(),
-		// This is the engine's *per-move* search budget, not a game clock.
-		// 10 minutes here meant every engine reply took 10 minutes to come
-		// back — looked like "engine not responding." 3s is a reasonable
-		// starting point; the UI can raise it via /api/set_players.
-		whiteThinkTime: 3 * time.Second,
-		blackThinkTime: 3 * time.Second,
+		game:           gm,
+		id:             id,
+		userID:         user.UserID,
+		createdAt:      time.Now(),
+		whiteThinkTime: whiteThink,
+		blackThinkTime: blackThink,
 	}
 	entry.stopSearch.Store(false)
 
 	s.syncGameToDB(entry, nil)
+	go s.maybeTriggerEngine(entry)
 	writeJSON(w, map[string]string{"game_id": id})
 }
 
 func (s *Server) handleListGames(w http.ResponseWriter, r *http.Request) {
 	user, _ := auth.GetUser(r.Context())
-	sessionID := auth.GetSessionID(r.Context())
-
-	var userID int64
-	if user != nil {
-		userID = user.UserID
-	}
-
-	records, err := s.db.ListGames(userID, sessionID)
+	records, err := s.db.ListGames(user.UserID)
 	if err != nil {
 		slog.Error("list games error", "error", err)
 		http.Error(w, err.Error(), 500)

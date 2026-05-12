@@ -95,7 +95,7 @@ func (q *Queries) DeleteGame(ctx context.Context, id string) (int64, error) {
 }
 
 const getGame = `-- name: GetGame :one
-SELECT id, user_id, session_id, fen, history, history_san,
+SELECT id, user_id, fen, history, history_san,
        engine_white, engine_black, white_think_time, black_think_time,
        status, assessments, created_at, updated_at
 FROM games
@@ -108,7 +108,6 @@ func (q *Queries) GetGame(ctx context.Context, id string) (Game, error) {
 	err := row.Scan(
 		&i.ID,
 		&i.UserID,
-		&i.SessionID,
 		&i.Fen,
 		&i.History,
 		&i.HistorySan,
@@ -177,22 +176,16 @@ func (q *Queries) GetUserByUsername(ctx context.Context, username string) (User,
 }
 
 const listGames = `-- name: ListGames :many
-SELECT id, user_id, session_id, fen, history, history_san,
+SELECT id, user_id, fen, history, history_san,
        engine_white, engine_black, white_think_time, black_think_time,
        status, assessments, created_at, updated_at
 FROM games
-WHERE (user_id > 0 AND user_id = $1)
-   OR (user_id = 0 AND session_id = $2)
+WHERE user_id = $1
 ORDER BY updated_at DESC
 `
 
-type ListGamesParams struct {
-	UserID    int64  `json:"user_id"`
-	SessionID string `json:"session_id"`
-}
-
-func (q *Queries) ListGames(ctx context.Context, arg ListGamesParams) ([]Game, error) {
-	rows, err := q.db.QueryContext(ctx, listGames, arg.UserID, arg.SessionID)
+func (q *Queries) ListGames(ctx context.Context, userID int64) ([]Game, error) {
+	rows, err := q.db.QueryContext(ctx, listGames, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -203,7 +196,6 @@ func (q *Queries) ListGames(ctx context.Context, arg ListGamesParams) ([]Game, e
 		if err := rows.Scan(
 			&i.ID,
 			&i.UserID,
-			&i.SessionID,
 			&i.Fen,
 			&i.History,
 			&i.HistorySan,
@@ -227,6 +219,29 @@ func (q *Queries) ListGames(ctx context.Context, arg ListGamesParams) ([]Game, e
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateLastLogin = `-- name: UpdateLastLogin :exec
+UPDATE users SET last_login = NOW() WHERE id = $1
+`
+
+func (q *Queries) UpdateLastLogin(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, updateLastLogin, id)
+	return err
+}
+
+const updatePassword = `-- name: UpdatePassword :exec
+UPDATE users SET password_hash = $2 WHERE id = $1
+`
+
+type UpdatePasswordParams struct {
+	ID           int64  `json:"id"`
+	PasswordHash string `json:"password_hash"`
+}
+
+func (q *Queries) UpdatePassword(ctx context.Context, arg UpdatePasswordParams) error {
+	_, err := q.db.ExecContext(ctx, updatePassword, arg.ID, arg.PasswordHash)
+	return err
 }
 
 const updateUserProfile = `-- name: UpdateUserProfile :exec
@@ -259,14 +274,13 @@ func (q *Queries) UpdateUserProfile(ctx context.Context, arg UpdateUserProfilePa
 
 const upsertGame = `-- name: UpsertGame :exec
 INSERT INTO games (
-    id, user_id, session_id, fen, history, history_san,
+    id, user_id, fen, history, history_san,
     engine_white, engine_black, white_think_time, black_think_time,
     status, assessments, created_at, updated_at
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 ON CONFLICT (id) DO UPDATE SET
     user_id          = EXCLUDED.user_id,
-    session_id       = EXCLUDED.session_id,
     fen              = EXCLUDED.fen,
     history          = EXCLUDED.history,
     history_san      = EXCLUDED.history_san,
@@ -282,7 +296,6 @@ ON CONFLICT (id) DO UPDATE SET
 type UpsertGameParams struct {
 	ID             string    `json:"id"`
 	UserID         int64     `json:"user_id"`
-	SessionID      string    `json:"session_id"`
 	Fen            string    `json:"fen"`
 	History        string    `json:"history"`
 	HistorySan     string    `json:"history_san"`
@@ -300,7 +313,6 @@ func (q *Queries) UpsertGame(ctx context.Context, arg UpsertGameParams) error {
 	_, err := q.db.ExecContext(ctx, upsertGame,
 		arg.ID,
 		arg.UserID,
-		arg.SessionID,
 		arg.Fen,
 		arg.History,
 		arg.HistorySan,

@@ -13,7 +13,22 @@ import (
 	"time"
 
 	"golang.org/x/time/rate"
+
+	"github.com/neoromantics/chess/pkg/auth"
 )
+
+// requireAuth wraps a handler and returns 401 when no authenticated user
+// is in the request context. Use for endpoints that must not be reachable
+// by anonymous sessions — game creation, profile mutation, etc.
+func requireAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := auth.GetUser(r.Context()); !ok {
+			http.Error(w, "authentication required", http.StatusUnauthorized)
+			return
+		}
+		next(w, r)
+	}
+}
 
 // responseWriter wraps a standard http.ResponseWriter to capture the status code.
 type responseWriter struct {

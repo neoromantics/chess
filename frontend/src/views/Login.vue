@@ -25,11 +25,12 @@
 
 <script setup lang="ts">
 import { ref } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { api } from '../api';
 import { useAuthStore } from '../stores/auth';
 
 const router = useRouter();
+const route = useRoute();
 const authStore = useAuthStore();
 const username = ref('');
 const password = ref('');
@@ -42,7 +43,8 @@ const handleSubmit = async () => {
   try {
     const res = await api.login(username.value, password.value);
     authStore.setUser(res.user);
-    router.push('/');
+    const next = (route.query.next as string) || '/';
+    router.push(next);
   } catch (e: any) {
     error.value = e.message || 'Login failed';
   } finally {

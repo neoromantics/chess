@@ -22,7 +22,9 @@ type Querier interface {
 	GetGame(ctx context.Context, id string) (Game, error)
 	GetUserByID(ctx context.Context, id int64) (User, error)
 	GetUserByUsername(ctx context.Context, username string) (User, error)
-	ListGames(ctx context.Context, arg ListGamesParams) ([]Game, error)
+	ListGames(ctx context.Context, userID int64) ([]Game, error)
+	UpdateLastLogin(ctx context.Context, id int64) error
+	UpdatePassword(ctx context.Context, arg UpdatePasswordParams) error
 	UpdateUserProfile(ctx context.Context, arg UpdateUserProfileParams) error
 	UpsertGame(ctx context.Context, arg UpsertGameParams) error
 }

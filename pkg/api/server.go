@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/neoromantics/chess/pkg/auth"
 	"github.com/neoromantics/chess/pkg/bus"
 	"github.com/neoromantics/chess/pkg/db"
 )
@@ -75,8 +76,11 @@ func NewServer(database db.Store, eventBus *bus.Client) *Server {
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	handler := s.mux
-	// Apply middleware chain (innermost first)
+	// Middleware chain — listed outermost-to-innermost (last wraps first).
+	// auth.Middleware populates request context with the current user
+	// (from JWT cookie) so every handler can call auth.GetUser.
 	var h http.Handler = handler
+	h = auth.Middleware(h)
 	h = RecoveryMiddleware(h)
 	h = LoggerMiddleware(h)
 	h = SecurityHeadersMiddleware(h)

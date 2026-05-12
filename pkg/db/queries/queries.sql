@@ -24,6 +24,12 @@ SET display_name = $2,
     country      = $5
 WHERE id = $1;
 
+-- name: UpdateLastLogin :exec
+UPDATE users SET last_login = NOW() WHERE id = $1;
+
+-- name: UpdatePassword :exec
+UPDATE users SET password_hash = $2 WHERE id = $1;
+
 -- name: CountUserGames :one
 SELECT COUNT(*) FROM games WHERE user_id = $1;
 
@@ -37,14 +43,13 @@ WHERE user_id = $1
 
 -- name: UpsertGame :exec
 INSERT INTO games (
-    id, user_id, session_id, fen, history, history_san,
+    id, user_id, fen, history, history_san,
     engine_white, engine_black, white_think_time, black_think_time,
     status, assessments, created_at, updated_at
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 ON CONFLICT (id) DO UPDATE SET
     user_id          = EXCLUDED.user_id,
-    session_id       = EXCLUDED.session_id,
     fen              = EXCLUDED.fen,
     history          = EXCLUDED.history,
     history_san      = EXCLUDED.history_san,
@@ -57,16 +62,15 @@ ON CONFLICT (id) DO UPDATE SET
     updated_at       = EXCLUDED.updated_at;
 
 -- name: ListGames :many
-SELECT id, user_id, session_id, fen, history, history_san,
+SELECT id, user_id, fen, history, history_san,
        engine_white, engine_black, white_think_time, black_think_time,
        status, assessments, created_at, updated_at
 FROM games
-WHERE (user_id > 0 AND user_id = $1)
-   OR (user_id = 0 AND session_id = $2)
+WHERE user_id = $1
 ORDER BY updated_at DESC;
 
 -- name: GetGame :one
-SELECT id, user_id, session_id, fen, history, history_san,
+SELECT id, user_id, fen, history, history_san,
        engine_white, engine_black, white_think_time, black_think_time,
        status, assessments, created_at, updated_at
 FROM games

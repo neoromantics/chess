@@ -126,6 +126,17 @@ func (s *PostgresStore) UpdateUserProfile(id int64, displayName, bio, avatarURL,
 	})
 }
 
+func (s *PostgresStore) UpdateLastLogin(id int64) error {
+	return s.q.UpdateLastLogin(context.Background(), id)
+}
+
+func (s *PostgresStore) UpdatePassword(id int64, passwordHash string) error {
+	return s.q.UpdatePassword(context.Background(), gen.UpdatePasswordParams{
+		ID:           id,
+		PasswordHash: passwordHash,
+	})
+}
+
 func (s *PostgresStore) GetUserStats(id int64) (*UserStats, error) {
 	ctx := context.Background()
 	played, err := s.q.CountUserGames(ctx, id)
@@ -150,7 +161,6 @@ func (s *PostgresStore) SaveGame(g *GameRecord) error {
 	return s.q.UpsertGame(context.Background(), gen.UpsertGameParams{
 		ID:             g.ID,
 		UserID:         g.UserID,
-		SessionID:      g.SessionID,
 		Fen:            g.FEN,
 		History:        g.History,
 		HistorySan:     g.HistorySAN,
@@ -165,11 +175,8 @@ func (s *PostgresStore) SaveGame(g *GameRecord) error {
 	})
 }
 
-func (s *PostgresStore) ListGames(userID int64, sessionID string) ([]GameRecord, error) {
-	rows, err := s.q.ListGames(context.Background(), gen.ListGamesParams{
-		UserID:    userID,
-		SessionID: sessionID,
-	})
+func (s *PostgresStore) ListGames(userID int64) ([]GameRecord, error) {
+	rows, err := s.q.ListGames(context.Background(), userID)
 	if err != nil {
 		return nil, err
 	}
@@ -216,7 +223,6 @@ func gameFromRow(r gen.Game) GameRecord {
 	return GameRecord{
 		ID:             r.ID,
 		UserID:         r.UserID,
-		SessionID:      r.SessionID,
 		FEN:            r.Fen,
 		History:        r.History,
 		HistorySAN:     r.HistorySan,

@@ -4,9 +4,20 @@
       <section class="sessions-section">
         <div class="section-header">
           <h2>Your Games</h2>
-          <button @click="createNewGame" class="btn-primary" :disabled="loading">
-            {{ loading ? 'Starting...' : 'New Game +' }}
-          </button>
+          <div class="new-game-controls">
+            <label class="inline-label">Engine think
+              <select v-model.number="newGameThinkTime">
+                <option :value="100">0.1s (weak)</option>
+                <option :value="300">0.3s</option>
+                <option :value="1000">1s</option>
+                <option :value="3000">3s</option>
+                <option :value="10000">10s (strong)</option>
+              </select>
+            </label>
+            <button @click="createNewGame" class="btn-primary" :disabled="loading">
+              {{ loading ? 'Starting...' : 'New Game +' }}
+            </button>
+          </div>
         </div>
 
         <div v-if="games.length === 0" class="empty-state">
@@ -36,7 +47,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { api } from '../api';
 import { useAuthStore } from '../stores/auth';
@@ -47,6 +58,10 @@ const authStore = useAuthStore();
 const toastStore = useToastStore();
 const games = ref<any[]>([]);
 const loading = ref(false);
+
+const THINK_KEY = 'chess-new-game-think';
+const newGameThinkTime = ref(Number(localStorage.getItem(THINK_KEY)) || 1000);
+watch(newGameThinkTime, (v) => localStorage.setItem(THINK_KEY, String(v)));
 
 const loadGames = async () => {
   try {
@@ -60,11 +75,21 @@ const loadGames = async () => {
 const createNewGame = async () => {
   loading.value = true;
   try {
-    const res = await api.createGame();
+    // Pass the user's selected think-time so the very first engine reply
+    // already uses it — otherwise the backend's default would kick in
+    // before the UI's /api/set_players call.
+    const res = await api.createGame({
+      white_think_time: newGameThinkTime.value,
+      black_think_time: newGameThinkTime.value,
+    });
     toastStore.success('New game created');
     router.push(`/game/${res.game_id}`);
-  } catch (e) {
-    toastStore.error('Failed to create game');
+  } catch (e: any) {
+    if (String(e?.message).includes('authentication required')) {
+      router.push('/login');
+    } else {
+      toastStore.error('Failed to create game');
+    }
   } finally {
     loading.value = false;
   }
@@ -102,8 +127,11 @@ onMounted(async () => {
 <style scoped>
 .dashboard-container { max-width: 1000px; margin: 0 auto; padding: 40px 20px; }
 
-.section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
+.section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; gap: 16px; flex-wrap: wrap; }
 h2 { margin: 0; font-size: 20px; color: #ddd; }
+.new-game-controls { display: flex; align-items: center; gap: 12px; }
+.inline-label { font-size: 13px; color: #aaa; display: flex; align-items: center; gap: 6px; }
+.inline-label select { font-size: 13px; padding: 4px 8px; }
 
 .game-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 20px; }
 
