@@ -29,7 +29,7 @@ RUN apk add --no-cache ca-certificates
 COPY --from=backend-builder /app/chess-api .
 ENV PORT=8080
 EXPOSE 8080
-CMD ["./chess-api", "-addr", "0.0.0.0:8080", "-no-open"]
+CMD ["./chess-api", "-server", "-addr", "0.0.0.0:8080", "-no-open"]
 
 # --- Stage 4: Minimal Runtime (Worker) ---
 FROM alpine:latest AS worker-runtime
