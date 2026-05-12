@@ -97,8 +97,12 @@ func main() {
 				continue
 			}
 
-			// Acquire worker slot (blocks if at capacity)
-			sem <- struct{}{}
+			// Acquire worker slot (blocks if at capacity, interruptible by ctx)
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
 			log.Printf("Worker [ENGINE]: Processing request for ID: %s - Time: %v", req.GameID, req.MoveTime)
 
 			go func(r bus.EngineRequest) {
