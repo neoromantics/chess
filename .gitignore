@@ -34,3 +34,6 @@ default.pgo
 *.db-shm
 *.db-wal
 /data/
+
+# Postgres data
+/postgres-data/

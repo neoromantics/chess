@@ -318,6 +318,7 @@ func (g *GUI) handleListGames(w http.ResponseWriter, r *http.Request) {
 
 	records, err := g.db.ListGames(userID, sessionID)
 	if err != nil {
+		slog.Error("list games error", "error", err)
 		http.Error(w, err.Error(), 500)
 		return
 	}
