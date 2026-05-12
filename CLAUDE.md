@@ -1,27 +1,27 @@
 # CLAUDE.md - Development Guide
 
-## Build & Run
-- **Start All (Docker)**: `just up`
-- **Stop All**: `just down`
-- **View Logs**: `just logs`
-- **One-Button Dev**: `just dev` (Host-native for rapid coding)
-- **Run Tests**: `just test`
-- **Clean All**: `just clean`
+## Build & Run (Production-Scale)
+- **Launch Distributed Stack**: `just up` (API, Worker, Redis, Postgres)
+- **Watch Orchestrator Logs**: `just logs-api`
+- **Watch Engine Logs**: `just logs-worker`
+- **Local Embedded Build**: `just build` (Go binary with embedded frontend)
+- **Stop services**: `just down`
+- **Reset Environment**: `just reset` (Warning: wipes DB)
 
-## Architecture
-- **cmd/chess**: Entry point; handles CLI flags and server/UCI mode selection.
-- **pkg/api**: Headless HTTP server, WebSocket Hub, and API handlers.
-- **pkg/core**: Pure chess logic (Board, MoveGen, Search, Eval). No external dependencies.
-- **pkg/game**: Game session management, history, and state transitions.
-- **pkg/uci**: Standard Chess Engine protocol implementation.
-- **frontend**: Vue 3 SPA using TypeScript, Vite, and SFCs.
+## Distributed Architecture
+- **API (Orchestrator)**: `pkg/api` handles I/O, WS events, and routes `EngineRequest` to Redis.
+- **Worker (Analyzer)**: `cmd/engine-worker` performs Iterative Deepening and returns `EngineResponse`.
+- **Event Bus**: `pkg/bus` wraps `go-redis` for cross-service communication.
+- **Core Engine**: `pkg/core` contains pure movegen, search, and evaluation.
+- **Frontend**: Vue 3 Reactive SPA (`frontend/`) acts as a dumb terminal.
 
-## Style Guidelines
-- **Go**: Idiomatic Go, capitalized exports for cross-package use, `gofmt` compliant.
-- **Vue/TS**: Composition API (`<script setup lang="ts">`), explicit interfaces in `types.ts`, scoped styles.
-- **Modularity**: Pure logic in `pkg/core`. Keep `pkg/api` as a thin wrapper for JSON conversion.
+## Engineering Standards
+- **Go**: `gofmt` compliant, structured `slog` logging, explicit module path `github.com/neoromantics/chess`.
+- **Reactive Flow**: WebSocket events use `{ "type": "...", "payload": { ... } }` format.
+- **Non-Blocking**: API handlers must never perform CPU-intensive searches. Always offload to the Worker pool.
+- **Authoritative**: Backend manages the game clock and engine turns.
 
-## Commands Reference
-- Format: `just fmt`
-- Lint: `just check`
-- Benchmark: `just bench depth=8`
+## Command Reference
+- `just dev`: Host-native concurrent development.
+- `just test`: Run all Go unit tests.
+- `just check`: Lint and verify code standards.

@@ -1,62 +1,64 @@
-# Chess Platform
+# neoromantics Chess Platform
 
-A modern chess engine and web-based platform written in Go and Vue 3 (TypeScript).
+A professional, distributed chess platform architected for commercial scale. Built with Go, Vue 3 (TypeScript), and Redis.
 
-## 🚀 Enterprise Ready
-This platform is architected for commercial scale, ready to serve thousands of concurrent players.
-- **User Accounts**: Secure signup and login with Bcrypt and JWT.
-- **Multi-Game Support**: Manage multiple sessions with sub-millisecond state transitions.
-- **Kubernetes Native**: Includes foundational manifests in `deploy/k8s` for cloud-scale horizontal scaling.
-- **Docker Only**: Pure containerized workflow ensures environment parity from local to cloud.
-- **Responsive UI**: Professional TypeScript Vue 3 SPA for a smooth cross-device experience.
+## 🏛 Distributed Architecture
+This platform is engineered as a high-performance microservices ecosystem:
+- **API Orchestrator (Go)**: A lightweight, event-driven hub that manages WebSockets, authentication, and game state.
+- **Engine Worker Pool (Go)**: CPU-intensive move calculations and game analysis offloaded to dedicated worker nodes.
+- **Message Broker (Redis)**: Facilitates asynchronous communication between services via Pub/Sub and task queues.
+- **Persistent Storage (PostgreSQL)**: Durable storage for user profiles, game history, and analysis records.
 
-## Quick Start (Docker)
-The entire platform is containerized for consistency and ease of deployment.
+## 🚀 Key Features
+- **Authoritative Engine**: Backend automatically schedules and manages engine turns, ensuring game integrity.
+- **Reactive Analysis**: Real-time move assessments (Brilliant, Blunder, etc.) and hints streamed via event-driven WebSockets.
+- **Multi-User Scale**: Horizontal scaling support for both the API gateway and the calculation worker pool.
+- **Headless Backend**: Pure data/model management with a decoupled, reactive frontend terminal.
+
+## 🛠 Quick Start (Docker)
+The entire stack is containerized for professional environment parity.
 
 ```bash
+# Build and launch the full distributed stack
 just up
 ```
 Visit `http://localhost:8080`.
 
-## Operations
+## 📦 Operations
 | Command | Description |
 |---------|-------------|
-| `just up` | Build and start all services (API, Worker, DB) |
-| `just logs` | View real-time logs from all containers |
-| `just status` | Check container health |
+| `just up` | Build and start API, Worker, Redis, and DB |
+| `just logs-api` | Watch the API orchestrator logs |
+| `just logs-worker` | Watch the engine calculation nodes |
+| `just build` | Production-ready local build (Go + embedded frontend) |
 | `just down` | Stop all services |
-| `just reset` | Wipe database and restart from scratch |
+| `just reset` | Fully wipe the environment and restart |
 
-## Features
-- **Engine**: Bitboard-based (0x88) engine with alpha-beta, quiescence, and tapered evaluation.
-- **Web UI**: Modern Vue 3 / Vite SPA with full TypeScript support.
-- **Analysis**: Real-time move assessment and hints.
-- **History**: Permanent storage for users and sessions (PostgreSQL).
-
-## Project Structure
+## 🏗 Project Structure
 ```
 .
-├── cmd/chess/          # Main API server entry point
-├── cmd/engine-worker/  # Decoupled engine worker service
+├── cmd/
+│   ├── chess/          # API Server (Orchestrator)
+│   └── engine-worker/  # Distributed Calculation Node
 ├── pkg/
-│   ├── api/            # Multi-session web server & auth handlers
-│   ├── auth/           # JWT & Password security
-│   ├── core/           # Pure chess logic (search & eval)
-│   ├── db/             # Abstracted storage layer (Postgres/SQLite)
-│   ├── game/           # Game state management
-│   └── uci/            # UCI protocol
-├── frontend/           # Vue 3 TypeScript SPA
-└── Dockerfile          # Multi-stage production build
+│   ├── api/            # Headless API, WebSockets & Event Hub
+│   ├── bus/            # Redis Pub/Sub Event Bus
+│   ├── core/           # Pure Chess Engine (Search & Eval)
+│   ├── db/             # Multi-provider persistence (PG/SQLite)
+│   ├── game/           # Authoritative Game Logic
+│   └── auth/           # Secure JWT/Bcrypt authentication
+├── frontend/           # Vue 3 Reactive SPA
+└── deploy/             # Kubernetes & Production Manifests
 ```
 
-## Development
-For rapid frontend/backend coding without containers:
+## 🛠 Development
+For rapid host-native development (concurrent Go/Vite):
 ```bash
 just dev
 ```
 
-## Repository
+## 🔗 Repository
 [github.com/neoromantics/chess](https://github.com/neoromantics/chess)
 
-## License
+## 📄 License
 MIT

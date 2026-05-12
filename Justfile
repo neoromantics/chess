@@ -12,9 +12,15 @@ build:
     cp -r frontend/dist/* pkg/api/dist/
     go build -o chess ./cmd/chess
 
-# Start the entire distributed stack (API, Worker, Postgres)
+# Start the entire distributed stack (API, Worker, Redis, Postgres)
 up:
     docker-compose up --build -d
+
+# Scale up engine calculation nodes
+# Usage: just scale 3
+scale n:
+    docker-compose up -d --scale worker={{n}}
+
 
 # Stop all services
 down:
@@ -44,11 +50,11 @@ reset:
 # --- Development Workflow ---
 
 # Run in local development mode (no containers, for rapid Go/Vue coding)
-# Go API on :8080, Vite on :5173 with HMR
+# Note: Requires a local Redis instance on :6379
 dev:
-    @echo "Starting local dev environment..."
+    @echo "Starting local dev environment (requires local Redis)..."
     @(trap 'kill 0' SIGINT; \
-      go run ./cmd/chess -addr localhost:8080 -no-open -gui & \
+      go run ./cmd/chess -addr localhost:8080 -no-open -server & \
       cd frontend && VITE_API_URL=http://localhost:8080 npm run dev)
 
 # --- Engineering Standards ---

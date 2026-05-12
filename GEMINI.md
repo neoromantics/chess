@@ -1,20 +1,19 @@
-# Gemini Mandates: Chess Platform
+# Gemini Mandates: neoromantics Chess Platform
 
-## 🏗 Architectural Foundation (Commercial Scale)
-- **Modular Monolith to Microservices**: Prepare for horizontal scaling by keeping the API stateless. Engine search must eventually move to a Worker Pool pattern.
-- **Stateless API Layer**: API pods must not rely on local in-memory state. Use Redis for active sessions and PostgreSQL for persistence in production.
-- **Pure Go Core**: Keep `pkg/core` free of external dependencies to maximize search performance on worker nodes.
-- **TypeScript First**: Strict typing in `frontend/src/types.ts` is the contract between decoupled frontend and backend services.
-- **Anti-Cheat Readiness**: Design all game logic to support telemetry collection (move times, focus events) for future statistical fraud detection.
+## 🏛 Distributed Microservices (Million-Dollar Architecture)
+- **Decoupled Engine Hub**: All CPU-intensive search and analysis must reside in `cmd/engine-worker`. The API server must remain a lightweight orchestrator.
+- **Event-Driven Communication**: Use `pkg/bus` (Redis Pub/Sub) for all cross-service communication. API dispatches `engine.request` and reacts to `engine.response`.
+- **Reactive WebSocket Events**: WebSockets must follow the structured event pattern (`type`, `payload`). Avoid streaming raw board state; push transient insights (hints, assessments) via specific event types.
+- **Authoritative Backend**: The backend is the sole source of truth for the game lifecycle. The frontend is a reactive terminal that displays state but never dictates engine scheduling.
 
-## 🚀 Deployment & Ops (Enterprise Grade)
-- **Docker-Only Execution**: Docker is the canonical environment for both local runs and production. Avoid host-specific binary execution for platform testing.
-- **Kubernetes Native**: Use the manifests in `deploy/k8s` as the source of truth for cloud topology.
-- **Observability**: Implement structured `slog` logging and prepare for OpenTelemetry tracing across the API-to-Worker boundary.
-- **Env-Driven Config**: Never hardcode secrets. Use K8s Secrets mapped to environment variables (`JWT_SECRET`, `DB_URL`).
-- **Health-Checks**: Always maintain the `/health` endpoint for liveness/readiness probes.
+## 🚀 Scaling & Resilience
+- **Horizontally Scalable**: Design all logic to support multiple API replicas and dozens of Engine Worker nodes.
+- **Stateless Orchestration**: Use PostgreSQL for long-term persistence and Redis for short-term message brokering and session management.
+- **Fail-Safe Processing**: Use `defer` and atomic flags to ensure the system never gets stuck in a "Thinking" state if a network hop or calculation is aborted.
+- **Asynchronous Analysis**: Analysis features (Hints, Assess) are asynchronous by design. API returns `202 Accepted` and streams results via WebSockets.
 
-## 🛠 Development Workflow
-- **One-Button Dev**: `just dev` is the canonical way to develop. It handles concurrent Go/Vite execution.
-- **Embedded Assets**: Production builds must embed frontend assets into the Go binary for single-file portability.
-- **Type Safety**: Run `npm run build` (which triggers `vue-tsc`) before Go compilation to catch frontend errors early.
+## 🛠 Engineering Standards
+- **Pure Go Search**: Keep `pkg/core` zero-dependency and high-performance. It is the core IP of the platform.
+- **Service Purity**: Remove all "GUI" terminology from the backend. It is a headless data manager.
+- **Docker-First Workflow**: Docker is the canonical environment. Use `Justfile` recipes (`just up`, `just logs-api`) as the primary interface for operations.
+- **neoromantics Branding**: Ensure all module paths (`github.com/neoromantics/chess`) and metadata reflect the neoromantics identity.

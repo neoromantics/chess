@@ -15,13 +15,18 @@ spec:
         app: chess-api
     spec:
       containers:
-      - name: chess
-        image: neoromantics/chess:latest
+      - name: api
+        image: neoromantics/chess-api:latest
         ports:
         - containerPort: 8080
         env:
-        - name: DB_PATH
-          value: "/app/data/chess.db"
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: chess-secrets
+              key: database-url
+        - name: REDIS_URL
+          value: "chess-redis:6379"
         - name: JWT_SECRET
           valueFrom:
             secretKeyRef:
@@ -31,28 +36,19 @@ spec:
           httpGet:
             path: /health
             port: 8080
-          initialDelaySeconds: 5
-          periodSeconds: 10
+          initialDelaySeconds: 10
         readinessProbe:
           httpGet:
             path: /health
             port: 8080
-          initialDelaySeconds: 2
-          periodSeconds: 5
+          initialDelaySeconds: 5
         resources:
           requests:
-            cpu: "250m"
-            memory: "512Mi"
+            cpu: "100m"
+            memory: "256Mi"
           limits:
-            cpu: "1000m"
-            memory: "1Gi"
-        volumeMounts:
-        - name: chess-data
-          mountPath: /app/data
-      volumes:
-      - name: chess-data
-        persistentVolumeClaim:
-          claimName: chess-pvc
+            cpu: "500m"
+            memory: "512Mi"
 ---
 apiVersion: v1
 kind: Service
