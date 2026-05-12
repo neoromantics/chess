@@ -32,6 +32,9 @@ func (s *SQLiteStore) init() error {
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			username TEXT UNIQUE NOT NULL,
 			password_hash TEXT NOT NULL,
+			is_premium BOOLEAN NOT NULL DEFAULT FALSE,
+			elo INTEGER NOT NULL DEFAULT 1200,
+			bio TEXT NOT NULL DEFAULT '',
 			created_at DATETIME NOT NULL
 		);
 
@@ -60,9 +63,9 @@ func (s *SQLiteStore) Close() error {
 func (s *SQLiteStore) CreateUser(username, passwordHash string) (*User, error) {
 	now := time.Now()
 	res, err := s.db.Exec(`
-		INSERT INTO users (username, password_hash, created_at)
-		VALUES (?, ?, ?)
-	`, username, passwordHash, now)
+		INSERT INTO users (username, password_hash, created_at, elo)
+		VALUES (?, ?, ?, ?)
+	`, username, passwordHash, now, 1200)
 	if err != nil {
 		return nil, err
 	}
@@ -72,16 +75,17 @@ func (s *SQLiteStore) CreateUser(username, passwordHash string) (*User, error) {
 		Username:     username,
 		PasswordHash: passwordHash,
 		CreatedAt:    now,
+		Elo:          1200,
 	}, nil
 }
 
 func (s *SQLiteStore) GetUserByUsername(username string) (*User, error) {
 	u := &User{}
 	err := s.db.QueryRow(`
-		SELECT id, username, password_hash, created_at
+		SELECT id, username, password_hash, is_premium, elo, bio, created_at
 		FROM users
 		WHERE username = ?
-	`, username).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.CreatedAt)
+	`, username).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.IsPremium, &u.Elo, &u.Bio, &u.CreatedAt)
 	if err != nil {
 		return nil, err
 	}

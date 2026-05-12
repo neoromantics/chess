@@ -36,6 +36,9 @@ func (s *PostgresStore) init() error {
 			id SERIAL PRIMARY KEY,
 			username TEXT UNIQUE NOT NULL,
 			password_hash TEXT NOT NULL,
+			is_premium BOOLEAN NOT NULL DEFAULT FALSE,
+			elo INTEGER NOT NULL DEFAULT 1200,
+			bio TEXT NOT NULL DEFAULT '',
 			created_at TIMESTAMP NOT NULL
 		);
 
@@ -67,12 +70,13 @@ func (s *PostgresStore) CreateUser(username, passwordHash string) (*User, error)
 		Username:     username,
 		PasswordHash: passwordHash,
 		CreatedAt:    now,
+		Elo:          1200,
 	}
 	err := s.db.QueryRow(`
-		INSERT INTO users (username, password_hash, created_at)
-		VALUES ($1, $2, $3)
+		INSERT INTO users (username, password_hash, created_at, elo)
+		VALUES ($1, $2, $3, $4)
 		RETURNING id
-	`, username, passwordHash, now).Scan(&u.ID)
+	`, username, passwordHash, now, u.Elo).Scan(&u.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -82,10 +86,10 @@ func (s *PostgresStore) CreateUser(username, passwordHash string) (*User, error)
 func (s *PostgresStore) GetUserByUsername(username string) (*User, error) {
 	u := &User{}
 	err := s.db.QueryRow(`
-		SELECT id, username, password_hash, created_at
+		SELECT id, username, password_hash, is_premium, elo, bio, created_at
 		FROM users
 		WHERE username = $1
-	`, username).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.CreatedAt)
+	`, username).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.IsPremium, &u.Elo, &u.Bio, &u.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
