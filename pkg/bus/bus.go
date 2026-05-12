@@ -2,6 +2,8 @@ package bus
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -9,6 +11,17 @@ import (
 
 	"github.com/redis/go-redis/v9"
 )
+
+// releaseLockScript implements compare-and-delete for distributed locks.
+// A plain DEL would let a slow holder whose TTL expired blow away a
+// successor's lock — this script guarantees we only release what we own.
+var releaseLockScript = redis.NewScript(`
+if redis.call("get", KEYS[1]) == ARGV[1] then
+	return redis.call("del", KEYS[1])
+else
+	return 0
+end
+`)
 
 // Event names
 const (
@@ -169,15 +182,46 @@ func (c *Client) Dequeue(ctx context.Context, queue string, timeout time.Duratio
 	return []byte(result[1]), nil
 }
 
-// LockGame acquires a distributed lock for a specific game to prevent concurrent mutations.
-// Returns true if the lock was acquired, false if it is currently held by another process.
-func (c *Client) LockGame(ctx context.Context, gameID string, ttl time.Duration) (bool, error) {
-	key := fmt.Sprintf("lock:game:%s", gameID)
-	return c.rdb.SetNX(ctx, key, "locked", ttl).Result()
+// GameLock represents an acquired distributed lock. The opaque token
+// inside is used by Release to verify ownership before deleting the key.
+type GameLock struct {
+	client *Client
+	key    string
+	token  string
 }
 
-// UnlockGame releases the distributed lock for a specific game.
-func (c *Client) UnlockGame(ctx context.Context, gameID string) error {
+// Release returns the lock if (and only if) we still own it. Safe to call
+// after TTL expiry — it will no-op rather than punt a successor's lock.
+func (l *GameLock) Release(ctx context.Context) error {
+	if l == nil || l.client == nil {
+		return nil
+	}
+	return releaseLockScript.Run(ctx, l.client.rdb, []string{l.key}, l.token).Err()
+}
+
+// LockGame acquires a distributed lock for a specific game to prevent
+// concurrent mutations. Returns a *GameLock on success; nil if the lock
+// is held by another process.
+func (c *Client) LockGame(ctx context.Context, gameID string, ttl time.Duration) (*GameLock, error) {
+	token, err := newLockToken()
+	if err != nil {
+		return nil, err
+	}
 	key := fmt.Sprintf("lock:game:%s", gameID)
-	return c.rdb.Del(ctx, key).Err()
+	ok, err := c.rdb.SetNX(ctx, key, token, ttl).Result()
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, nil
+	}
+	return &GameLock{client: c, key: key, token: token}, nil
+}
+
+func newLockToken() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b[:]), nil
 }

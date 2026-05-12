@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/time/rate"
 )
 
 // responseWriter wraps a standard http.ResponseWriter to capture the status code.
@@ -131,75 +133,58 @@ func BodyLimitMiddleware(maxBytes int64) func(http.Handler) http.Handler {
 	}
 }
 
-// RateLimiter implements a simple token-bucket rate limiter per client IP.
+// RateLimiter applies a per-IP token-bucket rate limit backed by
+// golang.org/x/time/rate. We keep one Limiter per client IP in a map
+// and evict stale entries periodically.
 type RateLimiter struct {
 	mu      sync.Mutex
-	clients map[string]*rateBucket
-	rate    int           // tokens per interval
-	burst   int           // max tokens
-	window  time.Duration // refill interval
+	clients map[string]*rateClient
+	limit   rate.Limit
+	burst   int
 }
 
-type rateBucket struct {
-	tokens     int
-	lastRefill time.Time
+type rateClient struct {
+	limiter  *rate.Limiter
+	lastSeen time.Time
 }
 
-// NewRateLimiter creates a rate limiter. rate = requests allowed per window.
-// burst = maximum burst capacity (typically same as rate).
-func NewRateLimiter(rate, burst int, window time.Duration) *RateLimiter {
+// NewRateLimiter creates a rate limiter allowing `rate` requests per
+// `window` with a burst capacity of `burst`.
+func NewRateLimiter(reqs, burst int, window time.Duration) *RateLimiter {
 	rl := &RateLimiter{
-		clients: make(map[string]*rateBucket),
-		rate:    rate,
+		clients: make(map[string]*rateClient),
+		limit:   rate.Limit(float64(reqs) / window.Seconds()),
 		burst:   burst,
-		window:  window,
 	}
-	// Background cleanup of stale entries
-	go func() {
-		for {
-			time.Sleep(5 * time.Minute)
-			rl.mu.Lock()
-			cutoff := time.Now().Add(-10 * time.Minute)
-			for ip, b := range rl.clients {
-				if b.lastRefill.Before(cutoff) {
-					delete(rl.clients, ip)
-				}
-			}
-			rl.mu.Unlock()
-		}
-	}()
+	go rl.gc()
 	return rl
 }
 
-// Allow checks whether the given IP is within the rate limit.
+func (rl *RateLimiter) gc() {
+	for {
+		time.Sleep(5 * time.Minute)
+		rl.mu.Lock()
+		cutoff := time.Now().Add(-10 * time.Minute)
+		for ip, c := range rl.clients {
+			if c.lastSeen.Before(cutoff) {
+				delete(rl.clients, ip)
+			}
+		}
+		rl.mu.Unlock()
+	}
+}
+
+// Allow reports whether the given IP is within the rate limit.
 func (rl *RateLimiter) Allow(ip string) bool {
 	rl.mu.Lock()
-	defer rl.mu.Unlock()
-
-	b, ok := rl.clients[ip]
-	now := time.Now()
-
+	c, ok := rl.clients[ip]
 	if !ok {
-		rl.clients[ip] = &rateBucket{tokens: rl.burst - 1, lastRefill: now}
-		return true
+		c = &rateClient{limiter: rate.NewLimiter(rl.limit, rl.burst)}
+		rl.clients[ip] = c
 	}
-
-	// Refill tokens based on elapsed time
-	elapsed := now.Sub(b.lastRefill)
-	refill := int(elapsed/rl.window) * rl.rate
-	if refill > 0 {
-		b.tokens += refill
-		if b.tokens > rl.burst {
-			b.tokens = rl.burst
-		}
-		b.lastRefill = now
-	}
-
-	if b.tokens > 0 {
-		b.tokens--
-		return true
-	}
-	return false
+	c.lastSeen = time.Now()
+	rl.mu.Unlock()
+	return c.limiter.Allow()
 }
 
 // Middleware returns an http middleware that enforces the rate limit.

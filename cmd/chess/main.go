@@ -8,10 +8,12 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"os/signal"
-	"runtime"
 	"syscall"
+	"time"
+
+	"github.com/pkg/browser"
+	"golang.org/x/term"
 
 	"github.com/neoromantics/chess/pkg/api"
 	"github.com/neoromantics/chess/pkg/bus"
@@ -77,14 +79,16 @@ func main() {
 		go func() {
 			<-sigChan
 			fmt.Fprintln(os.Stderr, "\nShutting down gracefully...")
-			ctx, cancel := context.WithTimeout(context.Background(), 10*1e9)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			server.Shutdown(ctx)
 			httpServer.Shutdown(ctx)
 		}()
 
 		if !*noOpen {
-			openBrowser(url)
+			if err := browser.OpenURL(url); err != nil {
+				fmt.Fprintf(os.Stderr, "could not open browser: %v\nVisit %s manually.\n", err, url)
+			}
 		}
 		log.Fatal(httpServer.Serve(ln))
 	}
@@ -108,24 +112,5 @@ func listenWithFallback(addr string) (net.Listener, error) {
 }
 
 func stdinIsTerminal() bool {
-	s, err := os.Stdin.Stat()
-	if err != nil {
-		return false
-	}
-	return s.Mode()&os.ModeCharDevice != 0
-}
-
-func openBrowser(url string) {
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "darwin":
-		cmd = exec.Command("/usr/bin/open", url)
-	case "windows":
-		cmd = exec.Command("cmd", "/c", "start", "", url)
-	default:
-		cmd = exec.Command("xdg-open", url)
-	}
-	if err := cmd.Start(); err != nil {
-		fmt.Fprintf(os.Stderr, "could not open browser: %v\nVisit %s manually.\n", err, url)
-	}
+	return term.IsTerminal(int(os.Stdin.Fd()))
 }

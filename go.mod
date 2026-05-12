@@ -7,8 +7,11 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/lib/pq v1.12.3
+	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
 	github.com/redis/go-redis/v9 v9.19.0
 	golang.org/x/crypto v0.51.0
+	golang.org/x/term v0.43.0
+	golang.org/x/time v0.15.0
 	modernc.org/sqlite v1.50.1
 )
 

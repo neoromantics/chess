@@ -5,8 +5,20 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
+)
+
+const (
+	// writeWait is the deadline for a single write.
+	writeWait = 10 * time.Second
+	// pongWait is how long we wait for a pong before declaring the conn dead.
+	pongWait = 60 * time.Second
+	// pingPeriod must be less than pongWait so we catch dead conns reliably.
+	pingPeriod = (pongWait * 9) / 10
+	// maxMessageSize caps inbound frames to protect the server.
+	maxMessageSize int64 = 1 << 16
 )
 
 var upgrader = websocket.Upgrader{
@@ -124,25 +136,41 @@ func (c *Client) readPump() {
 		c.hub.unregister <- c
 		c.conn.Close()
 	}()
+	c.conn.SetReadLimit(maxMessageSize)
+	c.conn.SetReadDeadline(time.Now().Add(pongWait))
+	c.conn.SetPongHandler(func(string) error {
+		c.conn.SetReadDeadline(time.Now().Add(pongWait))
+		return nil
+	})
 	for {
-		_, _, err := c.conn.ReadMessage()
-		if err != nil {
-			break
+		if _, _, err := c.conn.ReadMessage(); err != nil {
+			return
 		}
 	}
 }
 
 func (c *Client) writePump() {
-	defer c.conn.Close()
+	ticker := time.NewTicker(pingPeriod)
+	defer func() {
+		ticker.Stop()
+		c.conn.Close()
+	}()
 	for {
-		message, ok := <-c.send
-		if !ok {
-			c.conn.WriteMessage(websocket.CloseMessage, []byte{})
-			return
-		}
-		err := c.conn.WriteMessage(websocket.TextMessage, message)
-		if err != nil {
-			return
+		select {
+		case message, ok := <-c.send:
+			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			if !ok {
+				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
+				return
+			}
+			if err := c.conn.WriteMessage(websocket.TextMessage, message); err != nil {
+				return
+			}
+		case <-ticker.C:
+			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				return
+			}
 		}
 	}
 }

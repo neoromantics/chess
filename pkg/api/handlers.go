@@ -163,12 +163,12 @@ func (s *Server) withGameLock(w http.ResponseWriter, r *http.Request, fn func(en
 		return
 	}
 
-	locked, err := s.bus.LockGame(r.Context(), id, 10*time.Second)
-	if err != nil || !locked {
+	lock, err := s.bus.LockGame(r.Context(), id, 10*time.Second)
+	if err != nil || lock == nil {
 		http.Error(w, "game is currently locked by another process", http.StatusConflict)
 		return
 	}
-	defer s.bus.UnlockGame(context.Background(), id)
+	defer lock.Release(context.Background())
 
 	// 2. Fetch fresh state from DB
 	entry, err := s.getGame(r)
@@ -182,11 +182,11 @@ func (s *Server) withGameLock(w http.ResponseWriter, r *http.Request, fn func(en
 }
 
 func (s *Server) executeWithGameLock(ctx context.Context, gameID string, fn func(entry *gameEntry)) {
-	locked, err := s.bus.LockGame(ctx, gameID, 5*time.Second)
-	if err != nil || !locked {
+	lock, err := s.bus.LockGame(ctx, gameID, 5*time.Second)
+	if err != nil || lock == nil {
 		return
 	}
-	defer s.bus.UnlockGame(context.Background(), gameID)
+	defer lock.Release(context.Background())
 
 	record, err := s.db.GetGame(gameID)
 	if err != nil {
@@ -456,8 +456,8 @@ func (s *Server) handleCreateGame(w http.ResponseWriter, r *http.Request) {
 		userID:         userID,
 		sessionID:      sessionID,
 		createdAt:      time.Now(),
-		whiteThinkTime: 10*time.Minute, // Default to 10 minutes
-		blackThinkTime: 10*time.Minute,
+		whiteThinkTime: 10 * time.Minute, // Default to 10 minutes
+		blackThinkTime: 10 * time.Minute,
 	}
 	entry.stopSearch.Store(false)
 
