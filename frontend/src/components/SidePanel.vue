@@ -25,9 +25,6 @@
         </select>
       </div>
       <div class="btn-row">
-        <button @click="$emit('toggle-pause')" :class="['btn-view', { 'btn-pause-on': paused }]">
-          {{ paused ? 'Resume' : 'Pause' }}
-        </button>
         <button @click="$emit('new-game')" style="flex: 2; background: #2d5a2d; border-color: #3a703a; font-weight: 600;">New Game</button>
       </div>
     </section>
@@ -116,7 +113,6 @@ import { StateJSON } from '../types';
 const props = defineProps<{
   state: StateJSON | null;
   editMode: boolean;
-  paused: boolean;
   whitePlayerType: string;
   blackPlayerType: string;
   whiteThinkTime: number;
@@ -140,7 +136,6 @@ const emit = defineEmits<{
   (e: 'update:auto-assess', val: boolean): void;
   (e: 'update:sound-enabled', val: boolean): void;
   (e: 'update:fen-input', val: string): void;
-  (e: 'toggle-pause'): void;
   (e: 'new-game'): void;
   (e: 'get-hint'): void;
   (e: 'run-assess', idx?: number, fromHistory?: boolean): void;

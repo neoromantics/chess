@@ -28,7 +28,6 @@
       <SidePanel 
         :state="state"
         :edit-mode="editMode"
-        :paused="paused"
         :white-player-type="whitePlayerType"
         :black-player-type="blackPlayerType"
         :white-think-time="whiteThinkTime"
@@ -49,7 +48,6 @@
         @update:auto-assess="autoAssess = $event"
         @update:sound-enabled="setSoundEnabled"
         @update:fen-input="fenInput = $event"
-        @toggle-pause="paused = !paused"
         @new-game="newGame"
         @get-hint="getHint"
         @run-assess="runAssess"
@@ -104,7 +102,6 @@ const state = ref<StateJSON | null>(null);
 const error = ref<string | null>(null);
 const selected = ref<string | null>(null);
 const flipped = ref(localStorage.getItem('chess-flipped') === '1');
-const paused = ref(false);
 const soundEnabled = ref(localStorage.getItem('chess-muted') !== '1');
 const autoAssess = ref(false);
 const assessments = reactive<Record<number, any>>({});
