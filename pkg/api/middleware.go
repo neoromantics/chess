@@ -9,14 +9,57 @@ import (
 	"net/http"
 	"os"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"golang.org/x/time/rate"
 
 	"github.com/neoromantics/chess/pkg/auth"
 )
+
+var (
+	httpRequestsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "chess_http_requests_total",
+		Help: "Total number of HTTP requests.",
+	}, []string{"method", "path", "status"})
+
+	httpRequestDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "chess_http_request_duration_seconds",
+		Help:    "HTTP request duration in seconds.",
+		Buckets: prometheus.DefBuckets,
+	}, []string{"method", "path", "status"})
+
+	WebSocketConnectionsActive = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "chess_websocket_connections_active",
+		Help: "Current number of active WebSocket connections.",
+	}, []string{"kind"})
+)
+
+// MetricsMiddleware records HTTP metrics for prometheus.
+func MetricsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rw := &responseWriter{w, http.StatusOK}
+
+		next.ServeHTTP(rw, r)
+
+		duration := time.Since(start).Seconds()
+		status := strconv.Itoa(rw.status)
+
+		// Aggregate paths to avoid high-cardinality labels (e.g. /api/invites/123 -> /api/invites/:id)
+		path := r.URL.Path
+		if strings.HasPrefix(path, "/api/invites/") && strings.HasSuffix(path, "/accept") { path = "/api/invites/:id/accept" }
+		if strings.HasPrefix(path, "/api/invites/") && strings.HasSuffix(path, "/decline") { path = "/api/invites/:id/decline" }
+		if strings.HasPrefix(path, "/api/invites/") && strings.HasSuffix(path, "/cancel") { path = "/api/invites/:id/cancel" }
+
+		httpRequestsTotal.WithLabelValues(r.Method, path, status).Inc()
+		httpRequestDuration.WithLabelValues(r.Method, path, status).Observe(duration)
+	})
+}
 
 // requireAuth wraps a handler and returns 401 when no authenticated user
 // is in the request context. Use for endpoints that must not be reachable

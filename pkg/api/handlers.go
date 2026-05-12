@@ -22,6 +22,7 @@ import (
 	"github.com/neoromantics/chess/pkg/db"
 	"github.com/neoromantics/chess/pkg/game"
 	"github.com/neoromantics/chess/pkg/uci"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 func (s *Server) isThinking(ctx context.Context, gameID string) bool {
@@ -113,6 +114,7 @@ func (s *Server) scheduleEngineTimeout(gameID string, movetime time.Duration) {
 
 func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /health", s.handleHealth)
+	s.mux.Handle("GET /metrics", promhttp.Handler())
 
 	// Auth — no requireAuth wrapper (these are how you become authed).
 	s.mux.HandleFunc("POST /api/auth/signup", s.handleSignup)

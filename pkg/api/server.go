@@ -100,6 +100,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h = auth.Middleware(h)
 	h = RecoveryMiddleware(h)
 	h = LoggerMiddleware(h)
+	h = MetricsMiddleware(h)
 	h = SecurityHeadersMiddleware(h)
 	h = CORSMiddleware(h)
 	h = BodyLimitMiddleware(maxRequestBody)(h)

@@ -121,6 +121,7 @@ func (h *Hub) add(c *Client) {
 		bucket[c.key] = make(map[*Client]bool)
 	}
 	bucket[c.key][c] = true
+	WebSocketConnectionsActive.WithLabelValues(string(c.kind)).Inc()
 	slog.Info("ws client registered", "kind", c.kind, "key", c.key, "subs", len(bucket[c.key]))
 }
 
@@ -132,6 +133,7 @@ func (h *Hub) remove(c *Client) {
 		if _, ok := clients[c]; ok {
 			delete(clients, c)
 			close(c.send)
+			WebSocketConnectionsActive.WithLabelValues(string(c.kind)).Dec()
 			if len(clients) == 0 {
 				delete(bucket, c.key)
 			}
