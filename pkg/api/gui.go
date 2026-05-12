@@ -124,7 +124,8 @@ func (g *GUI) registerRoutes() {
 	g.mux.HandleFunc("GET /api/replay.html", g.handleReplay)
 	g.mux.HandleFunc("GET /ws", g.handleWS)
 	g.mux.Handle("GET /assets/", http.FileServer(assetsFS))
-	g.mux.HandleFunc("GET /", g.handleIndex)
+	// Catch-all route for SPA navigation (Dashboard, GameView, etc.)
+	g.mux.HandleFunc("GET /{path...}", g.handleIndex)
 }
 
 func (g *GUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {

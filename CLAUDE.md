@@ -1,12 +1,12 @@
 # CLAUDE.md - Development Guide
 
 ## Build & Run
-- **Frontend Assets**: `just frontend` (builds Vue + copies to Go package)
-- **Build Binary**: `just build` (produces `./chess`)
-- **One-Button Dev**: `just dev` (Go API on :8080 + Vite on :5173 with HMR)
-- **Run GUI**: `just gui` (builds + runs embedded web UI)
-- **Run UCI**: `just run` (starts engine in terminal)
-- **Tests**: `just test` (all), `just perft` (movegen only)
+- **Start All (Docker)**: `just up`
+- **Stop All**: `just down`
+- **View Logs**: `just logs`
+- **One-Button Dev**: `just dev` (Host-native for rapid coding)
+- **Run Tests**: `just test`
+- **Clean All**: `just clean`
 
 ## Architecture
 - **cmd/chess**: Entry point; handles CLI flags and GUI/UCI mode selection.

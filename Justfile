@@ -1,55 +1,51 @@
-# Common dev tasks. `just` lists them; `just <name>` runs one.
+# Million-Dollar Chess Platform: Docker-First Workflow
 
 default:
     @just --list
 
-# Build the frontend assets
-frontend:
-    cd frontend && npm install && npm run build
-    mkdir -p pkg/api/dist
-    cp -r frontend/dist/* pkg/api/dist/
+# --- Production Operations (Docker Compose) ---
 
-# Build the binary into ./chess
-build: frontend
-    go build -o chess ./cmd/chess
+# Start the entire distributed stack (API, Worker, Postgres)
+up:
+    docker-compose up --build -d
 
-# Run in development mode with HMR for frontend
+# Stop all services
+down:
+    docker-compose down
+
+# View real-time logs from all services
+logs:
+    docker-compose logs -f
+
+# View status of running containers
+status:
+    docker-compose ps
+
+# Fully reset the platform (warning: deletes all database data)
+reset:
+    docker-compose down -v
+    docker-compose up --build -d
+
+# --- Development Workflow ---
+
+# Run in local development mode (no containers, for rapid Go/Vue coding)
+# Go API on :8080, Vite on :5173 with HMR
 dev:
-    @echo "Starting backend on :8080 and frontend on :5173..."
+    @echo "Starting local dev environment..."
     @(trap 'kill 0' SIGINT; \
-      go run ./cmd/chess -gui -no-open -addr localhost:8080 & \
+      go run ./cmd/chess -addr localhost:8080 -no-open & \
       cd frontend && VITE_API_URL=http://localhost:8080 npm run dev)
 
-# Run all tests
+# --- Engineering Standards ---
+
+# Run all backend tests
 test:
-    go test ./...
+    go test -v ./pkg/...
 
-# Run only the perft (move-gen validation) tests with output
-perft:
-    go test -run Perft -v ./...
-
-# Run UCI on stdio
-run: build
-    ./chess
-
-# Run the GUI at http://localhost:8080
-gui: build
-    ./chess -gui
-
-# Format every Go file in the repo
+# Format Go code
 fmt:
     gofmt -w .
 
-# Lint: gofmt clean + vet + test. Fails on any formatter diff.
-check:
-    test -z "$(gofmt -l .)" || (echo 'gofmt diff:'; gofmt -d .; exit 1)
-    go vet ./...
-    go test ./...
-
-# Pure search benchmark from startpos at fixed depth (smoke check for perf regressions)
-bench depth='6':
-    @printf 'uci\nposition startpos\ngo depth {{depth}}\nquit\n' | ./chess | grep '^info depth'
-
-# Remove build artifacts
+# Clean up all build artifacts and node modules
 clean:
     rm -rf chess build pkg/api/dist frontend/dist frontend/node_modules

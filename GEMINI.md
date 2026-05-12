@@ -8,6 +8,7 @@
 - **Anti-Cheat Readiness**: Design all game logic to support telemetry collection (move times, focus events) for future statistical fraud detection.
 
 ## 🚀 Deployment & Ops (Enterprise Grade)
+- **Docker-Only Execution**: Docker is the canonical environment for both local runs and production. Avoid host-specific binary execution for platform testing.
 - **Kubernetes Native**: Use the manifests in `deploy/k8s` as the source of truth for cloud topology.
 - **Observability**: Implement structured `slog` logging and prepare for OpenTelemetry tracing across the API-to-Worker boundary.
 - **Env-Driven Config**: Never hardcode secrets. Use K8s Secrets mapped to environment variables (`JWT_SECRET`, `DB_URL`).
