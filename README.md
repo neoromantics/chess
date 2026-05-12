@@ -1,4 +1,4 @@
-# Chess Engine & GUI
+# Chess Platform
 
 A modern chess engine and web-based platform written in Go and Vue 3 (TypeScript).
 

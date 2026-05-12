@@ -9,10 +9,10 @@
 - **Clean All**: `just clean`
 
 ## Architecture
-- **cmd/chess**: Entry point; handles CLI flags and GUI/UCI mode selection.
+- **cmd/chess**: Entry point; handles CLI flags and server/UCI mode selection.
+- **pkg/api**: Headless HTTP server, WebSocket Hub, and API handlers.
 - **pkg/core**: Pure chess logic (Board, MoveGen, Search, Eval). No external dependencies.
 - **pkg/game**: Game session management, history, and state transitions.
-- **pkg/api**: HTTP handlers and static asset embedding for the Web/Native GUI.
 - **pkg/uci**: Standard Chess Engine protocol implementation.
 - **frontend**: Vue 3 SPA using TypeScript, Vite, and SFCs.
 

@@ -17,23 +17,23 @@ import (
 )
 
 func main() {
-	gui := flag.Bool("gui", false, "force web GUI mode (default when stdin is a terminal)")
+	serverMode := flag.Bool("server", false, "force web server mode (default when stdin is a terminal)")
 	uciMode := flag.Bool("uci", false, "force UCI mode on stdio (default when stdin is piped)")
-	addr := flag.String("addr", "localhost:8080", "GUI listen address; falls back to a free port if taken")
+	addr := flag.String("addr", "localhost:8080", "Server listen address; falls back to a free port if taken")
 	noOpen := flag.Bool("no-open", false, "don't auto-open the browser")
 	idleSec := flag.Int("shutdown-on-idle", 0, "exit after N seconds with no /api/ping (0 = never)")
 	flag.Parse()
 
-	// Detect if we should run the GUI.
-	runGUI := *gui
-	if !*gui && !*uciMode {
-		runGUI = stdinIsTerminal()
+	// Detect if we should run the web server.
+	runServer := *serverMode
+	if !*serverMode && !*uciMode {
+		runServer = stdinIsTerminal()
 	}
 	if *uciMode {
-		runGUI = false
+		runServer = false
 	}
 
-	if runGUI {
+	if runServer {
 		var store db.Store
 		var err error
 
@@ -56,18 +56,18 @@ func main() {
 			log.Fatal(err)
 		}
 		url := "http://" + ln.Addr().String()
-		fmt.Fprintf(os.Stderr, "GUI: %s\n", url)
+		fmt.Fprintf(os.Stderr, "Chess Platform Server: %s\n", url)
 
 		idle := time.Duration(*idleSec) * time.Second
-		guiSrv := api.NewGUI(store)
+		server := api.NewServer(store)
 		if idle > 0 {
-			guiSrv.StartIdleShutdown(idle)
+			server.StartIdleShutdown(idle)
 		}
 
 		if !*noOpen {
 			openBrowser(url)
 		}
-		log.Fatal(http.Serve(ln, guiSrv))
+		log.Fatal(http.Serve(ln, server))
 	}
 
 	uci.NewUCI(os.Stdout).Run(os.Stdin)

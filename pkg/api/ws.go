@@ -95,7 +95,7 @@ func (h *Hub) Run() {
 	}
 }
 
-func (g *GUI) handleWS(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	gameID := r.URL.Query().Get("game_id")
 	if gameID == "" {
 		http.Error(w, "missing game_id", 400)
@@ -108,7 +108,7 @@ func (g *GUI) handleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	client := &Client{hub: g.hub, conn: conn, send: make(chan []byte, 256), gameID: gameID}
+	client := &Client{hub: s.hub, conn: conn, send: make(chan []byte, 256), gameID: gameID}
 	client.hub.register <- client
 
 	// Start read/write pumps

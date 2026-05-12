@@ -68,9 +68,9 @@ export const api = {
     });
   },
   
-  setPlayers: (gameId: string, engine_white: boolean, engine_black: boolean) => request<StateJSON>(`/api/set_players?game_id=${gameId}`, {
+  setPlayers: (gameId: string, engine_white: boolean, engine_black: boolean, white_think_time: number, black_think_time: number) => request<StateJSON>(`/api/set_players?game_id=${gameId}`, {
     method: 'POST',
-    body: JSON.stringify({ engine_white, engine_black })
+    body: JSON.stringify({ engine_white, engine_black, white_think_time, black_think_time })
   }),
   
   undo: (gameId: string) => request<StateJSON>(`/api/undo?game_id=${gameId}`, { method: 'POST' }),

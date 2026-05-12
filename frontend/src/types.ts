@@ -18,6 +18,8 @@ export interface StateJSON {
   thinking: boolean;
   touch_move: boolean;
   touched_square: string;
+  white_think_time: number;
+  black_think_time: number;
 }
 
 export interface HintMove {

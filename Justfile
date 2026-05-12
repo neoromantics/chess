@@ -33,7 +33,7 @@ reset:
 dev:
     @echo "Starting local dev environment..."
     @(trap 'kill 0' SIGINT; \
-      go run ./cmd/chess -addr localhost:8080 -no-open & \
+      go run ./cmd/chess -addr localhost:8080 -no-open -gui & \
       cd frontend && VITE_API_URL=http://localhost:8080 npm run dev)
 
 # --- Engineering Standards ---

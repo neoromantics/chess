@@ -43,8 +43,8 @@
         :fen-input="fenInput"
         @update:white-player-type="updatePlayerType('white', $event)"
         @update:black-player-type="updatePlayerType('black', $event)"
-        @update:white-think-time="whiteThinkTime = $event"
-        @update:black-think-time="blackThinkTime = $event"
+        @update:white-think-time="updateThinkTime('white', $event)"
+        @update:black-think-time="updateThinkTime('black', $event)"
         @update:touch-move="setTouchMove"
         @update:auto-assess="autoAssess = $event"
         @update:sound-enabled="setSoundEnabled"
@@ -213,6 +213,8 @@ const updateState = (s: StateJSON) => {
   state.value = s;
   whitePlayerType.value = s.engine_white ? 'e' : 'h';
   blackPlayerType.value = s.engine_black ? 'e' : 'h';
+  whiteThinkTime.value = s.white_think_time;
+  blackThinkTime.value = s.black_think_time;
   
   const newLen = s.history ? s.history.length : 0;
   if (newLen === lastSoundedHistoryLen + 1) {
@@ -403,15 +405,30 @@ const runAssess = async (idx?: number, fromHistory = false) => {
   }
 };
 
+const updateSettings = async () => {
+  try {
+    updateState(await api.setPlayers(
+      props.id, 
+      whitePlayerType.value === 'e', 
+      blackPlayerType.value === 'e',
+      whiteThinkTime.value,
+      blackThinkTime.value
+    ));
+  } catch (e: any) {
+    toastStore.error('Failed to update settings');
+  }
+};
+
 const updatePlayerType = async (side: 'white' | 'black', type: string) => {
   if (side === 'white') whitePlayerType.value = type;
   else blackPlayerType.value = type;
-  
-  try {
-    updateState(await api.setPlayers(props.id, whitePlayerType.value === 'e', blackPlayerType.value === 'e'));
-  } catch (e: any) {
-    toastStore.error('Failed to update players');
-  }
+  updateSettings();
+};
+
+const updateThinkTime = async (side: 'white' | 'black', time: number) => {
+  if (side === 'white') whiteThinkTime.value = time;
+  else blackThinkTime.value = time;
+  updateSettings();
 };
 
 const setTouchMove = async (enabled: boolean) => {
