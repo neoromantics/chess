@@ -76,6 +76,7 @@ Production resilience the platform will need at any non-trivial scale.
 - ✅ Idempotency keys enforced on every state-mutating POST (Idempotency-Key header → idem:{user}:{key} -> response in Redis with 24h TTL).
 - ✅ Prometheus metrics end-to-end: request count/latency, WS connections, queue depth, rating updater lag, invite sweeper rate, leader-election holder identity.
 - ✅ Drop migration: 000005_drop_legacy_user_id — remove the legacy games.user_id column.
+- ✅ Force defaults migration: 000006_force_user_defaults — ensure production columns have correct defaults.
 - ✅ Connection stickiness. Use Ingress stickiness to help WS reconnect to the same pod.
 - ⬜ OpenTelemetry tracing spans across api → bus → worker → bus → api.
 - ⬜ Redis Sentinel (3 replicas, automatic failover) in deploy/kustomize/base/resources.yaml.
