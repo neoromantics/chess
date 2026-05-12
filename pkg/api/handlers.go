@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/neoromantics/chess/pkg/auth"
+	"github.com/neoromantics/chess/pkg/bus"
 	"github.com/neoromantics/chess/pkg/core"
 	"github.com/neoromantics/chess/pkg/db"
 	"github.com/neoromantics/chess/pkg/game"
@@ -109,6 +111,7 @@ func (s *Server) syncGameToDB(entry *gameEntry) {
 	gm := entry.game
 	hist, _ := json.Marshal(gm.History)
 	histSAN, _ := json.Marshal(gm.HistorySAN)
+	status := gm.Status()
 	record := &db.GameRecord{
 		ID:          entry.id,
 		UserID:      entry.userID,
@@ -118,15 +121,36 @@ func (s *Server) syncGameToDB(entry *gameEntry) {
 		HistorySAN:  string(histSAN),
 		EngineWhite: gm.EngineWhite,
 		EngineBlack: gm.EngineBlack,
-		Status:      string(gm.Status()),
+		Status:      string(status),
 		CreatedAt:   entry.createdAt,
 		UpdatedAt:   time.Now(),
 	}
 	snapshot := s.snapshotLocked(entry)
+
+	// Detect game end and publish event
+	shouldEmit := status != game.StatusOngoing && !entry.eventFired.Load()
+	if shouldEmit {
+		entry.eventFired.Store(true)
+	}
 	s.mu.Unlock()
 
 	s.db.SaveGame(record)
 	s.hub.BroadcastState(entry.id, snapshot)
+
+	if shouldEmit {
+		slog.Info("detecting game end, publishing event", "game_id", entry.id, "status", status)
+		event := bus.GameFinishedEvent{
+			GameID:      entry.id,
+			Status:      string(status),
+			FEN:         record.FEN,
+			EngineWhite: record.EngineWhite,
+			EngineBlack: record.EngineBlack,
+			UserID:      record.UserID,
+		}
+		if err := s.bus.Publish(context.Background(), bus.GameFinishedEventChannel, event); err != nil {
+			slog.Error("failed to publish game finished event", "error", err)
+		}
+	}
 }
 
 // Auth Handlers

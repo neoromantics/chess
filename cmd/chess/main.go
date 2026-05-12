@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/neoromantics/chess/pkg/api"
+	"github.com/neoromantics/chess/pkg/bus"
 	"github.com/neoromantics/chess/pkg/db"
 	"github.com/neoromantics/chess/pkg/uci"
 )
@@ -51,6 +52,13 @@ func main() {
 		}
 		defer store.Close()
 
+		redisAddr := os.Getenv("REDIS_URL")
+		if redisAddr == "" {
+			redisAddr = "localhost:6379"
+		}
+		eventBus := bus.NewClient(redisAddr)
+		defer eventBus.Close()
+
 		ln, err := listenWithFallback(*addr)
 		if err != nil {
 			log.Fatal(err)
@@ -59,7 +67,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Chess Platform Server: %s\n", url)
 
 		idle := time.Duration(*idleSec) * time.Second
-		server := api.NewServer(store)
+		server := api.NewServer(store, eventBus)
 		if idle > 0 {
 			server.StartIdleShutdown(idle)
 		}

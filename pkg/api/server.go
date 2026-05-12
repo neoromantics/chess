@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/neoromantics/chess/pkg/bus"
 	"github.com/neoromantics/chess/pkg/db"
 	"github.com/neoromantics/chess/pkg/game"
 )
@@ -47,6 +48,7 @@ type gameEntry struct {
 	game       *game.Game
 	thinking   atomic.Bool
 	stopSearch atomic.Bool
+	eventFired atomic.Bool
 	lastUsed   time.Time
 	id         string
 	userID     int64
@@ -61,6 +63,7 @@ type Server struct {
 	mux *http.ServeMux
 	db  db.Store
 	hub *Hub
+	bus *bus.Client
 
 	mu    sync.Mutex
 	games map[string]*gameEntry
@@ -68,10 +71,11 @@ type Server struct {
 	lastPing time.Time
 }
 
-func NewServer(database db.Store) *Server {
+func NewServer(database db.Store, eventBus *bus.Client) *Server {
 	s := &Server{
 		db:       database,
 		hub:      NewHub(),
+		bus:      eventBus,
 		games:    make(map[string]*gameEntry),
 		lastPing: time.Now(),
 	}

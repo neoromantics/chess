@@ -8,9 +8,12 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_started
     environment:
       - PORT=8080
       - DATABASE_URL=postgres://chess:chess@db:5432/chess?sslmode=disable
+      - REDIS_URL=redis:6379
       - JWT_SECRET=development-secret-key
     restart: always
 
@@ -22,6 +25,7 @@ services:
       - REDIS_URL=redis:6379
     depends_on:
       - api
+      - redis
     restart: always
 
   db:
@@ -37,4 +41,10 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    restart: always
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
     restart: always

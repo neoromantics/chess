@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"log"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/neoromantics/chess/pkg/bus"
 	"github.com/neoromantics/chess/pkg/core"
 )
 
@@ -37,12 +39,29 @@ func main() {
 
 	log.Println("Engine Worker starting...")
 
+	redisAddr := os.Getenv("REDIS_URL")
+	if redisAddr == "" {
+		redisAddr = "localhost:6379"
+	}
+	eventBus := bus.NewClient(redisAddr)
+	defer eventBus.Close()
+
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	// Simulate worker loop
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// Subscribe to game finished events
+	eventBus.Subscribe(ctx, bus.GameFinishedEventChannel, func(payload []byte) {
+		var event bus.GameFinishedEvent
+		if err := json.Unmarshal(payload, &event); err != nil {
+			log.Printf("Worker: failed to unmarshal event: %v", err)
+			return
+		}
+		log.Printf("Worker [ARCHIVE/RATING]: Received GAME_FINISHED event for ID: %s - Result: %s", event.GameID, event.Status)
+	})
 
 	go func() {
 		<-sigChan
