@@ -42,7 +42,7 @@ func LoggerMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		rw := &responseWriter{w, http.StatusOK}
-		
+
 		next.ServeHTTP(rw, r)
 
 		slog.Info("http request",
@@ -82,7 +82,7 @@ func SecurityHeadersMiddleware(next http.Handler) http.Handler {
 		if os.Getenv("HTTPS_ENABLED") == "true" {
 			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 		}
-		
+
 		next.ServeHTTP(w, r)
 	})
 }
@@ -186,7 +186,7 @@ func (rl *RateLimiter) Allow(ip string) bool {
 
 	// Refill tokens based on elapsed time
 	elapsed := now.Sub(b.lastRefill)
-	refill := int(elapsed / rl.window) * rl.rate
+	refill := int(elapsed/rl.window) * rl.rate
 	if refill > 0 {
 		b.tokens += refill
 		if b.tokens > rl.burst {

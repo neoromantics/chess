@@ -3,6 +3,7 @@ package db
 import (
 	"time"
 )
+
 type User struct {
 	ID           int64     `json:"id"`
 	UserID       int64     `json:"user_id"` // alias used by auth
@@ -48,14 +49,14 @@ type GameRecord struct {
 type Store interface {
 	Close() error
 	Ping() error
-	
+
 	// User management
 	CreateUser(username, passwordHash string) (*User, error)
 	GetUserByUsername(username string) (*User, error)
 	GetUserByID(id int64) (*User, error)
 	UpdateUserProfile(id int64, displayName, bio, avatarURL, country string) error
 	GetUserStats(id int64) (*UserStats, error)
-	
+
 	// Game management
 	SaveGame(g *GameRecord) error
 	ListGames(userID int64, sessionID string) ([]GameRecord, error)

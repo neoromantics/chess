@@ -14,7 +14,7 @@ import (
 )
 
 var (
-	jwtSecret = []byte(os.Getenv("JWT_SECRET"))
+	jwtSecret       = []byte(os.Getenv("JWT_SECRET"))
 	ErrUnauthorized = errors.New("unauthorized")
 )
 

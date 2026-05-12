@@ -94,7 +94,7 @@ func (t *TT) ExtractPV(b *Board, depth int) []Move {
 		if !ok || entry.Move == (Move{}) {
 			break
 		}
-		
+
 		// Verify legal
 		legal := tempB.GenerateLegalMoves()
 		found := false

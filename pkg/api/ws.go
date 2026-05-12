@@ -22,7 +22,7 @@ type Client struct {
 	hub  *Hub
 	conn *websocket.Conn
 	send chan []byte
-	
+
 	gameID string
 }
 
@@ -30,11 +30,11 @@ type Client struct {
 type Hub struct {
 	// Registered clients, keyed by gameID then by client.
 	gameClients map[string]map[*Client]bool
-	
+
 	broadcast  chan broadcastMessage
 	register   chan *Client
 	unregister chan *Client
-	
+
 	mu sync.RWMutex
 }
 

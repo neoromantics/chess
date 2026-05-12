@@ -13,9 +13,9 @@ import (
 // Event names
 const (
 	GameFinishedEventChannel = "game.finished"
-	EngineRequestChannel      = "engine.request"
-	EngineResponseChannel     = "engine.response"
-	EngineAbortChannel        = "engine.abort"
+	EngineRequestChannel     = "engine.request"
+	EngineResponseChannel    = "engine.response"
+	EngineAbortChannel       = "engine.abort"
 )
 
 // GameFinishedEvent represents the data sent when a game ends.

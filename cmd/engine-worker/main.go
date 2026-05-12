@@ -56,7 +56,7 @@ func main() {
 		}
 
 		log.Printf("Worker [ENGINE]: Received calculation request for ID: %s - Time: %v", req.GameID, req.MoveTime)
-		
+
 		// Run calculation in a goroutine to allow parallel processing
 		go func(r bus.EngineRequest) {
 			// Register active search
@@ -121,21 +121,21 @@ func ProcessRequest(req bus.EngineRequest, stop *atomic.Bool) bus.EngineResponse
 		if err != nil {
 			return bus.EngineResponse{GameID: req.GameID, Context: req.Context, Metadata: req.Metadata}
 		}
-		
+
 		// 1. Search for best move
 		resBest := b.IterativeDeepening(core.SearchLimits{MoveTime: req.MoveTime, History: req.History}, stop, nil)
-		
+
 		// 2. Evaluate user's move
 		// We make the move on a copy and search to get a reliable score
 		bAfter := *b
 		bAfter.MakeMove(m)
 		// Search depth should match roughly for fair comparison
 		resUser := bAfter.IterativeDeepening(core.SearchLimits{MoveTime: req.MoveTime, History: req.History}, stop, nil)
-		
+
 		// In chess engine, score is relative to side to move.
 		// For CP loss we need absolute scores or relative to the player who moved.
 		// ProcessRequest receives b before userMove, so b.SideToMove is the player.
-		
+
 		resp := bus.EngineResponse{
 			GameID:   req.GameID,
 			BestMove: resBest.BestMove.String(),
@@ -144,13 +144,15 @@ func ProcessRequest(req bus.EngineRequest, stop *atomic.Bool) bus.EngineResponse
 			Context:  req.Context,
 			Metadata: make(map[string]string),
 		}
-		for k, v := range req.Metadata { resp.Metadata[k] = v }
-		
+		for k, v := range req.Metadata {
+			resp.Metadata[k] = v
+		}
+
 		// Add results to metadata
 		resp.Metadata["best_score"] = fmt.Sprintf("%d", resBest.Score)
 		resp.Metadata["user_score"] = fmt.Sprintf("%d", -resUser.Score) // Flip because it's opponent's turn after move
 		resp.Metadata["player_side"] = fmt.Sprintf("%v", b.SideToMove)
-		
+
 		return resp
 	}
 

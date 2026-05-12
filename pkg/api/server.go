@@ -86,8 +86,8 @@ func NewServer(database db.Store, eventBus *bus.Client) *Server {
 		bus:           eventBus,
 		games:         make(map[string]*gameEntry),
 		lastPing:      time.Now(),
-		engineLimiter: NewRateLimiter(10, 10, time.Minute),  // 10 engine requests per minute per IP
-		gameLimiter:   NewRateLimiter(5, 5, time.Minute),    // 5 new games per minute per IP
+		engineLimiter: NewRateLimiter(10, 10, time.Minute), // 10 engine requests per minute per IP
+		gameLimiter:   NewRateLimiter(5, 5, time.Minute),   // 5 new games per minute per IP
 	}
 	go s.hub.Run()
 	s.listenToEngine()
@@ -134,11 +134,15 @@ func (s *Server) StartClockTicker() {
 						gm.BlackTime -= elapsed
 					}
 					gm.LastTick = now
-					
+
 					// Detect timeout
 					if gm.WhiteTime <= 0 || gm.BlackTime <= 0 {
-						if gm.WhiteTime < 0 { gm.WhiteTime = 0 }
-						if gm.BlackTime < 0 { gm.BlackTime = 0 }
+						if gm.WhiteTime < 0 {
+							gm.WhiteTime = 0
+						}
+						if gm.BlackTime < 0 {
+							gm.BlackTime = 0
+						}
 						slog.Info("game timeout detected", "game_id", id)
 						// syncGameToDB will broadcast the terminal state
 						s.mu.Unlock()
@@ -159,7 +163,7 @@ func (s *Server) StartCacheManager() {
 	go func() {
 		for {
 			time.Sleep(1 * time.Minute)
-			
+
 			// 1. Manage In-Memory Game Cache
 			s.mu.Lock()
 			now := time.Now()
@@ -169,11 +173,11 @@ func (s *Server) StartCacheManager() {
 					delete(s.games, id)
 				}
 			}
-			
+
 			// 2. Optional: Idle Server Shutdown
 			// idle := time.Since(s.lastPing)
 			s.mu.Unlock()
-			
+
 			// if idle > d {
 			// 	slog.Info("server idle timeout triggered")
 			// 	os.Exit(0)

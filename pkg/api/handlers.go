@@ -79,7 +79,7 @@ func (s *Server) getGame(r *http.Request) (*gameEntry, string, error) {
 			}
 		}
 	}
-	
+
 	if id == "" {
 		slog.Warn("missing game_id in request", "path", r.URL.Path, "method", r.Method)
 		return nil, "", fmt.Errorf("missing game_id")
@@ -142,7 +142,7 @@ func (s *Server) syncGameToDB(entry *gameEntry, newAssess any) {
 	hist, _ := json.Marshal(gm.History)
 	histSAN, _ := json.Marshal(gm.HistorySAN)
 	status := gm.Status()
-	
+
 	// Load current assessments from DB if we're adding a new one
 	var assessments []any
 	record, err := s.db.GetGame(entry.id)
@@ -381,7 +381,7 @@ func (s *Server) handleCreateGame(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	s.games[id] = entry
 	s.mu.Unlock()
-	
+
 	s.syncGameToDB(entry, nil)
 	writeJSON(w, map[string]string{"game_id": id})
 }
@@ -461,7 +461,9 @@ func (s *Server) handleTouch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 404)
 		return
 	}
-	var req struct{ Square string `json:"square"` }
+	var req struct {
+		Square string `json:"square"`
+	}
 	json.NewDecoder(r.Body).Decode(&req)
 	sq, _ := core.ParseSquare(req.Square)
 	s.mu.Lock()
@@ -477,7 +479,9 @@ func (s *Server) handleTouchMove(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 404)
 		return
 	}
-	var req struct{ Enabled bool `json:"enabled"` }
+	var req struct {
+		Enabled bool `json:"enabled"`
+	}
 	json.NewDecoder(r.Body).Decode(&req)
 	s.mu.Lock()
 	entry.game.TouchMove = req.Enabled
@@ -492,9 +496,11 @@ func (s *Server) handleMove(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 404)
 		return
 	}
-	var req struct{ Move string `json:"move"` }
+	var req struct {
+		Move string `json:"move"`
+	}
 	json.NewDecoder(r.Body).Decode(&req)
-	
+
 	s.mu.Lock()
 	if s.isThinking(r.Context(), entry.id) {
 		s.mu.Unlock()
@@ -529,11 +535,11 @@ func (s *Server) handleMove(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "illegal move", 403)
 		return
 	}
-	
+
 	entry.game.PlayMove(matched)
 	snapshot := s.snapshotLocked(entry)
 	s.mu.Unlock()
-	
+
 	go s.syncGameToDB(entry, nil)
 	go s.maybeTriggerEngine(entry)
 	writeJSON(w, snapshot)
@@ -558,12 +564,12 @@ func (s *Server) handleNew(w http.ResponseWriter, r *http.Request) {
 		EngineBlack bool `json:"engine_black"`
 	}
 	json.NewDecoder(r.Body).Decode(&req)
-	
+
 	s.mu.Lock()
 	// Signal any current search to stop
 	entry.stopSearch.Store(true)
 	s.broadcastEngineAbort(entry.id)
-	
+
 	entry.game.Reset()
 	entry.game.EngineWhite, entry.game.EngineBlack = req.EngineWhite, req.EngineBlack
 	snapshot := s.snapshotLocked(entry)
@@ -587,7 +593,7 @@ func (s *Server) handleSetPlayers(w http.ResponseWriter, r *http.Request) {
 		BlackThinkTime int  `json:"black_think_time"`
 	}
 	json.NewDecoder(r.Body).Decode(&req)
-	
+
 	s.mu.Lock()
 	entry.game.EngineWhite, entry.game.EngineBlack = req.EngineWhite, req.EngineBlack
 	if req.WhiteThinkTime > 0 {
@@ -596,10 +602,10 @@ func (s *Server) handleSetPlayers(w http.ResponseWriter, r *http.Request) {
 	if req.BlackThinkTime > 0 {
 		entry.blackThinkTime = time.Duration(req.BlackThinkTime) * time.Millisecond
 	}
-	
+
 	entry.stopSearch.Store(true)
 	s.broadcastEngineAbort(entry.id)
-	
+
 	snapshot := s.snapshotLocked(entry)
 	s.mu.Unlock()
 	go s.syncGameToDB(entry, nil)
@@ -637,7 +643,9 @@ func (s *Server) handleHint(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 404)
 		return
 	}
-	var req struct{ MoveTime int `json:"movetime"` }
+	var req struct {
+		MoveTime int `json:"movetime"`
+	}
 	json.NewDecoder(r.Body).Decode(&req)
 	s.mu.Lock()
 	if s.isThinking(r.Context(), entry.id) {
@@ -763,7 +771,7 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	
+
 	// Load assessments for the export
 	var assessments []any
 	record, err := s.db.GetGame(entry.id)
@@ -773,7 +781,7 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Content-Disposition", "attachment; filename=chess-game.json")
-	
+
 	exportData := map[string]any{
 		"game_id":      entry.id,
 		"start_fen":    entry.game.StartFEN,
@@ -783,7 +791,7 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 		"assessments":  assessments,
 		"exported_at":  time.Now(),
 	}
-	
+
 	json.NewEncoder(w).Encode(exportData)
 }
 
@@ -793,7 +801,11 @@ func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 404)
 		return
 	}
-	var sg struct { StartFEN string; Moves []string; EngineWhite, EngineBlack bool }
+	var sg struct {
+		StartFEN                 string
+		Moves                    []string
+		EngineWhite, EngineBlack bool
+	}
 	json.NewDecoder(r.Body).Decode(&sg)
 	s.mu.Lock()
 	entry.stopSearch.Store(true)
@@ -906,12 +918,12 @@ func (s *Server) listenToEngine() {
 			bestScore, _ := strconv.Atoi(resp.Metadata["best_score"])
 			userScore, _ := strconv.Atoi(resp.Metadata["user_score"])
 			idx, _ := strconv.Atoi(resp.Metadata["index"])
-			
+
 			playedM, _ := core.ParseUCISimple(resp.Metadata["move"])
 			bestM, _ := core.ParseUCISimple(resp.BestMove)
-			
+
 			cpLoss := bestScore - userScore
-			
+
 			assessPayload := map[string]any{
 				"index":      idx,
 				"label":      game.ClassifyAssessment(playedM, bestM, cpLoss, bestScore, userScore),
@@ -952,7 +964,7 @@ func (s *Server) maybeTriggerEngine(entry *gameEntry) {
 
 	board := *entry.game.Board
 	hist := game.CopyHistory(entry.game.HistoryHash())
-	
+
 	s.setThinking(context.Background(), entry.id, true)
 	entry.stopSearch.Store(false)
 
@@ -986,28 +998,40 @@ func (s *Server) maybeTriggerEngine(entry *gameEntry) {
 func (s *Server) snapshotLocked(entry *gameEntry) stateJSON {
 	game := entry.game
 	var lm *moveJSON
-	if game.LastMove != nil { lm = &moveJSON{From: core.SquareName(game.LastMove.From), To: core.SquareName(game.LastMove.To)} }
+	if game.LastMove != nil {
+		lm = &moveJSON{From: core.SquareName(game.LastMove.From), To: core.SquareName(game.LastMove.To)}
+	}
 	legal := game.Board.GenerateLegalMoves()
 	legalStrs := make([]string, len(legal))
-	for i, m := range legal { legalStrs[i] = m.String() }
+	for i, m := range legal {
+		legalStrs[i] = m.String()
+	}
 	turn := "w"
-	if game.Board.SideToMove == core.Black { turn = "b" }
+	if game.Board.SideToMove == core.Black {
+		turn = "b"
+	}
 	history, historySAN := append([]string(nil), game.History...), append([]string(nil), game.HistorySAN...)
-	if history == nil { history = []string{} }
-	if historySAN == nil { historySAN = []string{} }
-	
+	if history == nil {
+		history = []string{}
+	}
+	if historySAN == nil {
+		historySAN = []string{}
+	}
+
 	var assessments []any
 	record, err := s.db.GetGame(entry.id)
 	if err == nil && record.Assessments != "" {
 		json.Unmarshal([]byte(record.Assessments), &assessments)
 	}
-	if assessments == nil { assessments = []any{} }
+	if assessments == nil {
+		assessments = []any{}
+	}
 
 	return stateJSON{
 		FEN: game.Board.FEN(), Turn: turn, EngineWhite: game.EngineWhite, EngineBlack: game.EngineBlack,
 		EngineToMove: game.EngineToMove(), Status: string(game.Status()), InCheck: game.Board.InCheck(game.Board.SideToMove),
-		LegalMoves: legalStrs, History: history, HistorySAN: historySAN, LastMove: lm, 
-		Thinking: s.isThinking(context.Background(), entry.id),
+		LegalMoves: legalStrs, History: history, HistorySAN: historySAN, LastMove: lm,
+		Thinking:  s.isThinking(context.Background(), entry.id),
 		TouchMove: game.TouchMove, TouchedSquare: core.SquareName(game.TouchedSq),
 		WhiteThinkTime: int(entry.whiteThinkTime / time.Millisecond),
 		BlackThinkTime: int(entry.blackThinkTime / time.Millisecond),
