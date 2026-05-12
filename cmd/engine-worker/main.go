@@ -123,7 +123,6 @@ func main() {
 	}
 }
 
-
 // ProcessRequest runs the engine on the given position.
 func ProcessRequest(req bus.EngineRequest, stop *atomic.Bool) bus.EngineResponse {
 	b, err := core.ParseFEN(req.FEN)
