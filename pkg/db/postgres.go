@@ -102,6 +102,8 @@ func (s *PostgresStore) SaveGame(g *GameRecord) error {
 			fen=EXCLUDED.fen,
 			history=EXCLUDED.history,
 			history_san=EXCLUDED.history_san,
+			engine_white=EXCLUDED.engine_white,
+			engine_black=EXCLUDED.engine_black,
 			status=EXCLUDED.status,
 			updated_at=EXCLUDED.updated_at
 	`, g.ID, g.UserID, g.SessionID, g.FEN, g.History, g.HistorySAN, g.EngineWhite, g.EngineBlack, g.Status, g.CreatedAt, g.UpdatedAt)

@@ -634,17 +634,6 @@ func (s *Server) maybeTriggerEngine(entry *gameEntry) {
 	go func(e *gameEntry, b core.Board, h map[uint64]int, t time.Duration) {
 		slog.Info("engine starting calculation", "game_id", e.id, "movetime", t)
 		
-		// ALWAYS ensure thinking is cleared
-		defer e.thinking.Store(false)
-		
-		// Safety: ensure a re-check happens after this goroutine exits
-		// to handle settings changes or subsequent moves.
-		defer func() {
-			time.AfterFunc(100*time.Millisecond, func() {
-				s.maybeTriggerEngine(e)
-			})
-		}()
-
 		result := b.IterativeDeepening(
 			core.SearchLimits{MoveTime: t, History: h},
 			&e.stopSearch,
@@ -652,6 +641,8 @@ func (s *Server) maybeTriggerEngine(entry *gameEntry) {
 		)
 
 		s.mu.Lock()
+		e.thinking.Store(false)
+
 		if e.stopSearch.Load() || !e.game.EngineToMove() || e.game.Status() != game.StatusOngoing {
 			s.mu.Unlock()
 			s.syncGameToDB(e) 
@@ -667,6 +658,10 @@ func (s *Server) maybeTriggerEngine(entry *gameEntry) {
 		s.mu.Unlock()
 
 		s.syncGameToDB(e)
+
+		time.AfterFunc(100*time.Millisecond, func() {
+			s.maybeTriggerEngine(e)
+		})
 	}(entry, board, hist, moveTime)
 }
 

@@ -127,6 +127,8 @@ func (s *SQLiteStore) SaveGame(g *GameRecord) error {
 			fen=excluded.fen,
 			history=excluded.history,
 			history_san=excluded.history_san,
+			engine_white=excluded.engine_white,
+			engine_black=excluded.engine_black,
 			status=excluded.status,
 			updated_at=excluded.updated_at
 	`, g.ID, g.UserID, g.SessionID, g.FEN, g.History, g.HistorySAN, g.EngineWhite, g.EngineBlack, g.Status, g.CreatedAt, g.UpdatedAt)
