@@ -38,8 +38,8 @@ type Result float64
 
 // Opponent is a record of a single game against another player.
 type Opponent struct {
-	P      Player
-	Score  Result
+	P     Player
+	Score Result
 }
 
 // Glicko-2 internal conversion constants.

@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/neoromantics/chess/pkg/bus"
 	"github.com/neoromantics/chess/pkg/core"
 	"github.com/neoromantics/chess/pkg/leader"
 )
@@ -82,7 +81,7 @@ func (s *Server) sweepClocks(ctx context.Context) {
 			// Fast check passed, do authoritative check under lock
 			s.executeWithGameLock(ctx, id, func(entry *gameEntry) {
 				movingSide := entry.game.Board.SideToMove
-				
+
 				// Check grace period before deducting
 				if s.bus.IsInGracePeriod(ctx, id, movingSide) {
 					// Pause clock: update TurnStartedAt to now so deduction is 0
@@ -94,13 +93,23 @@ func (s *Server) sweepClocks(ctx context.Context) {
 
 				c := s.getClock(ctx, id)
 				e := time.Now().UnixMilli() - c.TurnStartedAt
-				if e < 0 { e = 0 }
+				if e < 0 {
+					e = 0
+				}
 
-				if movingSide == core.White { c.WhiteMS -= e } else { c.BlackMS -= e }
-				
+				if movingSide == core.White {
+					c.WhiteMS -= e
+				} else {
+					c.BlackMS -= e
+				}
+
 				if c.WhiteMS <= 0 || c.BlackMS <= 0 {
-					if c.WhiteMS < 0 { c.WhiteMS = 0 }
-					if c.BlackMS < 0 { c.BlackMS = 0 }
+					if c.WhiteMS < 0 {
+						c.WhiteMS = 0
+					}
+					if c.BlackMS < 0 {
+						c.BlackMS = 0
+					}
 					s.bus.SetClock(ctx, id, *c)
 					s.syncGameToDB(entry, nil)
 				}

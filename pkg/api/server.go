@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"sync"
+	"time"
 
 	"github.com/neoromantics/chess/pkg/auth"
 	"github.com/neoromantics/chess/pkg/bus"
@@ -53,8 +53,8 @@ type Server struct {
 	podID string
 	mux   *http.ServeMux
 	db    db.Store
-	hub *Hub
-	bus *bus.Client
+	hub   *Hub
+	bus   *bus.Client
 
 	// Rate limiters for expensive endpoints
 	engineLimiter *RateLimiter // /api/hint, /api/assess
@@ -63,7 +63,9 @@ type Server struct {
 
 func NewServer(database db.Store, eventBus *bus.Client) *Server {
 	podID, _ := os.Hostname()
-	if podID == "" { podID = "api-pod" }
+	if podID == "" {
+		podID = "api-pod"
+	}
 
 	s := &Server{
 		podID:         podID,
@@ -77,7 +79,7 @@ func NewServer(database db.Store, eventBus *bus.Client) *Server {
 	go s.hub.Run(context.Background())
 	s.listenToEngine()
 	s.StartClockTicker()
-	
+
 	// Leader-elected workers.
 	s.startInviteSweeper(context.Background())
 	s.startMatchmaker(context.Background())

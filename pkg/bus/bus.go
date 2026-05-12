@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
+	"github.com/neoromantics/chess/pkg/core"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -210,9 +212,9 @@ func (c *Client) GetSortedSetRangeWithScores(ctx context.Context, key string, st
 
 // GameClock represents the authoritative time remaining in a game.
 type GameClock struct {
-	WhiteMS        int64 `json:"white_ms"`
-	BlackMS        int64 `json:"black_ms"`
-	TurnStartedAt  int64 `json:"turn_started_at"` // Unix MS
+	WhiteMS       int64 `json:"white_ms"`
+	BlackMS       int64 `json:"black_ms"`
+	TurnStartedAt int64 `json:"turn_started_at"` // Unix MS
 }
 
 // SetClock initializes the authoritative clock in Redis.

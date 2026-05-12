@@ -63,7 +63,7 @@ func (s *Server) scheduleEngineTimeout(gameID string, movetime time.Duration) {
 		// Re-snapshot from PG and broadcast to unstick the UI.
 		s.executeWithGameLock(context.Background(), gameID, func(entry *gameEntry) {
 			entry.mu.Lock()
-			snapshot := s.snapshotLocked(entry)
+			snapshot := s.snapshotLocked(entry, s.getClock(context.Background(), entry.id))
 			entry.mu.Unlock()
 			s.hub.BroadcastState(gameID, snapshot)
 		})
@@ -266,7 +266,14 @@ func (s *Server) executeWithGameLock(ctx context.Context, gameID string, fn func
 		createdAt:      record.CreatedAt,
 		whiteThinkTime: time.Duration(record.WhiteThinkTime) * time.Millisecond,
 		blackThinkTime: time.Duration(record.BlackThinkTime) * time.Millisecond,
+		// Platform fields
+		WhiteUserID: record.WhiteUserID,
+		BlackUserID: record.BlackUserID,
+		TimeControl: record.TimeControl,
+		Rated:       record.Rated,
+		Result:      record.Result,
 	}
+	entry.stopSearch.Store(false)
 
 	fn(entry)
 }
@@ -307,9 +314,17 @@ func (s *Server) syncGameToDB(entry *gameEntry, newAssess any) {
 	if status != game.StatusOngoing && res == "*" {
 		switch status {
 		case game.StatusCheckmate:
-			if gm.Board.SideToMove == core.White { res = "0-1" } else { res = "1-0" }
+			if gm.Board.SideToMove == core.White {
+				res = "0-1"
+			} else {
+				res = "1-0"
+			}
 		case game.StatusTimeout:
-			if gm.WhiteTime <= 0 { res = "0-1" } else { res = "1-0" }
+			if gm.WhiteTime <= 0 {
+				res = "0-1"
+			} else {
+				res = "1-0"
+			}
 		case game.StatusStalemate, game.StatusDraw50, game.StatusDrawRepetition, game.StatusDrawInsufficient:
 			res = "1/2-1/2"
 		}
@@ -331,16 +346,16 @@ func (s *Server) syncGameToDB(entry *gameEntry, newAssess any) {
 		Rated:          entry.Rated,
 		Status:         string(status),
 		Result:         res,
-		Assessments: string(assessJSON),
-		CreatedAt:   entry.createdAt,
-		UpdatedAt:   time.Now(),
-		}
-		clock := s.getClock(context.Background(), entry.id)
-		snapshot := s.snapshotLocked(entry, clock)
-		snapshot.Assessments = assessments
+		Assessments:    string(assessJSON),
+		CreatedAt:      entry.createdAt,
+		UpdatedAt:      time.Now(),
+	}
+	clock := s.getClock(context.Background(), entry.id)
+	snapshot := s.snapshotLocked(entry, clock)
+	snapshot.Assessments = assessments
 
-		// Detect game end and publish event
-		shouldEmit := status != game.StatusOngoing && !entry.eventFired.Load()
+	// Detect game end and publish event
+	shouldEmit := status != game.StatusOngoing && !entry.eventFired.Load()
 	if shouldEmit {
 		entry.eventFired.Store(true)
 	}
@@ -618,8 +633,12 @@ func (s *Server) handleCreateGame(w http.ResponseWriter, r *http.Request) {
 		Rated:       false,
 		Result:      "*",
 	}
-	if gm.EngineWhite { entry.WhiteUserID = nil }
-	if !gm.EngineBlack { entry.BlackUserID = &user.UserID }
+	if gm.EngineWhite {
+		entry.WhiteUserID = nil
+	}
+	if !gm.EngineBlack {
+		entry.BlackUserID = &user.UserID
+	}
 	entry.stopSearch.Store(false)
 
 	s.syncGameToDB(entry, nil)
@@ -686,7 +705,7 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 	}
 	entry.mu.Lock()
 	defer entry.mu.Unlock()
-	writeJSON(w, s.snapshotLocked(entry))
+	writeJSON(w, s.snapshotLocked(entry, s.getClock(context.Background(), entry.id)))
 }
 
 func (s *Server) handleTouch(w http.ResponseWriter, r *http.Request) {
@@ -702,7 +721,7 @@ func (s *Server) handleTouch(w http.ResponseWriter, r *http.Request) {
 	sq, _ := core.ParseSquare(req.Square)
 	entry.mu.Lock()
 	entry.game.Touch(sq)
-	snapshot := s.snapshotLocked(entry)
+	snapshot := s.snapshotLocked(entry, s.getClock(context.Background(), entry.id))
 	entry.mu.Unlock()
 	writeJSON(w, snapshot)
 }
@@ -719,7 +738,7 @@ func (s *Server) handleTouchMove(w http.ResponseWriter, r *http.Request) {
 	json.NewDecoder(r.Body).Decode(&req)
 	entry.mu.Lock()
 	entry.game.TouchMove = req.Enabled
-	snapshot := s.snapshotLocked(entry)
+	snapshot := s.snapshotLocked(entry, s.getClock(context.Background(), entry.id))
 	entry.mu.Unlock()
 	writeJSON(w, snapshot)
 }
@@ -728,16 +747,22 @@ func (s *Server) deductClock(ctx context.Context, gameID string, side core.Color
 	clock := s.getClock(ctx, gameID)
 	now := time.Now().UnixMilli()
 	elapsed := now - clock.TurnStartedAt
-	if elapsed < 0 { elapsed = 0 }
+	if elapsed < 0 {
+		elapsed = 0
+	}
 
 	if side == core.White {
 		clock.WhiteMS -= elapsed
 	} else {
 		clock.BlackMS -= elapsed
 	}
-	if clock.WhiteMS < 0 { clock.WhiteMS = 0 }
-	if clock.BlackMS < 0 { clock.BlackMS = 0 }
-	
+	if clock.WhiteMS < 0 {
+		clock.WhiteMS = 0
+	}
+	if clock.BlackMS < 0 {
+		clock.BlackMS = 0
+	}
+
 	clock.TurnStartedAt = now
 	s.bus.SetClock(ctx, gameID, *clock)
 	return clock
@@ -820,14 +845,18 @@ func (s *Server) handleNew(w http.ResponseWriter, r *http.Request) {
 
 		entry.game.Reset()
 		entry.game.EngineWhite, entry.game.EngineBlack = req.EngineWhite, req.EngineBlack
-		
+
 		// Reset platform fields
 		entry.Result = "*"
 		user, _ := auth.GetUser(r.Context())
 		entry.WhiteUserID = &user.UserID
 		entry.BlackUserID = nil
-		if entry.game.EngineWhite { entry.WhiteUserID = nil }
-		if !entry.game.EngineBlack { entry.BlackUserID = &user.UserID }
+		if entry.game.EngineWhite {
+			entry.WhiteUserID = nil
+		}
+		if !entry.game.EngineBlack {
+			entry.BlackUserID = &user.UserID
+		}
 
 		snapshot := s.snapshotLocked(entry, nil)
 		entry.mu.Unlock()
@@ -865,7 +894,7 @@ func (s *Server) handleSetPlayers(w http.ResponseWriter, r *http.Request) {
 		entry.stopSearch.Store(true)
 		s.broadcastEngineAbort(entry.id)
 
-		snapshot := s.snapshotLocked(entry)
+		snapshot := s.snapshotLocked(entry, s.getClock(context.Background(), entry.id))
 		entry.mu.Unlock()
 		s.syncGameToDB(entry, nil)
 		go s.maybeTriggerEngine(entry)
@@ -879,7 +908,7 @@ func (s *Server) handleUndo(w http.ResponseWriter, r *http.Request) {
 		entry.stopSearch.Store(true)
 		s.broadcastEngineAbort(entry.id)
 		entry.game.Undo()
-		snapshot := s.snapshotLocked(entry)
+		snapshot := s.snapshotLocked(entry, s.getClock(context.Background(), entry.id))
 		entry.mu.Unlock()
 		s.syncGameToDB(entry, nil)
 		go s.maybeTriggerEngine(entry)
@@ -916,7 +945,7 @@ func (s *Server) handleHint(w http.ResponseWriter, r *http.Request) {
 
 	s.setThinking(context.Background(), entry.id, true)
 	entry.stopSearch.Store(false)
-	snapshot := s.snapshotLocked(entry)
+	snapshot := s.snapshotLocked(entry, s.getClock(context.Background(), entry.id))
 	entry.mu.Unlock()
 
 	s.hub.BroadcastState(entry.id, snapshot)
@@ -983,7 +1012,7 @@ func (s *Server) handleAssess(w http.ResponseWriter, r *http.Request) {
 
 	s.setThinking(context.Background(), entry.id, true)
 	entry.stopSearch.Store(false)
-	snapshot := s.snapshotLocked(entry)
+	snapshot := s.snapshotLocked(entry, s.getClock(context.Background(), entry.id))
 	entry.mu.Unlock()
 
 	s.hub.BroadcastState(entry.id, snapshot)
@@ -1068,7 +1097,7 @@ func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
 		entry.stopSearch.Store(true)
 		s.broadcastEngineAbort(entry.id)
 		entry.game.Load(sg.StartFEN, sg.Moves, sg.EngineWhite, sg.EngineBlack)
-		snapshot := s.snapshotLocked(entry)
+		snapshot := s.snapshotLocked(entry, s.getClock(context.Background(), entry.id))
 		entry.mu.Unlock()
 		s.syncGameToDB(entry, nil)
 		go s.maybeTriggerEngine(entry)
@@ -1154,9 +1183,13 @@ func (s *Server) handleOfferDraw(w http.ResponseWriter, r *http.Request) {
 
 	// Notify opponent via user channel
 	opponentID := int64(0)
-	if side == core.White && entry.BlackUserID != nil { opponentID = *entry.BlackUserID }
-	if side == core.Black && entry.WhiteUserID != nil { opponentID = *entry.WhiteUserID }
-	
+	if side == core.White && entry.BlackUserID != nil {
+		opponentID = *entry.BlackUserID
+	}
+	if side == core.Black && entry.WhiteUserID != nil {
+		opponentID = *entry.WhiteUserID
+	}
+
 	if opponentID != 0 {
 		s.hub.PublishUser(r.Context(), opponentID, "draw_offered", map[string]any{"game_id": entry.id})
 	}
@@ -1180,7 +1213,9 @@ func (s *Server) handleAcceptDraw(w http.ResponseWriter, r *http.Request) {
 
 	// Verify it wasn't you who offered
 	side := core.White
-	if entry.BlackUserID != nil && *entry.BlackUserID == user.UserID { side = core.Black }
+	if entry.BlackUserID != nil && *entry.BlackUserID == user.UserID {
+		side = core.Black
+	}
 	if offer.OfferedBy == side {
 		http.Error(w, "cannot accept your own offer", 400)
 		return
@@ -1223,15 +1258,21 @@ func (s *Server) handleOfferTakeback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	side := core.White
-	if entry.BlackUserID != nil && *entry.BlackUserID == user.UserID { side = core.Black }
+	if entry.BlackUserID != nil && *entry.BlackUserID == user.UserID {
+		side = core.Black
+	}
 
 	s.bus.SetTakebackOffer(r.Context(), entry.id, side)
 	entry.mu.Unlock()
 
 	// Notify opponent
 	opponentID := int64(0)
-	if side == core.White && entry.BlackUserID != nil { opponentID = *entry.BlackUserID }
-	if side == core.Black && entry.WhiteUserID != nil { opponentID = *entry.WhiteUserID }
+	if side == core.White && entry.BlackUserID != nil {
+		opponentID = *entry.BlackUserID
+	}
+	if side == core.Black && entry.WhiteUserID != nil {
+		opponentID = *entry.WhiteUserID
+	}
 	if opponentID != 0 {
 		s.hub.PublishUser(r.Context(), opponentID, "takeback_offered", map[string]any{"game_id": entry.id})
 	}
@@ -1253,7 +1294,9 @@ func (s *Server) handleAcceptTakeback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	side := core.White
-	if entry.BlackUserID != nil && *entry.BlackUserID == user.UserID { side = core.Black }
+	if entry.BlackUserID != nil && *entry.BlackUserID == user.UserID {
+		side = core.Black
+	}
 	if offer.OfferedBy == side {
 		http.Error(w, "cannot accept your own offer", 400)
 		return
@@ -1262,7 +1305,7 @@ func (s *Server) handleAcceptTakeback(w http.ResponseWriter, r *http.Request) {
 	entry.mu.Lock()
 	entry.game.Undo()
 	s.bus.DelTakebackOffer(r.Context(), entry.id)
-	
+
 	// Reset turn start time so current player isn't penalized for the takeback time
 	clock := s.getClock(r.Context(), entry.id)
 	clock.TurnStartedAt = time.Now().UnixMilli()
@@ -1332,10 +1375,11 @@ func (s *Server) listenToEngine() {
 							entry.game.PlayMove(matched)
 							s.deductClock(context.Background(), entry.id, movingSide)
 						}
-						}
-						s.setThinking(context.Background(), entry.id, false)
-						s.mu.Unlock()
-						go s.syncGameToDB(entry, nil)
+					}
+				}
+				s.setThinking(context.Background(), entry.id, false)
+				entry.mu.Unlock()
+				go s.syncGameToDB(entry, nil)
 				time.AfterFunc(100*time.Millisecond, func() {
 					s.maybeTriggerEngine(entry)
 				})
@@ -1414,7 +1458,8 @@ func (s *Server) maybeTriggerEngine(entry *gameEntry) {
 	s.setThinking(context.Background(), entry.id, true)
 	entry.stopSearch.Store(false)
 
-	snapshot := s.snapshotLocked(entry)
+	clock := s.getClock(context.Background(), entry.id)
+	snapshot := s.snapshotLocked(entry, clock)
 	entry.mu.Unlock()
 
 	s.hub.BroadcastState(entry.id, snapshot)

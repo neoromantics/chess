@@ -12,6 +12,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/neoromantics/chess/pkg/auth"
 	"github.com/neoromantics/chess/pkg/bus"
+	"github.com/neoromantics/chess/pkg/core"
 	"github.com/neoromantics/chess/pkg/db"
 )
 
@@ -233,7 +234,9 @@ func (s *Server) handleWSGame(w http.ResponseWriter, r *http.Request) {
 	s.bus.TrackConnection(context.Background(), gameID, user.UserID, s.podID)
 	// Player reconnected, clear any grace period
 	side := core.White
-	if rec.BlackUserID != nil && *rec.BlackUserID == user.UserID { side = core.Black }
+	if rec.BlackUserID != nil && *rec.BlackUserID == user.UserID {
+		side = core.Black
+	}
 	s.bus.DelGracePeriod(context.Background(), gameID, side)
 
 	conn, err := upgrader.Upgrade(w, r, nil)

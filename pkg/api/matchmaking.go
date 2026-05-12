@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/neoromantics/chess/pkg/auth"
+	"github.com/neoromantics/chess/pkg/bus"
 	"github.com/neoromantics/chess/pkg/db"
 	"github.com/neoromantics/chess/pkg/leader"
 )
