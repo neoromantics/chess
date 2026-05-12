@@ -137,6 +137,38 @@ func (c *Client) Close() error {
 	return c.rdb.Close()
 }
 
+// Enqueue pushes a JSON-encoded payload onto a Redis List (RPUSH).
+// This guarantees exactly-once delivery: only one consumer will BLPOP the task.
+func (c *Client) Enqueue(ctx context.Context, queue string, payload any) error {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
+	err = c.rdb.RPush(ctx, queue, data).Err()
+	if err != nil {
+		return fmt.Errorf("failed to enqueue to %s: %w", queue, err)
+	}
+
+	slog.Debug("enqueued task", "queue", queue)
+	return nil
+}
+
+// Dequeue blocks until a task is available on the Redis List (BLPOP).
+// Returns the raw JSON payload. The timeout controls how long to wait;
+// use 0 for an indefinite block. Returns nil payload on timeout or context cancellation.
+func (c *Client) Dequeue(ctx context.Context, queue string, timeout time.Duration) ([]byte, error) {
+	result, err := c.rdb.BLPop(ctx, timeout, queue).Result()
+	if err != nil {
+		return nil, err
+	}
+	// BLPOP returns [key, value]
+	if len(result) < 2 {
+		return nil, fmt.Errorf("unexpected BLPOP result")
+	}
+	return []byte(result[1]), nil
+}
+
 // LockGame acquires a distributed lock for a specific game to prevent concurrent mutations.
 // Returns true if the lock was acquired, false if it is currently held by another process.
 func (c *Client) LockGame(ctx context.Context, gameID string, ttl time.Duration) (bool, error) {
@@ -148,26 +180,4 @@ func (c *Client) LockGame(ctx context.Context, gameID string, ttl time.Duration)
 func (c *Client) UnlockGame(ctx context.Context, gameID string) error {
 	key := fmt.Sprintf("lock:game:%s", gameID)
 	return c.rdb.Del(ctx, key).Err()
-}
-
-// Enqueue adds a task to a Redis list (queue).
-func (c *Client) Enqueue(ctx context.Context, queue string, payload any) error {
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("failed to marshal payload: %w", err)
-	}
-	return c.rdb.RPush(ctx, queue, data).Err()
-}
-
-// Dequeue blocks until a task is available in the Redis list (queue).
-func (c *Client) Dequeue(ctx context.Context, queue string) ([]byte, error) {
-	// BLPop returns [key, value]
-	res, err := c.rdb.BLPop(ctx, 0, queue).Result()
-	if err != nil {
-		return nil, err
-	}
-	if len(res) < 2 {
-		return nil, fmt.Errorf("invalid blpop result")
-	}
-	return []byte(res[1]), nil
 }

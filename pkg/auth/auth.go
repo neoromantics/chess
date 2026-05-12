@@ -20,7 +20,9 @@ var (
 
 func init() {
 	if len(jwtSecret) == 0 {
-		jwtSecret = []byte("development-only-secret")
+		// SECURITY: In production, JWT_SECRET MUST be set via the environment.
+		// This fallback is ONLY acceptable for local development.
+		jwtSecret = []byte("dev-only-insecure-jwt-secret-do-not-use-in-production")
 	}
 }
 

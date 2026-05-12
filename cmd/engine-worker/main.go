@@ -48,7 +48,7 @@ func main() {
 		log.Printf("Worker [ARCHIVE/RATING]: Received GAME_FINISHED event for ID: %s - Result: %s", event.GameID, event.Status)
 	})
 
-	// Subscribe to engine abort signals
+	// Subscribe to engine abort signals (still Pub/Sub — all workers must hear aborts)
 	eventBus.Subscribe(ctx, bus.EngineAbortChannel, func(payload []byte) {
 		var abort bus.EngineAbort
 		if err := json.Unmarshal(payload, &abort); err != nil {
@@ -62,51 +62,56 @@ func main() {
 		}
 	})
 
+	// CPU-bounded semaphore: limits concurrent engine searches to available cores.
+	// If the worker is at capacity, it won't dequeue the next task, allowing
+	// another idle worker pod to pick it up from the Redis queue.
+	maxConcurrent := runtime.NumCPU()
+	if maxConcurrent < 1 {
+		maxConcurrent = 1
+	}
+	sem := make(chan struct{}, maxConcurrent)
+	log.Printf("Worker [ENGINE]: Bounded concurrency to %d parallel searches", maxConcurrent)
+
 	go func() {
 		<-sigChan
 		log.Println("Shutting down worker...")
 		cancel()
 	}()
 
-	// Worker Pool Semaphore
-	maxWorkers := runtime.NumCPU()
-	if maxWorkers < 1 {
-		maxWorkers = 1
-	}
-	sem := make(chan struct{}, maxWorkers)
-	log.Printf("Worker pool initialized with %d slots", maxWorkers)
-
+	// Main dequeue loop: pulls tasks from the Redis List one at a time.
+	// BLPOP ensures exactly-once delivery — only this worker gets this task.
 	for {
 		select {
 		case <-ctx.Done():
+			log.Println("Worker: context cancelled, draining active searches...")
+			// Wait for all active searches to finish
+			for i := 0; i < maxConcurrent; i++ {
+				sem <- struct{}{}
+			}
+			log.Println("Worker: graceful shutdown complete")
 			return
-		default:
-			// Dequeue a task (blocks until one is available)
-			payload, err := eventBus.Dequeue(ctx, bus.EngineRequestChannel)
+		case sem <- struct{}{}: // Acquire semaphore slot before dequeuing
+			payload, err := eventBus.Dequeue(ctx, bus.EngineRequestChannel, 2*time.Second)
 			if err != nil {
-				if ctx.Err() == nil {
-					log.Printf("Worker: failed to dequeue task: %v", err)
-					time.Sleep(1 * time.Second)
+				<-sem // Release slot on error
+				if ctx.Err() != nil {
+					return
 				}
+				// BLPOP timeout — just loop again
 				continue
 			}
 
 			var req bus.EngineRequest
 			if err := json.Unmarshal(payload, &req); err != nil {
+				<-sem
 				log.Printf("Worker: failed to unmarshal request: %v", err)
 				continue
 			}
 
-			// Acquire worker slot (blocks if at capacity, interruptible by ctx)
-			select {
-			case sem <- struct{}{}:
-			case <-ctx.Done():
-				return
-			}
-			log.Printf("Worker [ENGINE]: Processing request for ID: %s - Time: %v", req.GameID, req.MoveTime)
+			log.Printf("Worker [ENGINE]: Dequeued task for ID: %s - Context: %s - Time: %v", req.GameID, req.Context, req.MoveTime)
 
 			go func(r bus.EngineRequest) {
-				defer func() { <-sem }() // Release slot
+				defer func() { <-sem }() // Release semaphore when done
 
 				// Register active search
 				stop := &atomic.Bool{}
@@ -117,7 +122,7 @@ func main() {
 				if err := eventBus.Publish(context.Background(), bus.EngineResponseChannel, resp); err != nil {
 					log.Printf("Worker: failed to publish response: %v", err)
 				}
-				log.Printf("Worker [ENGINE]: Finished request for ID: %s - Move: %s", resp.GameID, resp.BestMove)
+				log.Printf("Worker [ENGINE]: Published response for ID: %s - Move: %s", resp.GameID, resp.BestMove)
 			}(req)
 		}
 	}

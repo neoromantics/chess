@@ -705,7 +705,7 @@ func (s *Server) handleHint(w http.ResponseWriter, r *http.Request) {
 		Context:  "hint",
 	}
 	go func() {
-		if err := s.bus.Publish(context.Background(), bus.EngineRequestChannel, job); err != nil {
+		if err := s.bus.Enqueue(context.Background(), bus.EngineRequestChannel, job); err != nil {
 			slog.Error("failed to dispatch hint request", "error", err)
 			entry.mu.Lock()
 			s.setThinking(context.Background(), entry.id, false)
@@ -775,7 +775,7 @@ func (s *Server) handleAssess(w http.ResponseWriter, r *http.Request) {
 	}
 
 	go func() {
-		if err := s.bus.Publish(context.Background(), bus.EngineRequestChannel, job); err != nil {
+		if err := s.bus.Enqueue(context.Background(), bus.EngineRequestChannel, job); err != nil {
 			slog.Error("failed to dispatch assess request", "error", err)
 			entry.mu.Lock()
 			s.setThinking(context.Background(), entry.id, false)
@@ -1010,13 +1010,13 @@ func (s *Server) maybeTriggerEngine(entry *gameEntry) {
 
 	go func() {
 		if err := s.bus.Enqueue(context.Background(), bus.EngineRequestChannel, req); err != nil {
-			slog.Error("failed to enqueue engine request", "error", err)
+			slog.Error("failed to dispatch engine request", "error", err)
 			entry.mu.Lock()
 			s.setThinking(context.Background(), entry.id, false)
 			entry.mu.Unlock()
 			s.syncGameToDB(entry, nil)
 		} else {
-			slog.Info("engine request enqueued to worker pool", "game_id", entry.id, "movetime", moveTime)
+			slog.Info("engine request dispatched to worker", "game_id", entry.id, "movetime", moveTime)
 		}
 	}()
 }

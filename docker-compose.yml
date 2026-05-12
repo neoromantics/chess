@@ -12,9 +12,9 @@ services:
         condition: service_started
     environment:
       - PORT=8080
-      - DATABASE_URL=postgres://chess:chess@db:5432/chess?sslmode=disable
+      - DATABASE_URL=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable
       - REDIS_URL=redis:6379
-      - JWT_SECRET=development-secret-key
+      - JWT_SECRET=${JWT_SECRET:-development-secret-key}
     restart: always
 
   worker:
@@ -31,9 +31,9 @@ services:
   db:
     image: postgres:16-alpine
     environment:
-      - POSTGRES_USER=chess
-      - POSTGRES_PASSWORD=chess
-      - POSTGRES_DB=chess
+      - POSTGRES_USER=${POSTGRES_USER:-chess}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-chess}
+      - POSTGRES_DB=${POSTGRES_DB:-chess}
     volumes:
       - ./postgres-data:/var/lib/postgresql/data
     healthcheck:

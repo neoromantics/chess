@@ -29,7 +29,6 @@ RUN apk add --no-cache ca-certificates
 COPY --from=backend-builder /app/chess-api .
 ENV PORT=8080
 ENV DB_PATH=/app/data/chess.db
-ENV JWT_SECRET=change-me-in-production
 RUN mkdir -p /app/data
 EXPOSE 8080
 CMD ["./chess-api", "-addr", "0.0.0.0:8080", "-no-open"]

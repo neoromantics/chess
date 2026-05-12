@@ -37,3 +37,6 @@ default.pgo
 
 # Postgres data
 /postgres-data/
+
+# Environment secrets (use .env.example as template)
+.env

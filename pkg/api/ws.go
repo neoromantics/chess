@@ -24,7 +24,6 @@ type Client struct {
 	send chan []byte
 
 	gameID string
-	once   sync.Once
 }
 
 // Hub manages all active WebSocket connections.
@@ -70,14 +69,10 @@ func (h *Hub) Run() {
 			if clients, ok := h.gameClients[client.gameID]; ok {
 				if _, ok := clients[client]; ok {
 					delete(clients, client)
+					close(client.send)
 					if len(clients) == 0 {
 						delete(h.gameClients, client.gameID)
 					}
-					// Ensure we only close once
-					client.once.Do(func() {
-						close(client.send)
-						client.conn.Close()
-					})
 				}
 			}
 			h.mu.Unlock()
@@ -127,6 +122,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 func (c *Client) readPump() {
 	defer func() {
 		c.hub.unregister <- c
+		c.conn.Close()
 	}()
 	for {
 		_, _, err := c.conn.ReadMessage()
