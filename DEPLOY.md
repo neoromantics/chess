@@ -1,12 +1,11 @@
 # Deployment Guide: neoromantics Chess Platform
 
-This platform is designed for professional Kubernetes deployment using **Werf** and **Helm**.
+This platform is designed for professional Kubernetes deployment via **GitHub Actions** to a **k3s** cluster.
 
 ## 🏗 Prerequisites
-- **Kubernetes Cluster**: Access to a K8s cluster (GKE, EKS, local k3s/Minikube).
-- **Werf**: The primary build and deployment orchestrator ([werf.io](https://werf.io)).
-- **Helm**: Template engine for K8s manifests.
-- **Redis & Postgres**: Provided in the Helm chart, but can be swapped for managed services.
+- **Kubernetes Cluster**: Access to a K8s cluster (e.g., k3s on a VM).
+- **GitHub Actions**: Configured with SSH secrets to deploy to the remote server.
+- **GHCR**: GitHub Container Registry for hosting images.
 
 ## 🚀 Deployment Workflow (k3s + Let's Encrypt)
 
@@ -26,14 +25,13 @@ kubectl -n chess create secret generic chess-secrets \
   --from-literal=database-url="postgres://chess:${PG_PASSWORD}@chess-db:5432/chess?sslmode=disable"
 ```
 
-### 2. Build & Push Images
-We use a local Docker registry running on the k3s host to manage images:
-```bash
-docker build --network=host -t localhost:5000/chess-api:latest --target api-runtime .
-docker build --network=host -t localhost:5000/chess-worker:latest --target worker-runtime .
-docker push localhost:5000/chess-api:latest
-docker push localhost:5000/chess-worker:latest
-```
+### 2. Configure GitHub Actions
+Your GitHub repository must have the following Secrets configured to allow the CI/CD pipeline to deploy:
+- `DEPLOY_SSH_HOST` (e.g. `vcm-50800.vm.duke.edu`)
+- `DEPLOY_SSH_USER` (e.g. `tl370`)
+- `DEPLOY_SSH_KEY` (Private SSH key with server access)
+
+Once configured, pushing to the `main` branch will automatically build Docker images, push them to `ghcr.io`, and deploy them via SSH.
 
 ### 3. Deploy Manifests
 Deploy the core infrastructure from the tracked manifests:
