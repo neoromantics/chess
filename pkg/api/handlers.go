@@ -27,14 +27,17 @@ import (
 
 func (s *Server) isThinking(ctx context.Context, gameID string) bool {
 	val, err := s.bus.GetState(ctx, "thinking:"+gameID)
-	return err == nil && val == "1"
+	return err == nil && val != ""
 }
 
-func (s *Server) setThinking(ctx context.Context, gameID string, val bool) {
+func (s *Server) setThinking(ctx context.Context, gameID string, val bool) string {
 	if val {
-		s.bus.SetState(ctx, "thinking:"+gameID, "1", 2*time.Minute)
+		ver := fmt.Sprintf("%d", time.Now().UnixNano())
+		s.bus.SetState(ctx, "thinking:"+gameID, ver, 2*time.Minute)
+		return ver
 	} else {
 		s.bus.DelState(ctx, "thinking:"+gameID)
+		return ""
 	}
 }
 
@@ -80,25 +83,19 @@ func (s *Server) IdempotencyMiddleware(next http.HandlerFunc) http.HandlerFunc {
 }
 
 // scheduleEngineTimeout is the API-side safety net for engine requests
-// whose worker died mid-search. Without it, the "thinking" flag persists
-// for its full 2-minute TTL and the user is stuck — UX bug we shipped
-// once and don't want to re-ship. After a generous budget (2× movetime
-// + 3s) we clear the flag and broadcast fresh state so clients unblock.
-//
-// This is intentionally a Phase 1 placeholder; the production answer is
-// Redis Streams + XCLAIM (Phase 5 hardening). The placeholder is good
-// enough: a worker crash takes one extra move-time to recover, not the
-// 2-minute eternity the original code shipped.
-func (s *Server) scheduleEngineTimeout(gameID string, movetime time.Duration) {
+// whose worker died mid-search.
+func (s *Server) scheduleEngineTimeout(gameID, version string, movetime time.Duration) {
 	budget := 2*movetime + 3*time.Second
 	if budget < 5*time.Second {
 		budget = 5 * time.Second
 	}
 	time.AfterFunc(budget, func() {
-		if !s.isThinking(context.Background(), gameID) {
-			return // Worker responded; nothing to do.
+		current, err := s.bus.GetState(context.Background(), "thinking:"+gameID)
+		if err != nil || current != version {
+			return // Worker responded or a new move started; nothing to do.
 		}
-		slog.Warn("engine response timeout, clearing thinking flag", "game_id", gameID, "movetime", movetime)
+
+		slog.Warn("engine response timeout, clearing thinking flag", "game_id", gameID, "movetime", movetime, "version", version)
 		s.setThinking(context.Background(), gameID, false)
 		s.broadcastEngineAbort(gameID)
 
@@ -289,15 +286,32 @@ func (s *Server) withGameLock(w http.ResponseWriter, r *http.Request, fn func(en
 }
 
 func (s *Server) executeWithGameLock(ctx context.Context, gameID string, fn func(entry *gameEntry)) {
-	lock, err := s.bus.LockGame(ctx, gameID, 5*time.Second)
-	if err != nil || lock == nil {
-		slog.Warn("failed to acquire game lock in executeWithGameLock", "game_id", gameID, "error", err)
+	var lock *bus.GameLock
+	var err error
+
+	// Retry loop: if the lock is held (e.g. by the HTTP request that triggered
+	// the engine), wait a bit. Engine responses often arrive within milliseconds.
+	for i := 0; i < 20; i++ {
+		lock, err = s.bus.LockGame(ctx, gameID, 5*time.Second)
+		if err == nil && lock != nil {
+			break
+		}
+		if err != nil {
+			slog.Warn("lock acquisition error", "game_id", gameID, "error", err)
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	if lock == nil {
+		slog.Warn("failed to acquire game lock in executeWithGameLock after retries", "game_id", gameID)
 		return
 	}
 	defer lock.Release(context.Background())
 
 	record, err := s.db.GetGame(gameID)
 	if err != nil {
+		slog.Error("failed to fetch game for locked execution", "game_id", gameID, "error", err)
 		return
 	}
 
@@ -995,7 +1009,7 @@ func (s *Server) handleHint(w http.ResponseWriter, r *http.Request) {
 	hist := game.CopyHistory(entry.game.HistoryHash())
 	moveTime := time.Duration(req.MoveTime) * time.Millisecond
 
-	s.setThinking(context.Background(), entry.id, true)
+	version := s.setThinking(context.Background(), entry.id, true)
 	entry.stopSearch.Store(false)
 	snapshot := s.snapshotLocked(entry, s.getClock(context.Background(), entry.id))
 	entry.mu.Unlock()
@@ -1011,7 +1025,7 @@ func (s *Server) handleHint(w http.ResponseWriter, r *http.Request) {
 		Context:  "hint",
 	}
 	go func() {
-		if err := s.bus.Enqueue(context.Background(), bus.EngineRequestChannel, job); err != nil {
+		if _, err := s.bus.StreamAdd(context.Background(), bus.EngineRequestChannel, job); err != nil {
 			slog.Error("failed to dispatch hint request", "error", err)
 			entry.mu.Lock()
 			s.setThinking(context.Background(), entry.id, false)
@@ -1019,7 +1033,7 @@ func (s *Server) handleHint(w http.ResponseWriter, r *http.Request) {
 			s.syncGameToDB(entry, nil)
 			return
 		}
-		s.scheduleEngineTimeout(entry.id, moveTime)
+		s.scheduleEngineTimeout(entry.id, version, moveTime)
 	}()
 
 	w.WriteHeader(http.StatusAccepted)
@@ -1062,7 +1076,7 @@ func (s *Server) handleAssess(w http.ResponseWriter, r *http.Request) {
 	userMove, _ := entry.game.UndoStack[idx].Move, entry.game.PlayerAt(idx)
 	moveTime := time.Duration(req.MoveTime) * time.Millisecond
 
-	s.setThinking(context.Background(), entry.id, true)
+	version := s.setThinking(context.Background(), entry.id, true)
 	entry.stopSearch.Store(false)
 	snapshot := s.snapshotLocked(entry, s.getClock(context.Background(), entry.id))
 	entry.mu.Unlock()
@@ -1083,7 +1097,7 @@ func (s *Server) handleAssess(w http.ResponseWriter, r *http.Request) {
 	}
 
 	go func() {
-		if err := s.bus.Enqueue(context.Background(), bus.EngineRequestChannel, job); err != nil {
+		if _, err := s.bus.StreamAdd(context.Background(), bus.EngineRequestChannel, job); err != nil {
 			slog.Error("failed to dispatch assess request", "error", err)
 			entry.mu.Lock()
 			s.setThinking(context.Background(), entry.id, false)
@@ -1091,7 +1105,7 @@ func (s *Server) handleAssess(w http.ResponseWriter, r *http.Request) {
 			s.syncGameToDB(entry, nil)
 			return
 		}
-		s.scheduleEngineTimeout(entry.id, moveTime)
+		s.scheduleEngineTimeout(entry.id, version, moveTime)
 	}()
 
 	w.WriteHeader(http.StatusAccepted)
@@ -1516,7 +1530,7 @@ func (s *Server) maybeTriggerEngine(entry *gameEntry) {
 	board := *entry.game.Board
 	hist := game.CopyHistory(entry.game.HistoryHash())
 
-	s.setThinking(context.Background(), entry.id, true)
+	version := s.setThinking(context.Background(), entry.id, true)
 	entry.stopSearch.Store(false)
 
 	clock := s.getClock(context.Background(), entry.id)
@@ -1543,7 +1557,7 @@ func (s *Server) maybeTriggerEngine(entry *gameEntry) {
 			s.syncGameToDB(entry, nil)
 		} else {
 			slog.Info("engine request dispatched to worker stream", "game_id", entry.id, "movetime", moveTime)
-			s.scheduleEngineTimeout(entry.id, moveTime)
+			s.scheduleEngineTimeout(entry.id, version, moveTime)
 		}
 	}()
 }
