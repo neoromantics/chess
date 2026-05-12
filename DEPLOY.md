@@ -55,7 +55,7 @@ just build
 ```
 
 ## 🔗 Distributed Stack Overview
-- **API Pods**: Stateless, handles WS and Auth.
-- **Worker Pods**: CPU-intensive, subscribes to Redis tasks.
-- **Redis**: Acts as the message broker and transient state store.
+- **API Pods (Strictly Stateless)**: Handles WS and Auth. Infinitely scalable behind standard load balancers without requiring sticky sessions, thanks to Redis.
+- **Worker Pods**: CPU-intensive, subscribes to Redis tasks for move calculation.
+- **Redis**: The operational backbone. Acts as the message broker, distributed lock manager (preventing race conditions), and inter-pod cache invalidator.
 - **Postgres**: Authoritative persistent storage.

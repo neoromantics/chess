@@ -5,18 +5,18 @@
 
 A professional, distributed chess platform architected for commercial scale. Built with Go, Vue 3 (TypeScript), and Redis.
 
-## Distributed Architecture
-This platform is engineered as a high-performance microservices ecosystem:
-- API Orchestrator (Go): A lightweight, event-driven hub that manages WebSockets, authentication, and game state.
-- Engine Worker Pool (Go): CPU-intensive move calculations and game analysis offloaded to dedicated worker nodes.
-- Message Broker (Redis): Facilitates asynchronous communication between services via Pub/Sub and task queues.
-- Persistent Storage (PostgreSQL): Durable storage for user profiles, game history, and analysis records.
+## Enterprise Distributed Architecture
+This platform is engineered as a highly available, strictly consistent microservices ecosystem:
+- **API Gateway (Go)**: A strictly stateless, event-driven orchestrator managing WebSockets and Auth. Can be scaled infinitely behind standard load balancers.
+- **Engine Worker Pool (Go)**: CPU-intensive search and evaluation offloaded to a horizontally scalable pool of dedicated worker nodes.
+- **Redis (State Sync & Concurrency)**: Serves as the operational backbone. Provides distributed locking (preventing race conditions) and cross-pod cache invalidation (solving split-brain state issues).
+- **Postgres (Persistence)**: The authoritative durable store for game lifecycles and analysis records.
 
 ## Key Features
-- Authoritative Engine: Backend automatically schedules and manages engine turns, ensuring game integrity.
-- Reactive Analysis: Real-time move assessments (Brilliant, Blunder, etc.) and hints streamed via event-driven WebSockets.
-- Multi-User Scale: Horizontal scaling support for both the API gateway and the calculation worker pool.
-- Headless Backend: Pure data/model management with a decoupled, reactive frontend terminal.
+- **Strictly Consistent State:** Redis-backed distributed locks guarantee absolute consistency across active games, even during concurrent mutations across different K8s nodes.
+- **Reactive Cache Hydration:** Pub/Sub cache invalidation ensures that WebSockets instantly stream the latest board state regardless of which pod processes the move.
+- **Zero-Downtime GitOps:** Automated CI/CD pipeline building multi-stage immutable containers, seamlessly rolled out to a k3s cluster.
+- **Authoritative Headless Engine:** The backend is the sole arbiter of time and legality. The Vue 3 frontend is a decoupled, reactive terminal.
 
 ## Quick Start (Docker)
 The entire stack is containerized for professional environment parity.
