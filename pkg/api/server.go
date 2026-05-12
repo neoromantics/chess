@@ -284,6 +284,8 @@ func (s *Server) refreshGameFromDB(id string) {
 	// Preserve the engine configurations, but update the FEN and history
 	entry.game.Load(record.FEN, history, record.EngineWhite, record.EngineBlack)
 	entry.game.HistorySAN = historySAN
+	entry.whiteThinkTime = time.Duration(record.WhiteThinkTime) * time.Millisecond
+	entry.blackThinkTime = time.Duration(record.BlackThinkTime) * time.Millisecond
 
 	snapshot := s.snapshotLocked(entry)
 	s.mu.Unlock()

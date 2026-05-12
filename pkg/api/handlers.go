@@ -125,8 +125,8 @@ func (s *Server) getGame(r *http.Request) (*gameEntry, string, error) {
 		sessionID:      record.SessionID,
 		createdAt:      record.CreatedAt,
 		lastUsed:       time.Now(),
-		whiteThinkTime: 1000 * time.Millisecond,
-		blackThinkTime: 1000 * time.Millisecond,
+		whiteThinkTime: time.Duration(record.WhiteThinkTime) * time.Millisecond,
+		blackThinkTime: time.Duration(record.BlackThinkTime) * time.Millisecond,
 	}
 	entry.stopSearch.Store(false)
 	s.mu.Lock()
@@ -173,18 +173,20 @@ func (s *Server) syncGameToDB(entry *gameEntry, newAssess any) {
 	assessJSON, _ := json.Marshal(assessments)
 
 	gameRec := &db.GameRecord{
-		ID:          entry.id,
-		UserID:      entry.userID,
-		SessionID:   entry.sessionID,
-		FEN:         gm.Board.FEN(),
-		History:     string(hist),
-		HistorySAN:  string(histSAN),
-		EngineWhite: gm.EngineWhite,
-		EngineBlack: gm.EngineBlack,
-		Status:      string(status),
-		Assessments: string(assessJSON),
-		CreatedAt:   entry.createdAt,
-		UpdatedAt:   time.Now(),
+		ID:             entry.id,
+		UserID:         entry.userID,
+		SessionID:      entry.sessionID,
+		FEN:            gm.Board.FEN(),
+		History:        string(hist),
+		HistorySAN:     string(histSAN),
+		EngineWhite:    gm.EngineWhite,
+		EngineBlack:    gm.EngineBlack,
+		WhiteThinkTime: int(entry.whiteThinkTime.Milliseconds()),
+		BlackThinkTime: int(entry.blackThinkTime.Milliseconds()),
+		Status:         string(status),
+		Assessments:    string(assessJSON),
+		CreatedAt:      entry.createdAt,
+		UpdatedAt:      time.Now(),
 	}
 	snapshot := s.snapshotLocked(entry)
 	snapshot.Assessments = assessments

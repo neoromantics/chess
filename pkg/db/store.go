@@ -30,18 +30,20 @@ type UserStats struct {
 
 // GameRecord represents a persistent game state in the database.
 type GameRecord struct {
-	ID          string    `json:"id"`
-	UserID      int64     `json:"user_id"`
-	SessionID   string    `json:"session_id"`
-	FEN         string    `json:"fen"`
-	History     string    `json:"history"`     // JSON string
-	HistorySAN  string    `json:"history_san"` // JSON string
-	EngineWhite bool      `json:"engine_white"`
-	EngineBlack bool      `json:"engine_black"`
-	Status      string    `json:"status"`
-	Assessments string    `json:"assessments"` // JSON string
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID             string    `json:"id"`
+	UserID         int64     `json:"user_id"`
+	SessionID      string    `json:"session_id"`
+	FEN            string    `json:"fen"`
+	History        string    `json:"history"`     // JSON string
+	HistorySAN     string    `json:"history_san"` // JSON string
+	EngineWhite    bool      `json:"engine_white"`
+	EngineBlack    bool      `json:"engine_black"`
+	WhiteThinkTime int       `json:"white_think_time"` // in ms
+	BlackThinkTime int       `json:"black_think_time"` // in ms
+	Status         string    `json:"status"`
+	Assessments    string    `json:"assessments"` // JSON string
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 // Store is the interface for all persistent storage operations.

@@ -51,6 +51,8 @@ func (s *SQLiteStore) init() error {
 			history_san TEXT NOT NULL,
 			engine_white BOOLEAN NOT NULL,
 			engine_black BOOLEAN NOT NULL,
+			white_think_time INTEGER NOT NULL DEFAULT 1000,
+			black_think_time INTEGER NOT NULL DEFAULT 1000,
 			status TEXT NOT NULL,
 			assessments TEXT NOT NULL DEFAULT '[]',
 			created_at DATETIME NOT NULL,
@@ -70,6 +72,8 @@ func (s *SQLiteStore) init() error {
 	s.db.Exec("ALTER TABLE users ADD COLUMN country TEXT NOT NULL DEFAULT ''")
 	s.db.Exec("ALTER TABLE users ADD COLUMN last_login DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP")
 	s.db.Exec("ALTER TABLE games ADD COLUMN assessments TEXT NOT NULL DEFAULT '[]'")
+	s.db.Exec("ALTER TABLE games ADD COLUMN white_think_time INTEGER NOT NULL DEFAULT 1000")
+	s.db.Exec("ALTER TABLE games ADD COLUMN black_think_time INTEGER NOT NULL DEFAULT 1000")
 
 	return nil
 }
@@ -173,8 +177,8 @@ func (s *SQLiteStore) GetUserStats(id int64) (*UserStats, error) {
 
 func (s *SQLiteStore) SaveGame(g *GameRecord) error {
 	_, err := s.db.Exec(`
-		INSERT INTO games (id, user_id, session_id, fen, history, history_san, engine_white, engine_black, status, assessments, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO games (id, user_id, session_id, fen, history, history_san, engine_white, engine_black, white_think_time, black_think_time, status, assessments, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			user_id=excluded.user_id,
 			session_id=excluded.session_id,
@@ -183,16 +187,18 @@ func (s *SQLiteStore) SaveGame(g *GameRecord) error {
 			history_san=excluded.history_san,
 			engine_white=excluded.engine_white,
 			engine_black=excluded.engine_black,
+			white_think_time=excluded.white_think_time,
+			black_think_time=excluded.black_think_time,
 			status=excluded.status,
 			assessments=excluded.assessments,
 			updated_at=excluded.updated_at
-	`, g.ID, g.UserID, g.SessionID, g.FEN, g.History, g.HistorySAN, g.EngineWhite, g.EngineBlack, g.Status, g.Assessments, g.CreatedAt, g.UpdatedAt)
+	`, g.ID, g.UserID, g.SessionID, g.FEN, g.History, g.HistorySAN, g.EngineWhite, g.EngineBlack, g.WhiteThinkTime, g.BlackThinkTime, g.Status, g.Assessments, g.CreatedAt, g.UpdatedAt)
 	return err
 }
 
 func (s *SQLiteStore) ListGames(userID int64, sessionID string) ([]GameRecord, error) {
 	query := `
-		SELECT id, user_id, session_id, fen, history, history_san, engine_white, engine_black, status, assessments, created_at, updated_at
+		SELECT id, user_id, session_id, fen, history, history_san, engine_white, engine_black, white_think_time, black_think_time, status, assessments, created_at, updated_at
 		FROM games
 		WHERE (user_id > 0 AND user_id = ?) OR (user_id = 0 AND session_id = ?)
 		ORDER BY updated_at DESC
@@ -206,7 +212,7 @@ func (s *SQLiteStore) ListGames(userID int64, sessionID string) ([]GameRecord, e
 	var records []GameRecord
 	for rows.Next() {
 		var g GameRecord
-		if err := rows.Scan(&g.ID, &g.UserID, &g.SessionID, &g.FEN, &g.History, &g.HistorySAN, &g.EngineWhite, &g.EngineBlack, &g.Status, &g.Assessments, &g.CreatedAt, &g.UpdatedAt); err != nil {
+		if err := rows.Scan(&g.ID, &g.UserID, &g.SessionID, &g.FEN, &g.History, &g.HistorySAN, &g.EngineWhite, &g.EngineBlack, &g.WhiteThinkTime, &g.BlackThinkTime, &g.Status, &g.Assessments, &g.CreatedAt, &g.UpdatedAt); err != nil {
 			return nil, err
 		}
 		records = append(records, g)
@@ -217,10 +223,10 @@ func (s *SQLiteStore) ListGames(userID int64, sessionID string) ([]GameRecord, e
 func (s *SQLiteStore) GetGame(id string) (*GameRecord, error) {
 	g := &GameRecord{}
 	err := s.db.QueryRow(`
-		SELECT id, user_id, session_id, fen, history, history_san, engine_white, engine_black, status, assessments, created_at, updated_at
+		SELECT id, user_id, session_id, fen, history, history_san, engine_white, engine_black, white_think_time, black_think_time, status, assessments, created_at, updated_at
 		FROM games
 		WHERE id = ?
-	`, id).Scan(&g.ID, &g.UserID, &g.SessionID, &g.FEN, &g.History, &g.HistorySAN, &g.EngineWhite, &g.EngineBlack, &g.Status, &g.Assessments, &g.CreatedAt, &g.UpdatedAt)
+	`, id).Scan(&g.ID, &g.UserID, &g.SessionID, &g.FEN, &g.History, &g.HistorySAN, &g.EngineWhite, &g.EngineBlack, &g.WhiteThinkTime, &g.BlackThinkTime, &g.Status, &g.Assessments, &g.CreatedAt, &g.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
