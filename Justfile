@@ -13,6 +13,7 @@ build:
 
 # Start the entire distributed stack (API, Worker, Redis, Postgres)
 up:
+    @if [ ! -f .env ]; then echo "No .env found — bootstrapping with secrets-init"; just secrets-init; fi
     docker-compose up --build -d
 
 # Scale up engine calculation nodes
@@ -42,10 +43,12 @@ logs-worker:
 status:
     docker-compose ps
 
-# Fully reset the platform (warning: deletes all database data)
+# Fully reset the platform (warning: deletes all database data, including the
+# bind-mounted ./postgres-data and the local .env)
 reset:
     docker-compose down -v
-    docker-compose up --build -d
+    rm -rf postgres-data .env
+    just up
 
 # --- Development Workflow ---
 
