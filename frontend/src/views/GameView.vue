@@ -236,8 +236,14 @@ const connectWS = () => {
   ws = new WebSocket(url);
   ws.onmessage = (event) => {
     try {
-      const newState = JSON.parse(event.data);
-      updateState(newState);
+      const data = JSON.parse(event.data);
+      if (data.type === 'state') {
+        updateState(data.payload);
+      } else if (data.type === 'hint') {
+        onHintReceived(data.payload);
+      } else if (data.type === 'assess') {
+        onAssessReceived(data.payload);
+      }
     } catch (e) {
       console.error('Failed to parse WS message', e);
     }
@@ -245,6 +251,26 @@ const connectWS = () => {
   ws.onclose = () => {
     setTimeout(connectWS, 3000);
   };
+};
+
+const onHintReceived = (data: any) => {
+  if (data) {
+    hint.value = { from: data.from, to: data.to };
+    hintInfo.value = `Hint: ${data.from}→${data.to}${data.promo ? '=' + data.promo.toUpperCase() : ''} (${data.score}, depth ${data.depth})`;
+  } else {
+    hint.value = null;
+    hintInfo.value = 'No move available.';
+  }
+};
+
+const onAssessReceived = (a: any) => {
+  assessments[a.index] = a;
+  assessColor.value = ASSESS_COLORS[a.label] || '#ddd';
+  let txt = `${a.move}: ${a.label}`;
+  if (a.label !== 'Best' && a.label !== 'Brilliant') txt += ` (-${a.cp_loss}cp; best ${a.best_move})`;
+  else if (a.label === 'Brilliant') txt += ` (+${-a.cp_loss}cp vs engine pick ${a.best_move})`;
+  else txt += ` (${a.user_score})`;
+  assessInfo.value = txt;
 };
 
 const onSquare = async (sq: Square) => {
@@ -365,15 +391,8 @@ const getHint = async () => {
   hintInfo.value = 'thinking…';
   const movetime = state.value.turn === 'w' ? whiteThinkTime.value : blackThinkTime.value;
   try {
-    const data = await api.getHint(props.id, movetime);
-    updateState(data.state);
-    if (data.hint) {
-      hint.value = { from: data.hint.from, to: data.hint.to };
-      hintInfo.value = `Hint: ${data.hint.from}→${data.hint.to}${data.hint.promo ? '=' + data.hint.promo.toUpperCase() : ''} (${data.hint.score}, depth ${data.hint.depth})`;
-    } else {
-      hint.value = null;
-      hintInfo.value = 'No move available.';
-    }
+    await api.getHint(props.id, movetime);
+    // Result will be handled by WebSocket event
   } catch (e: any) {
     hintInfo.value = '';
     toastStore.error('Hint failed: ' + e.message);
@@ -386,16 +405,8 @@ const runAssess = async (idx?: number, fromHistory = false) => {
   assessColor.value = '#888';
   const movetime = Math.min(state.value.turn === 'w' ? whiteThinkTime.value : blackThinkTime.value, 800);
   try {
-    const a = await api.assess(props.id, movetime, idx);
-    assessments[a.index] = a;
-    if (!fromHistory || idx === state.value.history.length - 1) {
-      assessColor.value = ASSESS_COLORS[a.label] || '#ddd';
-      let txt = `${a.move}: ${a.label}`;
-      if (a.label !== 'Best' && a.label !== 'Brilliant') txt += ` (-${a.cp_loss}cp; best ${a.best_move})`;
-      else if (a.label === 'Brilliant') txt += ` (+${-a.cp_loss}cp vs engine pick ${a.best_move})`;
-      else txt += ` (${a.user_score})`;
-      assessInfo.value = txt;
-    }
+    await api.assess(props.id, movetime, idx);
+    // Result will be handled by WebSocket event
   } catch (e: any) {
     assessInfo.value = '';
     toastStore.error('Assessment failed');

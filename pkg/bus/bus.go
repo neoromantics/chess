@@ -29,20 +29,22 @@ type GameFinishedEvent struct {
 
 // EngineRequest represents a request for the engine to calculate a move.
 type EngineRequest struct {
-	GameID   string         `json:"game_id"`
-	FEN      string         `json:"fen"`
-	History  map[uint64]int `json:"history"`
-	MoveTime time.Duration  `json:"movetime"`
-	Context  string         `json:"context"` // "move", "hint", "assess"
+	GameID   string            `json:"game_id"`
+	FEN      string            `json:"fen"`
+	History  map[uint64]int    `json:"history"`
+	MoveTime time.Duration     `json:"movetime"`
+	Context  string            `json:"context"` // "move", "hint", "assess"
+	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
 // EngineResponse represents the result of an engine calculation.
 type EngineResponse struct {
-	GameID   string `json:"game_id"`
-	BestMove string `json:"best_move"` // UCI format
-	Score    int    `json:"score"`
-	Depth    int    `json:"depth"`
-	Context  string `json:"context"`
+	GameID   string            `json:"game_id"`
+	BestMove string            `json:"best_move"` // UCI format
+	Score    int               `json:"score"`
+	Depth    int               `json:"depth"`
+	Context  string            `json:"context"`
+	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
 

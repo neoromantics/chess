@@ -103,6 +103,29 @@ func (b *Board) ParseUCIMove(s string) (Move, error) {
 	return m, nil
 }
 
+// ParseUCISimple parses long algebraic into from/to/promo without board checks.
+func ParseUCISimple(s string) (Move, error) {
+	if len(s) < 4 || len(s) > 5 {
+		return Move{}, fmt.Errorf("bad move %q", s)
+	}
+	from, err := ParseSquare(s[0:2])
+	if err != nil {
+		return Move{}, err
+	}
+	to, err := ParseSquare(s[2:4])
+	if err != nil {
+		return Move{}, err
+	}
+	m := Move{From: from, To: to}
+	if len(s) == 5 {
+		m.Promo = promoFromChar(s[4])
+		if m.Promo == Empty {
+			return Move{}, fmt.Errorf("bad promo %q", s)
+		}
+	}
+	return m, nil
+}
+
 // Undo holds the information needed to revert a MakeMove.
 type Undo struct {
 	Move           Move

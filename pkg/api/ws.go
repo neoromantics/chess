@@ -144,7 +144,18 @@ func (c *Client) writePump() {
 	}
 }
 
+// Event represents a structured WebSocket message.
+type Event struct {
+	Type    string `json:"type"`
+	Payload any    `json:"payload"`
+}
+
 func (h *Hub) BroadcastState(gameID string, state any) {
-	data, _ := json.Marshal(state)
+	h.BroadcastEvent(gameID, "state", state)
+}
+
+func (h *Hub) BroadcastEvent(gameID string, eventType string, payload any) {
+	event := Event{Type: eventType, Payload: payload}
+	data, _ := json.Marshal(event)
 	h.broadcast <- broadcastMessage{gameID: gameID, data: data}
 }

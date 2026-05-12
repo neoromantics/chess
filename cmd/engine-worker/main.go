@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -89,10 +90,51 @@ func ProcessRequest(req bus.EngineRequest) bus.EngineResponse {
 	b, err := core.ParseFEN(req.FEN)
 	if err != nil {
 		log.Printf("Worker: failed to parse FEN: %v", err)
-		return bus.EngineResponse{GameID: req.GameID, Context: req.Context}
+		return bus.EngineResponse{GameID: req.GameID, Context: req.Context, Metadata: req.Metadata}
 	}
 
 	stop := &atomic.Bool{}
+	
+	if req.Context == "assess" {
+		userMoveStr := req.Metadata["move"]
+		m, err := b.ParseUCIMove(userMoveStr)
+		if err != nil {
+			return bus.EngineResponse{GameID: req.GameID, Context: req.Context, Metadata: req.Metadata}
+		}
+		
+		// 1. Search for best move
+		resBest := b.IterativeDeepening(core.SearchLimits{MoveTime: req.MoveTime, History: req.History}, stop, nil)
+		
+		// 2. Evaluate user's move
+		// We make the move on a copy and search to get a reliable score
+		bAfter := *b
+		bAfter.MakeMove(m)
+		// Search depth should match roughly for fair comparison
+		resUser := bAfter.IterativeDeepening(core.SearchLimits{MoveTime: req.MoveTime, History: req.History}, stop, nil)
+		
+		// In chess engine, score is relative to side to move.
+		// For CP loss we need absolute scores or relative to the player who moved.
+		// ProcessRequest receives b before userMove, so b.SideToMove is the player.
+		
+		resp := bus.EngineResponse{
+			GameID:   req.GameID,
+			BestMove: resBest.BestMove.String(),
+			Score:    resBest.Score, // Engine's best score
+			Depth:    resBest.Depth,
+			Context:  req.Context,
+			Metadata: make(map[string]string),
+		}
+		for k, v := range req.Metadata { resp.Metadata[k] = v }
+		
+		// Add results to metadata
+		resp.Metadata["best_score"] = fmt.Sprintf("%d", resBest.Score)
+		resp.Metadata["user_score"] = fmt.Sprintf("%d", -resUser.Score) // Flip because it's opponent's turn after move
+		resp.Metadata["player_side"] = fmt.Sprintf("%v", b.SideToMove)
+		
+		return resp
+	}
+
+	// Default (move or hint)
 	res := b.IterativeDeepening(core.SearchLimits{
 		MoveTime: req.MoveTime,
 		History:  req.History,
@@ -104,5 +146,6 @@ func ProcessRequest(req bus.EngineRequest) bus.EngineResponse {
 		Score:    res.Score,
 		Depth:    res.Depth,
 		Context:  req.Context,
+		Metadata: req.Metadata,
 	}
 }

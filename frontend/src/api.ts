@@ -9,7 +9,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     const text = await response.text();
     throw new Error(text || `Request failed with status ${response.status}`);
   }
-  if (response.status === 204) return null as T;
+  if (response.status === 204 || response.status === 202) return null as T;
   return response.json();
 }
 

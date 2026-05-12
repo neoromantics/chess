@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -488,24 +489,34 @@ func (s *Server) handleHint(w http.ResponseWriter, r *http.Request) {
 	}
 	board := *entry.game.Board
 	hist := game.CopyHistory(entry.game.HistoryHash())
+	moveTime := time.Duration(req.MoveTime) * time.Millisecond
+
 	entry.thinking.Store(true)
 	entry.stopSearch.Store(false)
+	snapshot := s.snapshotLocked(entry)
 	s.mu.Unlock()
-	
-	defer entry.thinking.Store(false)
-	result := board.IterativeDeepening(core.SearchLimits{MoveTime: time.Duration(req.MoveTime) * time.Millisecond, History: hist}, &entry.stopSearch, nil)
-	
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	res := map[string]any{"state": s.snapshotLocked(entry)}
-	if result.BestMove != (core.Move{}) && !entry.stopSearch.Load() {
-		m := result.BestMove
-		res["hint"] = map[string]any{
-			"move": m.String(), "from": core.SquareName(m.From), "to": core.SquareName(m.To),
-			"promo": string(core.PromoChar(m.Promo)), "score": uci.ScoreToUCI(result.Score), "depth": result.Depth,
-		}
+
+	s.hub.BroadcastState(entry.id, snapshot)
+
+	// Dispatch hint request to worker
+	job := bus.EngineRequest{
+		GameID:   entry.id,
+		FEN:      board.FEN(),
+		History:  hist,
+		MoveTime: moveTime,
+		Context:  "hint",
 	}
-	writeJSON(w, res)
+	go func() {
+		if err := s.bus.Publish(context.Background(), bus.EngineRequestChannel, job); err != nil {
+			slog.Error("failed to dispatch hint request", "error", err)
+			s.mu.Lock()
+			entry.thinking.Store(false)
+			s.mu.Unlock()
+			s.syncGameToDB(entry)
+		}
+	}()
+
+	w.WriteHeader(http.StatusAccepted)
 }
 
 func (s *Server) handleAssess(w http.ResponseWriter, r *http.Request) {
@@ -534,27 +545,41 @@ func (s *Server) handleAssess(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no move to assess", 400)
 		return
 	}
-	before, after := entry.game.BoardsAroundMove(idx)
-	userMove, player := entry.game.UndoStack[idx].Move, entry.game.PlayerAt(idx)
+	before, _ := entry.game.BoardsAroundMove(idx)
+	userMove, _ := entry.game.UndoStack[idx].Move, entry.game.PlayerAt(idx)
+	moveTime := time.Duration(req.MoveTime) * time.Millisecond
+
 	entry.thinking.Store(true)
 	entry.stopSearch.Store(false)
+	snapshot := s.snapshotLocked(entry)
 	s.mu.Unlock()
-	
-	defer entry.thinking.Store(false)
-	t := time.Duration(req.MoveTime) * time.Millisecond
-	resBefore := before.IterativeDeepening(core.SearchLimits{MoveTime: t}, &entry.stopSearch, nil)
-	resAfter := after.IterativeDeepening(core.SearchLimits{MoveTime: t}, &entry.stopSearch, nil)
-	
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	bestScore, userScore := resBefore.Score, resAfter.Score
-	if player == core.Black { bestScore, userScore = -bestScore, -userScore }
-	cpLoss := bestScore - userScore
-	writeJSON(w, map[string]any{
-		"index": idx, "label": game.ClassifyAssessment(userMove, resBefore.BestMove, cpLoss, bestScore, userScore),
-		"move": userMove.String(), "best_move": resBefore.BestMove.String(),
-		"user_score": uci.ScoreToUCI(resAfter.Score), "best_score": uci.ScoreToUCI(resBefore.Score), "cp_loss": cpLoss,
-	})
+
+	s.hub.BroadcastState(entry.id, snapshot)
+
+	// Dispatch assessment request to worker
+	job := bus.EngineRequest{
+		GameID:   entry.id,
+		FEN:      before.FEN(),
+		History:  game.CopyHistory(entry.game.HistoryHash()), // Roughly correct
+		MoveTime: moveTime,
+		Context:  "assess",
+		Metadata: map[string]string{
+			"move":  userMove.String(),
+			"index": fmt.Sprintf("%d", idx),
+		},
+	}
+
+	go func() {
+		if err := s.bus.Publish(context.Background(), bus.EngineRequestChannel, job); err != nil {
+			slog.Error("failed to dispatch assess request", "error", err)
+			s.mu.Lock()
+			entry.thinking.Store(false)
+			s.mu.Unlock()
+			s.syncGameToDB(entry)
+		}
+	}()
+
+	w.WriteHeader(http.StatusAccepted)
 }
 
 func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
@@ -642,33 +667,70 @@ func (s *Server) listenToEngine() {
 			return
 		}
 
-		// Ensure we are still waiting for a move and it's still the engine's turn
-		if !entry.game.EngineToMove() || entry.game.Status() != game.StatusOngoing {
+		// Handle Context
+		if resp.Context == "move" {
+			if entry.game.EngineToMove() && entry.game.Status() == game.StatusOngoing {
+				m, err := entry.game.Board.ParseUCIMove(resp.BestMove)
+				if err == nil {
+					if matched, ok := game.MatchMove(entry.game.Board.GenerateLegalMoves(), m); ok {
+						slog.Info("engine move received from worker", "game_id", resp.GameID, "move", matched.String())
+						entry.game.PlayMove(matched)
+					}
+				}
+			}
+			entry.thinking.Store(false)
+			s.mu.Unlock()
+			go s.syncGameToDB(entry)
+			time.AfterFunc(100*time.Millisecond, func() {
+				s.maybeTriggerEngine(entry)
+			})
+			return
+		}
+
+		if resp.Context == "hint" {
+			m, _ := core.ParseUCISimple(resp.BestMove)
+			hintPayload := map[string]any{
+				"move":  resp.BestMove,
+				"from":  core.SquareName(m.From),
+				"to":    core.SquareName(m.To),
+				"promo": string(core.PromoChar(m.Promo)),
+				"score": uci.ScoreToUCI(resp.Score),
+				"depth": resp.Depth,
+			}
+			s.hub.BroadcastEvent(resp.GameID, "hint", hintPayload)
 			entry.thinking.Store(false)
 			s.mu.Unlock()
 			go s.syncGameToDB(entry)
 			return
 		}
 
-		if resp.BestMove != "" {
-			m, err := entry.game.Board.ParseUCIMove(resp.BestMove)
-			if err == nil {
-				if matched, ok := game.MatchMove(entry.game.Board.GenerateLegalMoves(), m); ok {
-					slog.Info("engine move received from worker", "game_id", resp.GameID, "move", matched.String())
-					entry.game.PlayMove(matched)
-				}
+		if resp.Context == "assess" {
+			bestScore, _ := strconv.Atoi(resp.Metadata["best_score"])
+			userScore, _ := strconv.Atoi(resp.Metadata["user_score"])
+			idx, _ := strconv.Atoi(resp.Metadata["index"])
+			
+			playedM, _ := core.ParseUCISimple(resp.Metadata["move"])
+			bestM, _ := core.ParseUCISimple(resp.BestMove)
+			
+			cpLoss := bestScore - userScore
+			
+			assessPayload := map[string]any{
+				"index":      idx,
+				"label":      game.ClassifyAssessment(playedM, bestM, cpLoss, bestScore, userScore),
+				"move":       resp.Metadata["move"],
+				"best_move":  resp.BestMove,
+				"user_score": uci.ScoreToUCI(userScore),
+				"best_score": uci.ScoreToUCI(bestScore),
+				"cp_loss":    cpLoss,
 			}
+			s.hub.BroadcastEvent(resp.GameID, "assess", assessPayload)
+			entry.thinking.Store(false)
+			s.mu.Unlock()
+			go s.syncGameToDB(entry)
+			return
 		}
 
-		entry.thinking.Store(false)
 		s.mu.Unlock()
-
-		go s.syncGameToDB(entry)
-
-		// Re-trigger in case of Engine vs Engine or settings changed
-		time.AfterFunc(100*time.Millisecond, func() {
-			s.maybeTriggerEngine(entry)
-		})
 	})
 }
 
