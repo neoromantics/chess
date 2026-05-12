@@ -147,6 +147,45 @@ spec:
     matchLabels:
       app: chess-matchmaker
 ---
+# === RATING UPDATER ===
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chess-rating-updater
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: chess-rating-updater
+  template:
+    metadata:
+      labels:
+        app: chess-rating-updater
+    spec:
+      containers:
+      - name: rating-updater
+        image: ghcr.io/neoromantics/chess/rating-updater:latest
+        env:
+        - name: REDIS_URL
+          value: chess-redis:6379
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: chess-secrets
+              key: DATABASE_URL
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chess-rating-updater
+spec:
+  selector:
+    app: chess-rating-updater
+  ports:
+  - port: 80
+    targetPort: 8080 # Placeholder for potential metrics
+
+---
 # === ENGINE WORKER ===
 apiVersion: apps/v1
 kind: Deployment
@@ -175,4 +214,6 @@ spec:
           limits:
             cpu: 1000m
             memory: 256Mi
+
+
 

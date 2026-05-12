@@ -24,6 +24,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags='-s -w' -o gateway ./cm
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags='-s -w' -o user-service ./cmd/user
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags='-s -w' -o game-service ./cmd/game
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags='-s -w' -o matchmaker ./cmd/matchmaker
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags='-s -w' -o rating-updater ./cmd/rating-updater
 
 # --- Stage 3: Gateway Runtime ---
 FROM alpine:latest AS gateway-runtime
@@ -57,11 +58,16 @@ RUN apk add --no-cache ca-certificates
 COPY --from=backend-builder /app/matchmaker .
 CMD ["./matchmaker"]
 
-# --- Stage 7: Engine Worker Runtime ---
+# --- Stage 7: Rating Updater Runtime ---
+FROM alpine:latest AS rating-updater-runtime
+WORKDIR /app
+RUN apk add --no-cache ca-certificates
+COPY --from=backend-builder /app/rating-updater .
+CMD ["./rating-updater"]
+
+# --- Stage 8: Engine Worker Runtime ---
 FROM alpine:latest AS worker-runtime
 WORKDIR /app
 RUN apk add --no-cache ca-certificates
 COPY --from=backend-builder /app/chess-worker .
 CMD ["./chess-worker"]
-
-

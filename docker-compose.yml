@@ -64,6 +64,19 @@ services:
       - redis
     restart: always
 
+  rating-updater:
+    build:
+      context: .
+      target: rating-updater-runtime
+    environment:
+      - REDIS_URL=redis:6379
+      - DATABASE_URL=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable
+    depends_on:
+      - redis
+      - db
+    restart: always
+
+
   # --- INFRASTRUCTURE ---
   db:
     image: postgres:16-alpine
