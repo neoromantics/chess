@@ -65,9 +65,9 @@ Open-queue PvP that doesn't require knowing your opponent's username.
   - Publishes `rating_updated` on each user's channel
 - ✅ Result detection: when `Game.Status()` flips terminal, set
   `result` on the `games` row (1-0 / 0-1 / 1/2-1/2).
-- ⬜ Frontend: Play tab with time-control picker + "Find game" button;
+- ✅ Frontend: Play tab with time-control picker + "Find game" button;
   match-found toast + auto-redirect to `/game/{id}`.
-- ⬜ Profile view exposes current rating + W/L/D record.
+- ✅ Profile view exposes current rating + W/L/D record.
 - ⬜ Tests: pairing under N concurrent joiners (sorted-set atomicity),
   Glicko-2 numerical accuracy.
 

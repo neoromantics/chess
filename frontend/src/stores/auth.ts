@@ -12,7 +12,15 @@ import { useInviteStore } from './invites';
 
 export const useAuthStore = defineStore('auth', {
   state: () => ({
-    user: null as { id: number; username: string } | null,
+    user: null as { 
+      id: number; 
+      username: string;
+      rating: number;
+      rd: number;
+      volatility: number;
+      is_premium: boolean;
+      bio: string;
+    } | null,
     initialized: false,
   }),
   actions: {
@@ -36,6 +44,15 @@ export const useAuthStore = defineStore('auth', {
       const events = useUserEventsStore();
       events.reset();
       events.connect();
+
+      // Handle rating updates from the distributed backend
+      events.on('rating_updated', (payload: any) => {
+        if (this.user) {
+          this.user.rating = payload.rating;
+          this.user.rd = payload.rd;
+        }
+      });
+
       // Seed the invite cache so reconnects don't drop pending state.
       const invites = useInviteStore();
       invites.init();

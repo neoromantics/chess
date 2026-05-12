@@ -40,6 +40,7 @@
         :assess-color="assessColor"
         :history-pairs="historyPairs"
         :fen-input="fenInput"
+        :draw-offer-pending="drawOfferPending"
         @update:white-player-type="updatePlayerType('white', $event)"
         @update:black-player-type="updatePlayerType('black', $event)"
         @update:white-think-time="updateThinkTime('white', $event)"
@@ -52,6 +53,10 @@
         @get-hint="getHint"
         @run-assess="runAssess"
         @undo="undoMove"
+        @resign="resign"
+        @offer-draw="offerDraw"
+        @accept-draw="acceptDraw"
+        @decline-draw="declineDraw"
         @open-replay="openReplay"
         @toggle-flip="flipped = !flipped"
         @save-game="saveGame"
@@ -105,6 +110,7 @@ const flipped = ref(localStorage.getItem('chess-flipped') === '1');
 const soundEnabled = ref(localStorage.getItem('chess-muted') !== '1');
 const autoAssess = ref(false);
 const assessments = reactive<Record<number, any>>({});
+const drawOfferPending = ref(false);
 const hint = ref<{ from: string; to: string } | null>(null);
 const hintInfo = ref('');
 const assessInfo = ref('');
@@ -249,6 +255,9 @@ const connectWS = () => {
         onHintReceived(data.payload);
       } else if (data.type === 'assess') {
         onAssessReceived(data.payload);
+      } else if (data.type === 'draw_offered') {
+        drawOfferPending.value = true;
+        toastStore.info('Opponent offered a draw.');
       }
     } catch (e) {
       console.error('Failed to parse WS message', e);
@@ -277,6 +286,47 @@ const onAssessReceived = (a: any) => {
   else if (a.label === 'Brilliant') txt += ` (+${-a.cp_loss}cp vs engine pick ${a.best_move})`;
   else txt += ` (${a.user_score})`;
   assessInfo.value = txt;
+};
+
+const resign = async () => {
+  if (!confirm('Are you sure you want to resign?')) return;
+  try {
+    const res = await api.resign(props.id);
+    updateState(res);
+    toastStore.info('You resigned.');
+  } catch (e) {
+    toastStore.error('Failed to resign');
+  }
+};
+
+const offerDraw = async () => {
+  try {
+    await api.offerDraw(props.id);
+    toastStore.success('Draw offered to opponent');
+  } catch (e) {
+    toastStore.error('Failed to offer draw');
+  }
+};
+
+const acceptDraw = async () => {
+  try {
+    const res = await api.acceptDraw(props.id);
+    updateState(res);
+    drawOfferPending.value = false;
+    toastStore.info('Draw accepted.');
+  } catch (e) {
+    toastStore.error('Failed to accept draw');
+  }
+};
+
+const declineDraw = async () => {
+  try {
+    await api.declineDraw(props.id);
+    drawOfferPending.value = false;
+    toastStore.info('Draw declined.');
+  } catch (e) {
+    toastStore.error('Failed to decline draw');
+  }
 };
 
 const onSquare = async (sq: Square) => {

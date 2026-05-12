@@ -206,6 +206,13 @@ func (s *Server) createMatch(ctx context.Context, id1, id2 string, tc string) {
 		return
 	}
 
+	// Initialize clock in Redis
+	s.bus.SetClock(ctx, gameID, bus.GameClock{
+		WhiteMS:       600000,
+		BlackMS:       600000,
+		TurnStartedAt: time.Now().UnixMilli(),
+	})
+
 	// Notify users via user.evt.{id}
 	s.hub.PublishUser(ctx, whiteID, "match_found", map[string]any{
 		"game_id":  gameID,

@@ -41,8 +41,22 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
     }),
+  getUserStats: (userId?: number) => request<{ games_played: number; wins: number; losses: number; draws: number; current_streak: number }>('/api/user/stats' + (userId ? `?user_id=${userId}` : '')),
+  getUserProfile: (username: string) => request<any>(`/api/user/profile?username=${username}`),
   listGames: () => request<any[]>('/api/games'),
   deleteGame: (gameId: string) => request<void>(`/api/games/delete?game_id=${gameId}`, { method: 'DELETE' }),
+
+  // === Matchmaking ===
+  joinQueue: (time_control: string) => request<void>('/api/matchmaking/join', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ time_control }),
+  }),
+  leaveQueue: (time_control: string) => request<void>('/api/matchmaking/leave', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ time_control }),
+  }),
 
   // === Invites ===
   searchUsers: (q: string) => request<UserSummary[]>(`/api/users/search?q=${encodeURIComponent(q)}`),
@@ -101,6 +115,11 @@ export const api = {
   
   undo: (gameId: string) => request<StateJSON>(`/api/undo?game_id=${gameId}`, { method: 'POST' }),
   
+  resign: (gameId: string) => request<StateJSON>(`/api/games/${gameId}/resign`, { method: 'POST' }),
+  offerDraw: (gameId: string) => request<void>(`/api/games/${gameId}/offer-draw`, { method: 'POST' }),
+  acceptDraw: (gameId: string) => request<StateJSON>(`/api/games/${gameId}/accept-draw`, { method: 'POST' }),
+  declineDraw: (gameId: string) => request<void>(`/api/games/${gameId}/decline-draw`, { method: 'POST' }),
+
   loadGame: (gameId: string, gameData: any) => request<StateJSON>(`/api/load?game_id=${gameId}`, {
     method: 'POST',
     body: typeof gameData === 'string' ? gameData : JSON.stringify(gameData)

@@ -107,6 +107,10 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/state", requireAuth(s.handleState))
 	s.mux.HandleFunc("POST /api/move", requireAuth(s.handleMove))
 	s.mux.HandleFunc("POST /api/new", requireAuth(s.handleNew))
+	s.mux.HandleFunc("POST /api/games/{id}/resign", requireAuth(s.handleResign))
+	s.mux.HandleFunc("POST /api/games/{id}/offer-draw", requireAuth(s.handleOfferDraw))
+	s.mux.HandleFunc("POST /api/games/{id}/accept-draw", requireAuth(s.handleAcceptDraw))
+	s.mux.HandleFunc("POST /api/games/{id}/decline-draw", requireAuth(s.handleDeclineDraw))
 	s.mux.HandleFunc("POST /api/hint", requireAuth(s.handleHint))
 	s.mux.HandleFunc("POST /api/assess", requireAuth(s.handleAssess))
 	s.mux.HandleFunc("POST /api/set_players", requireAuth(s.handleSetPlayers))
@@ -264,6 +268,19 @@ func (s *Server) executeWithGameLock(ctx context.Context, gameID string, fn func
 	fn(entry)
 }
 
+func (s *Server) getClock(ctx context.Context, gameID string) *bus.GameClock {
+	clock, err := s.bus.GetClock(ctx, gameID)
+	if err != nil {
+		// Default 10 minutes if not found
+		return &bus.GameClock{
+			WhiteMS:       600000,
+			BlackMS:       600000,
+			TurnStartedAt: time.Now().UnixMilli(),
+		}
+	}
+	return clock
+}
+
 func (s *Server) syncGameToDB(entry *gameEntry, newAssess any) {
 	entry.mu.Lock()
 	gm := entry.game
@@ -311,15 +328,16 @@ func (s *Server) syncGameToDB(entry *gameEntry, newAssess any) {
 		Rated:          entry.Rated,
 		Status:         string(status),
 		Result:         res,
-		Assessments:    string(assessJSON),
-		CreatedAt:      entry.createdAt,
-		UpdatedAt:      time.Now(),
-	}
-	snapshot := s.snapshotLocked(entry)
-	snapshot.Assessments = assessments
+		Assessments: string(assessJSON),
+		CreatedAt:   entry.createdAt,
+		UpdatedAt:   time.Now(),
+		}
+		clock := s.getClock(context.Background(), entry.id)
+		snapshot := s.snapshotLocked(entry, clock)
+		snapshot.Assessments = assessments
 
-	// Detect game end and publish event
-	shouldEmit := status != game.StatusOngoing && !entry.eventFired.Load()
+		// Detect game end and publish event
+		shouldEmit := status != game.StatusOngoing && !entry.eventFired.Load()
 	if shouldEmit {
 		entry.eventFired.Store(true)
 	}
@@ -602,6 +620,11 @@ func (s *Server) handleCreateGame(w http.ResponseWriter, r *http.Request) {
 	entry.stopSearch.Store(false)
 
 	s.syncGameToDB(entry, nil)
+	s.bus.SetClock(context.Background(), id, bus.GameClock{
+		WhiteMS:       600000,
+		BlackMS:       600000,
+		TurnStartedAt: time.Now().UnixMilli(),
+	})
 	go s.maybeTriggerEngine(entry)
 	writeJSON(w, map[string]string{"game_id": id})
 }
@@ -698,6 +721,25 @@ func (s *Server) handleTouchMove(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, snapshot)
 }
 
+func (s *Server) deductClock(ctx context.Context, gameID string, side core.Color) *bus.GameClock {
+	clock := s.getClock(ctx, gameID)
+	now := time.Now().UnixMilli()
+	elapsed := now - clock.TurnStartedAt
+	if elapsed < 0 { elapsed = 0 }
+
+	if side == core.White {
+		clock.WhiteMS -= elapsed
+	} else {
+		clock.BlackMS -= elapsed
+	}
+	if clock.WhiteMS < 0 { clock.WhiteMS = 0 }
+	if clock.BlackMS < 0 { clock.BlackMS = 0 }
+	
+	clock.TurnStartedAt = now
+	s.bus.SetClock(ctx, gameID, *clock)
+	return clock
+}
+
 func (s *Server) handleMove(w http.ResponseWriter, r *http.Request) {
 	s.withGameLock(w, r, func(entry *gameEntry) {
 		var req struct {
@@ -740,8 +782,10 @@ func (s *Server) handleMove(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		movingSide := entry.game.Board.SideToMove
 		entry.game.PlayMove(matched)
-		snapshot := s.snapshotLocked(entry)
+		clock := s.deductClock(r.Context(), entry.id, movingSide)
+		snapshot := s.snapshotLocked(entry, clock)
 		entry.mu.Unlock()
 
 		s.syncGameToDB(entry, nil)
@@ -782,10 +826,15 @@ func (s *Server) handleNew(w http.ResponseWriter, r *http.Request) {
 		if entry.game.EngineWhite { entry.WhiteUserID = nil }
 		if !entry.game.EngineBlack { entry.BlackUserID = &user.UserID }
 
-		snapshot := s.snapshotLocked(entry)
+		snapshot := s.snapshotLocked(entry, nil)
 		entry.mu.Unlock()
 
 		s.syncGameToDB(entry, nil)
+		s.bus.SetClock(context.Background(), entry.id, bus.GameClock{
+			WhiteMS:       600000,
+			BlackMS:       600000,
+			TurnStartedAt: time.Now().UnixMilli(),
+		})
 		go s.maybeTriggerEngine(entry)
 		writeJSON(w, snapshot)
 	})
@@ -1040,6 +1089,121 @@ func (s *Server) handleReplay(w http.ResponseWriter, r *http.Request) {
 
 // Infrastructure Handlers
 
+func (s *Server) handleResign(w http.ResponseWriter, r *http.Request) {
+	entry, err := s.getGame(r)
+	if err != nil {
+		http.Error(w, err.Error(), 404)
+		return
+	}
+
+	user, _ := auth.GetUser(r.Context())
+	entry.mu.Lock()
+	if entry.game.Status() != game.StatusOngoing {
+		entry.mu.Unlock()
+		http.Error(w, "game already finished", 400)
+		return
+	}
+
+	// Determine result based on who resigned
+	if entry.WhiteUserID != nil && *entry.WhiteUserID == user.UserID {
+		entry.Result = "0-1"
+	} else if entry.BlackUserID != nil && *entry.BlackUserID == user.UserID {
+		entry.Result = "1-0"
+	} else {
+		// Legacy/Guest support: resign current turn
+		if entry.game.Board.SideToMove == core.White {
+			entry.Result = "0-1"
+		} else {
+			entry.Result = "1-0"
+		}
+	}
+
+	snapshot := s.snapshotLocked(entry, s.getClock(r.Context(), entry.id))
+	entry.mu.Unlock()
+
+	s.syncGameToDB(entry, nil)
+	writeJSON(w, snapshot)
+}
+
+func (s *Server) handleOfferDraw(w http.ResponseWriter, r *http.Request) {
+	entry, err := s.getGame(r)
+	if err != nil {
+		http.Error(w, err.Error(), 404)
+		return
+	}
+
+	user, _ := auth.GetUser(r.Context())
+	entry.mu.Lock()
+	if entry.game.Status() != game.StatusOngoing {
+		entry.mu.Unlock()
+		http.Error(w, "game already finished", 400)
+		return
+	}
+
+	side := core.White
+	if entry.BlackUserID != nil && *entry.BlackUserID == user.UserID {
+		side = core.Black
+	}
+
+	// Store in Redis
+	s.bus.SetDrawOffer(r.Context(), entry.id, side)
+	entry.mu.Unlock()
+
+	// Notify opponent via user channel
+	opponentID := int64(0)
+	if side == core.White && entry.BlackUserID != nil { opponentID = *entry.BlackUserID }
+	if side == core.Black && entry.WhiteUserID != nil { opponentID = *entry.WhiteUserID }
+	
+	if opponentID != 0 {
+		s.hub.PublishUser(r.Context(), opponentID, "draw_offered", map[string]any{"game_id": entry.id})
+	}
+
+	w.WriteHeader(204)
+}
+
+func (s *Server) handleAcceptDraw(w http.ResponseWriter, r *http.Request) {
+	entry, err := s.getGame(r)
+	if err != nil {
+		http.Error(w, err.Error(), 404)
+		return
+	}
+
+	user, _ := auth.GetUser(r.Context())
+	offer, err := s.bus.GetDrawOffer(r.Context(), entry.id)
+	if err != nil || offer == nil {
+		http.Error(w, "no active draw offer", 400)
+		return
+	}
+
+	// Verify it wasn't you who offered
+	side := core.White
+	if entry.BlackUserID != nil && *entry.BlackUserID == user.UserID { side = core.Black }
+	if offer.OfferedBy == side {
+		http.Error(w, "cannot accept your own offer", 400)
+		return
+	}
+
+	entry.mu.Lock()
+	entry.Result = "1/2-1/2"
+	s.bus.DelDrawOffer(r.Context(), entry.id)
+	snapshot := s.snapshotLocked(entry, s.getClock(r.Context(), entry.id))
+	entry.mu.Unlock()
+
+	s.syncGameToDB(entry, nil)
+	writeJSON(w, snapshot)
+}
+
+func (s *Server) handleDeclineDraw(w http.ResponseWriter, r *http.Request) {
+	entry, err := s.getGame(r)
+	if err != nil {
+		http.Error(w, err.Error(), 404)
+		return
+	}
+
+	s.bus.DelDrawOffer(r.Context(), entry.id)
+	w.WriteHeader(204)
+}
+
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	health := s.CheckHealth()
 	if health.Status != "ok" {
@@ -1083,13 +1247,14 @@ func (s *Server) listenToEngine() {
 					if err == nil {
 						if matched, ok := game.MatchMove(entry.game.Board.GenerateLegalMoves(), m); ok {
 							slog.Info("engine move received from worker", "game_id", resp.GameID, "move", matched.String())
+							movingSide := entry.game.Board.SideToMove
 							entry.game.PlayMove(matched)
+							s.deductClock(context.Background(), entry.id, movingSide)
 						}
-					}
-				}
-				s.setThinking(context.Background(), entry.id, false)
-				entry.mu.Unlock()
-				s.syncGameToDB(entry, nil)
+						}
+						s.setThinking(context.Background(), entry.id, false)
+						s.mu.Unlock()
+						go s.syncGameToDB(entry, nil)
 				time.AfterFunc(100*time.Millisecond, func() {
 					s.maybeTriggerEngine(entry)
 				})
@@ -1196,7 +1361,7 @@ func (s *Server) maybeTriggerEngine(entry *gameEntry) {
 	}()
 }
 
-func (s *Server) snapshotLocked(entry *gameEntry) stateJSON {
+func (s *Server) snapshotLocked(entry *gameEntry, clock *bus.GameClock) stateJSON {
 	game := entry.game
 	var lm *moveJSON
 	if game.LastMove != nil {
@@ -1228,6 +1393,11 @@ func (s *Server) snapshotLocked(entry *gameEntry) stateJSON {
 		assessments = []any{}
 	}
 
+	whiteTime, blackTime := int64(0), int64(0)
+	if clock != nil {
+		whiteTime, blackTime = clock.WhiteMS, clock.BlackMS
+	}
+
 	return stateJSON{
 		FEN: game.Board.FEN(), Turn: turn, EngineWhite: game.EngineWhite, EngineBlack: game.EngineBlack,
 		EngineToMove: game.EngineToMove(), Status: string(game.Status()), InCheck: game.Board.InCheck(game.Board.SideToMove),
@@ -1236,7 +1406,11 @@ func (s *Server) snapshotLocked(entry *gameEntry) stateJSON {
 		TouchMove: game.TouchMove, TouchedSquare: core.SquareName(game.TouchedSq),
 		WhiteThinkTime: int(entry.whiteThinkTime / time.Millisecond),
 		BlackThinkTime: int(entry.blackThinkTime / time.Millisecond),
+		WhiteTime:      whiteTime,
+		BlackTime:      blackTime,
 		Assessments:    assessments,
+		WhiteUserID:    entry.WhiteUserID,
+		BlackUserID:    entry.BlackUserID,
 	}
 }
 
@@ -1257,7 +1431,11 @@ type stateJSON struct {
 	TouchedSquare  string    `json:"touched_square"`
 	WhiteThinkTime int       `json:"white_think_time"`
 	BlackThinkTime int       `json:"black_think_time"`
+	WhiteTime      int64     `json:"white_time"`
+	BlackTime      int64     `json:"black_time"`
 	Assessments    []any     `json:"assessments"`
+	WhiteUserID    *int64    `json:"white_user_id"`
+	BlackUserID    *int64    `json:"black_user_id"`
 }
 
 type moveJSON struct {

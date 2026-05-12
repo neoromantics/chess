@@ -56,6 +56,24 @@
     </section>
 
     <section class="section hide-on-edit">
+      <h3>Game</h3>
+      <div class="btn-row" v-if="state?.status === 'ongoing'">
+        <button @click="$emit('resign')" class="btn-danger">Resign</button>
+        <button @click="$emit('offer-draw')" class="btn-view">Offer Draw</button>
+      </div>
+      <div class="draw-offer-prompt" v-if="drawOfferPending">
+        <p>Opponent offered a draw</p>
+        <div class="btn-row">
+          <button @click="$emit('accept-draw')" class="btn-action">Accept</button>
+          <button @click="$emit('decline-draw')" class="btn-danger">Decline</button>
+        </div>
+      </div>
+      <div class="btn-row">
+        <button @click="$emit('new-game')" style="flex: 2; background: #2d5a2d; border-color: #3a703a; font-weight: 600;">New Game</button>
+      </div>
+    </section>
+
+    <section class="section hide-on-edit">
       <h3>View</h3>
       <div class="btn-row">
         <button @click="$emit('open-replay')" class="btn-view">Replay</button>
@@ -127,6 +145,7 @@ const props = defineProps<{
   assessColor: string;
   historyPairs: any[];
   fenInput: string;
+  drawOfferPending: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -148,6 +167,10 @@ const emit = defineEmits<{
   (e: 'load-game', event: Event): void;
   (e: 'load-fen'): void;
   (e: 'toggle-edit'): void;
+  (e: 'resign'): void;
+  (e: 'offer-draw'): void;
+  (e: 'accept-draw'): void;
+  (e: 'decline-draw'): void;
 }>();
 
 const thinkOptions = [
@@ -175,6 +198,10 @@ const emitThinkTime = (side: 'white' | 'black', event: Event) => {
 </script>
 
 <style scoped>
+.draw-offer-prompt { background: rgba(74, 107, 138, 0.1); border: 1px solid #4a6b8a; padding: 10px; border-radius: 6px; margin: 10px 0; text-align: center; }
+.draw-offer-prompt p { margin: 0 0 10px; font-size: 13px; color: #fff; font-weight: 600; }
+.btn-danger { background: #5a2d2d !important; border-color: #703a3a !important; color: white !important; }
+.btn-danger:hover { background: #6b3a3a !important; }
 #history { font-family: ui-monospace, Menlo, monospace; font-size: 13px; max-height: 280px; overflow-y: auto; background: #2b2b2b; padding: 8px 10px; border-radius: 3px; }
 #history div { line-height: 1.5; }
 #fen { font-family: ui-monospace, Menlo, monospace; font-size: 11px; word-break: break-all; color: #888; background: #2b2b2b; padding: 6px 8px; border-radius: 3px; }

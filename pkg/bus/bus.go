@@ -208,6 +208,39 @@ func (c *Client) GetSortedSetRangeWithScores(ctx context.Context, key string, st
 	return res, nil
 }
 
+// GameClock represents the authoritative time remaining in a game.
+type GameClock struct {
+	WhiteMS        int64 `json:"white_ms"`
+	BlackMS        int64 `json:"black_ms"`
+	TurnStartedAt  int64 `json:"turn_started_at"` // Unix MS
+}
+
+// SetClock initializes the authoritative clock in Redis.
+func (c *Client) SetClock(ctx context.Context, gameID string, clock GameClock) error {
+	key := "gameclock:" + gameID
+	data, _ := json.Marshal(clock)
+	return c.rdb.Set(ctx, key, data, 24*time.Hour).Err()
+}
+
+// GetClock retrieves the authoritative clock from Redis.
+func (c *Client) GetClock(ctx context.Context, gameID string) (*GameClock, error) {
+	key := "gameclock:" + gameID
+	val, err := c.rdb.Get(ctx, key).Result()
+	if err != nil {
+		return nil, err
+	}
+	var clock GameClock
+	if err := json.Unmarshal([]byte(val), &clock); err != nil {
+		return nil, err
+	}
+	return &clock, nil
+}
+
+// DelClock removes the clock from Redis.
+func (c *Client) DelClock(ctx context.Context, gameID string) error {
+	return c.rdb.Del(ctx, "gameclock:"+gameID).Err()
+}
+
 // SetState stores a transient value in Redis with a TTL.
 func (c *Client) SetState(ctx context.Context, key string, value string, ttl time.Duration) error {
 	return c.rdb.Set(ctx, key, value, ttl).Err()
@@ -233,6 +266,37 @@ func (c *Client) Close() error {
 // SET NX EX + script-based release). Use sparingly — most callers
 // should stay on the typed Publish/Subscribe/LockGame surface.
 func (c *Client) Rdb() *redis.Client { return c.rdb }
+
+// DrawOffer represents an active draw offer.
+type DrawOffer struct {
+	OfferedBy core.Color `json:"offered_by"`
+}
+
+// SetDrawOffer stores a draw offer in Redis.
+func (c *Client) SetDrawOffer(ctx context.Context, gameID string, side core.Color) error {
+	key := "drawoffer:" + gameID
+	data, _ := json.Marshal(DrawOffer{OfferedBy: side})
+	return c.rdb.Set(ctx, key, data, 24*time.Hour).Err()
+}
+
+// GetDrawOffer retrieves a draw offer from Redis.
+func (c *Client) GetDrawOffer(ctx context.Context, gameID string) (*DrawOffer, error) {
+	key := "drawoffer:" + gameID
+	val, err := c.rdb.Get(ctx, key).Result()
+	if err != nil {
+		return nil, err
+	}
+	var offer DrawOffer
+	if err := json.Unmarshal([]byte(val), &offer); err != nil {
+		return nil, err
+	}
+	return &offer, nil
+}
+
+// DelDrawOffer removes a draw offer from Redis.
+func (c *Client) DelDrawOffer(ctx context.Context, gameID string) error {
+	return c.rdb.Del(ctx, "drawoffer:"+gameID).Err()
+}
 
 // Enqueue pushes a JSON-encoded payload onto a Redis List (RPUSH).
 // This guarantees exactly-once delivery: only one consumer will BLPOP the task.

@@ -11,7 +11,9 @@
             Invites
             <span v-if="inviteStore.pendingCount > 0" class="badge">{{ inviteStore.pendingCount }}</span>
           </router-link>
-          <span class="user-greeting">Welcome, <strong>{{ authStore.user.username }}</strong></span>
+          <router-link to="/profile" class="user-link">
+            <span class="user-greeting">Welcome, <strong>{{ authStore.user.username }}</strong></span>
+          </router-link>
           <button @click="handleLogout" class="btn-text">Logout</button>
         </template>
         <template v-else>
@@ -49,7 +51,9 @@ const handleLogout = async () => {
 .logo { font-size: 24px; color: #4a6b8a; }
 
 .nav-links { display: flex; align-items: center; gap: 20px; }
-.user-greeting { font-size: 14px; color: #aaa; }
+.user-link { text-decoration: none; }
+.user-greeting { font-size: 14px; color: #aaa; transition: color 0.2s; }
+.user-link:hover .user-greeting { color: white; }
 
 .btn-text { background: transparent; border: none; color: #aaa; font-size: 14px; cursor: pointer; padding: 4px 8px; }
 .btn-text:hover { color: white; }
