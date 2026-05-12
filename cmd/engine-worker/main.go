@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -15,6 +16,8 @@ import (
 	"github.com/neoromantics/chess/pkg/bus"
 	"github.com/neoromantics/chess/pkg/core"
 )
+
+var activeSearches sync.Map // game_id -> *atomic.Bool
 
 func main() {
 	flag.Parse()
@@ -56,12 +59,31 @@ func main() {
 		
 		// Run calculation in a goroutine to allow parallel processing
 		go func(r bus.EngineRequest) {
-			resp := ProcessRequest(r)
+			// Register active search
+			stop := &atomic.Bool{}
+			activeSearches.Store(r.GameID, stop)
+			defer activeSearches.Delete(r.GameID)
+
+			resp := ProcessRequest(r, stop)
 			if err := eventBus.Publish(context.Background(), bus.EngineResponseChannel, resp); err != nil {
 				log.Printf("Worker: failed to publish response: %v", err)
 			}
 			log.Printf("Worker [ENGINE]: Published response for ID: %s - Move: %s", resp.GameID, resp.BestMove)
 		}(req)
+	})
+
+	// Subscribe to engine abort signals
+	eventBus.Subscribe(ctx, bus.EngineAbortChannel, func(payload []byte) {
+		var abort bus.EngineAbort
+		if err := json.Unmarshal(payload, &abort); err != nil {
+			log.Printf("Worker: failed to unmarshal abort: %v", err)
+			return
+		}
+
+		if stop, ok := activeSearches.Load(abort.GameID); ok {
+			log.Printf("Worker [ENGINE]: Aborting search for ID: %s", abort.GameID)
+			stop.(*atomic.Bool).Store(true)
+		}
 	})
 
 	go func() {
@@ -86,15 +108,13 @@ func workerLoop(ctx context.Context) {
 }
 
 // ProcessRequest runs the engine on the given position.
-func ProcessRequest(req bus.EngineRequest) bus.EngineResponse {
+func ProcessRequest(req bus.EngineRequest, stop *atomic.Bool) bus.EngineResponse {
 	b, err := core.ParseFEN(req.FEN)
 	if err != nil {
 		log.Printf("Worker: failed to parse FEN: %v", err)
 		return bus.EngineResponse{GameID: req.GameID, Context: req.Context, Metadata: req.Metadata}
 	}
 
-	stop := &atomic.Bool{}
-	
 	if req.Context == "assess" {
 		userMoveStr := req.Metadata["move"]
 		m, err := b.ParseUCIMove(userMoveStr)

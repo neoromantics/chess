@@ -107,13 +107,25 @@ func (s *Server) getGame(r *http.Request) (*gameEntry, string, error) {
 	return entry, id, nil
 }
 
-func (s *Server) syncGameToDB(entry *gameEntry) {
+func (s *Server) syncGameToDB(entry *gameEntry, newAssess any) {
 	s.mu.Lock()
 	gm := entry.game
 	hist, _ := json.Marshal(gm.History)
 	histSAN, _ := json.Marshal(gm.HistorySAN)
 	status := gm.Status()
-	record := &db.GameRecord{
+	
+	// Load current assessments from DB if we're adding a new one
+	var assessments []any
+	record, err := s.db.GetGame(entry.id)
+	if err == nil && record.Assessments != "" {
+		json.Unmarshal([]byte(record.Assessments), &assessments)
+	}
+	if newAssess != nil {
+		assessments = append(assessments, newAssess)
+	}
+	assessJSON, _ := json.Marshal(assessments)
+
+	gameRec := &db.GameRecord{
 		ID:          entry.id,
 		UserID:      entry.userID,
 		SessionID:   entry.sessionID,
@@ -123,10 +135,12 @@ func (s *Server) syncGameToDB(entry *gameEntry) {
 		EngineWhite: gm.EngineWhite,
 		EngineBlack: gm.EngineBlack,
 		Status:      string(status),
+		Assessments: string(assessJSON),
 		CreatedAt:   entry.createdAt,
 		UpdatedAt:   time.Now(),
 	}
 	snapshot := s.snapshotLocked(entry)
+	snapshot.Assessments = assessments
 
 	// Detect game end and publish event
 	shouldEmit := status != game.StatusOngoing && !entry.eventFired.Load()
@@ -135,7 +149,7 @@ func (s *Server) syncGameToDB(entry *gameEntry) {
 	}
 	s.mu.Unlock()
 
-	s.db.SaveGame(record)
+	s.db.SaveGame(gameRec)
 	s.hub.BroadcastState(entry.id, snapshot)
 
 	if shouldEmit {
@@ -143,10 +157,10 @@ func (s *Server) syncGameToDB(entry *gameEntry) {
 		event := bus.GameFinishedEvent{
 			GameID:      entry.id,
 			Status:      string(status),
-			FEN:         record.FEN,
-			EngineWhite: record.EngineWhite,
-			EngineBlack: record.EngineBlack,
-			UserID:      record.UserID,
+			FEN:         gameRec.FEN,
+			EngineWhite: gameRec.EngineWhite,
+			EngineBlack: gameRec.EngineBlack,
+			UserID:      gameRec.UserID,
 		}
 		if err := s.bus.Publish(context.Background(), bus.GameFinishedEventChannel, event); err != nil {
 			slog.Error("failed to publish game finished event", "error", err)
@@ -242,7 +256,7 @@ func (s *Server) handleCreateGame(w http.ResponseWriter, r *http.Request) {
 	s.games[id] = entry
 	s.mu.Unlock()
 	
-	s.syncGameToDB(entry)
+	s.syncGameToDB(entry, nil)
 	writeJSON(w, map[string]string{"game_id": id})
 }
 
@@ -394,9 +408,17 @@ func (s *Server) handleMove(w http.ResponseWriter, r *http.Request) {
 	snapshot := s.snapshotLocked(entry)
 	s.mu.Unlock()
 	
-	go s.syncGameToDB(entry)
+	go s.syncGameToDB(entry, nil)
 	go s.maybeTriggerEngine(entry)
 	writeJSON(w, snapshot)
+}
+
+func (s *Server) broadcastEngineAbort(gameID string) {
+	slog.Info("broadcasting engine abort", "game_id", gameID)
+	abort := bus.EngineAbort{GameID: gameID}
+	if err := s.bus.Publish(context.Background(), bus.EngineAbortChannel, abort); err != nil {
+		slog.Error("failed to publish engine abort", "error", err)
+	}
 }
 
 func (s *Server) handleNew(w http.ResponseWriter, r *http.Request) {
@@ -414,13 +436,14 @@ func (s *Server) handleNew(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	// Signal any current search to stop
 	entry.stopSearch.Store(true)
+	s.broadcastEngineAbort(entry.id)
 	
 	entry.game.Reset()
 	entry.game.EngineWhite, entry.game.EngineBlack = req.EngineWhite, req.EngineBlack
 	snapshot := s.snapshotLocked(entry)
 	s.mu.Unlock()
 
-	go s.syncGameToDB(entry)
+	go s.syncGameToDB(entry, nil)
 	go s.maybeTriggerEngine(entry)
 	writeJSON(w, snapshot)
 }
@@ -449,10 +472,11 @@ func (s *Server) handleSetPlayers(w http.ResponseWriter, r *http.Request) {
 	}
 	
 	entry.stopSearch.Store(true)
+	s.broadcastEngineAbort(entry.id)
 	
 	snapshot := s.snapshotLocked(entry)
 	s.mu.Unlock()
-	go s.syncGameToDB(entry)
+	go s.syncGameToDB(entry, nil)
 	go s.maybeTriggerEngine(entry)
 	writeJSON(w, snapshot)
 }
@@ -465,10 +489,11 @@ func (s *Server) handleUndo(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	entry.stopSearch.Store(true)
+	s.broadcastEngineAbort(entry.id)
 	entry.game.Undo()
 	snapshot := s.snapshotLocked(entry)
 	s.mu.Unlock()
-	go s.syncGameToDB(entry)
+	go s.syncGameToDB(entry, nil)
 	go s.maybeTriggerEngine(entry)
 	writeJSON(w, snapshot)
 }
@@ -512,7 +537,7 @@ func (s *Server) handleHint(w http.ResponseWriter, r *http.Request) {
 			s.mu.Lock()
 			entry.thinking.Store(false)
 			s.mu.Unlock()
-			s.syncGameToDB(entry)
+			s.syncGameToDB(entry, nil)
 		}
 	}()
 
@@ -575,7 +600,7 @@ func (s *Server) handleAssess(w http.ResponseWriter, r *http.Request) {
 			s.mu.Lock()
 			entry.thinking.Store(false)
 			s.mu.Unlock()
-			s.syncGameToDB(entry)
+			s.syncGameToDB(entry, nil)
 		}
 	}()
 
@@ -604,10 +629,11 @@ func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
 	json.NewDecoder(r.Body).Decode(&sg)
 	s.mu.Lock()
 	entry.stopSearch.Store(true)
+	s.broadcastEngineAbort(entry.id)
 	entry.game.Load(sg.StartFEN, sg.Moves, sg.EngineWhite, sg.EngineBlack)
 	snapshot := s.snapshotLocked(entry)
 	s.mu.Unlock()
-	go s.syncGameToDB(entry)
+	go s.syncGameToDB(entry, nil)
 	go s.maybeTriggerEngine(entry)
 	writeJSON(w, snapshot)
 }
@@ -680,7 +706,7 @@ func (s *Server) listenToEngine() {
 			}
 			entry.thinking.Store(false)
 			s.mu.Unlock()
-			go s.syncGameToDB(entry)
+			go s.syncGameToDB(entry, nil)
 			time.AfterFunc(100*time.Millisecond, func() {
 				s.maybeTriggerEngine(entry)
 			})
@@ -700,7 +726,7 @@ func (s *Server) listenToEngine() {
 			s.hub.BroadcastEvent(resp.GameID, "hint", hintPayload)
 			entry.thinking.Store(false)
 			s.mu.Unlock()
-			go s.syncGameToDB(entry)
+			go s.syncGameToDB(entry, nil)
 			return
 		}
 
@@ -726,7 +752,7 @@ func (s *Server) listenToEngine() {
 			s.hub.BroadcastEvent(resp.GameID, "assess", assessPayload)
 			entry.thinking.Store(false)
 			s.mu.Unlock()
-			go s.syncGameToDB(entry)
+			go s.syncGameToDB(entry, nil)
 			return
 		}
 
@@ -777,7 +803,7 @@ func (s *Server) maybeTriggerEngine(entry *gameEntry) {
 			s.mu.Lock()
 			entry.thinking.Store(false)
 			s.mu.Unlock()
-			s.syncGameToDB(entry)
+			s.syncGameToDB(entry, nil)
 		} else {
 			slog.Info("engine request dispatched to worker", "game_id", entry.id, "movetime", moveTime)
 		}
@@ -796,6 +822,14 @@ func (s *Server) snapshotLocked(entry *gameEntry) stateJSON {
 	history, historySAN := append([]string(nil), game.History...), append([]string(nil), game.HistorySAN...)
 	if history == nil { history = []string{} }
 	if historySAN == nil { historySAN = []string{} }
+	
+	var assessments []any
+	record, err := s.db.GetGame(entry.id)
+	if err == nil && record.Assessments != "" {
+		json.Unmarshal([]byte(record.Assessments), &assessments)
+	}
+	if assessments == nil { assessments = []any{} }
+
 	return stateJSON{
 		FEN: game.Board.FEN(), Turn: turn, EngineWhite: game.EngineWhite, EngineBlack: game.EngineBlack,
 		EngineToMove: game.EngineToMove(), Status: string(game.Status()), InCheck: game.Board.InCheck(game.Board.SideToMove),
@@ -803,6 +837,7 @@ func (s *Server) snapshotLocked(entry *gameEntry) stateJSON {
 		TouchMove: game.TouchMove, TouchedSquare: core.SquareName(game.TouchedSq),
 		WhiteThinkTime: int(entry.whiteThinkTime / time.Millisecond),
 		BlackThinkTime: int(entry.blackThinkTime / time.Millisecond),
+		Assessments:    assessments,
 	}
 }
 
@@ -823,6 +858,7 @@ type stateJSON struct {
 	TouchedSquare  string    `json:"touched_square"`
 	WhiteThinkTime int       `json:"white_think_time"`
 	BlackThinkTime int       `json:"black_think_time"`
+	Assessments    []any     `json:"assessments"`
 }
 
 type moveJSON struct {

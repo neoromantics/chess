@@ -45,7 +45,7 @@ func main() {
 				log.Fatalf("failed to connect to postgres: %v", err)
 			}
 		} else {
-			store, err = db.OpenSQLite()
+			store, err = db.OpenSQLite("chess.db")
 			if err != nil {
 				log.Fatal(err)
 			}

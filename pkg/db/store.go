@@ -17,13 +17,14 @@ type GameRecord struct {
 	SessionID   string    `json:"session_id"`
 	FEN         string    `json:"fen"`
 	History     string    `json:"history"`     // JSON string
-	HistorySAN  string    `json:"history_san"` // JSON string
+	HistorySAN  string    `json:"history_san"`
 	EngineWhite bool      `json:"engine_white"`
 	EngineBlack bool      `json:"engine_black"`
 	Status      string    `json:"status"`
+	Assessments string    `json:"assessments"` // JSON-encoded analysis
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
-}
+	}
 
 // Store is the interface for all persistent storage operations.
 // This allows us to swap SQLite for PostgreSQL/Redis without changing the API logic.

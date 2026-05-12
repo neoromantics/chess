@@ -15,6 +15,7 @@ const (
 	GameFinishedEventChannel = "game.finished"
 	EngineRequestChannel      = "engine.request"
 	EngineResponseChannel     = "engine.response"
+	EngineAbortChannel        = "engine.abort"
 )
 
 // GameFinishedEvent represents the data sent when a game ends.
@@ -47,6 +48,10 @@ type EngineResponse struct {
 	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
+// EngineAbort represents a request to cancel any active search for a game.
+type EngineAbort struct {
+	GameID string `json:"game_id"`
+}
 
 // Client wraps the Redis client for pub/sub.
 type Client struct {

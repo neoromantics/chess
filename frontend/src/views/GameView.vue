@@ -213,6 +213,12 @@ const updateState = (s: StateJSON) => {
   whiteThinkTime.value = s.white_think_time;
   blackThinkTime.value = s.black_think_time;
   
+  if (s.assessments) {
+    s.assessments.forEach((a: any) => {
+      assessments[a.index] = a;
+    });
+  }
+  
   const newLen = s.history ? s.history.length : 0;
   if (newLen === lastSoundedHistoryLen + 1) {
     let kind = 'move';

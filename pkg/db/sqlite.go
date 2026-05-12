@@ -3,7 +3,6 @@ package db
 import (
 	"database/sql"
 	"fmt"
-	"os"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -13,19 +12,10 @@ type SQLiteStore struct {
 	db *sql.DB
 }
 
-func OpenSQLite() (Store, error) {
-	path := os.Getenv("DB_PATH")
-	if path == "" {
-		path = "chess.db"
-	}
-
+func OpenSQLite(path string) (Store, error) {
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open database: %w", err)
-	}
-
-	if err := db.Ping(); err != nil {
-		return nil, fmt.Errorf("failed to ping database: %w", err)
+		return nil, fmt.Errorf("failed to open sqlite: %w", err)
 	}
 
 	s := &SQLiteStore{db: db}
@@ -55,26 +45,12 @@ func (s *SQLiteStore) init() error {
 			engine_white BOOLEAN NOT NULL,
 			engine_black BOOLEAN NOT NULL,
 			status TEXT NOT NULL,
+			assessments TEXT NOT NULL DEFAULT '[]',
 			created_at DATETIME NOT NULL,
-			updated_at DATETIME NOT NULL,
-			FOREIGN KEY(user_id) REFERENCES users(id)
+			updated_at DATETIME NOT NULL
 		);
 	`)
-	if err != nil {
-		return err
-	}
-
-	// Migration: add session_id if it doesn't exist (for existing chess.db files)
-	var count int
-	s.db.QueryRow("SELECT count(*) FROM pragma_table_info('games') WHERE name='session_id'").Scan(&count)
-	if count == 0 {
-		_, err = s.db.Exec("ALTER TABLE games ADD COLUMN session_id TEXT NOT NULL DEFAULT ''")
-		if err != nil {
-			return fmt.Errorf("migration failed: %w", err)
-		}
-	}
-
-	return nil
+	return err
 }
 
 func (s *SQLiteStore) Close() error {
@@ -90,12 +66,7 @@ func (s *SQLiteStore) CreateUser(username, passwordHash string) (*User, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	id, err := res.LastInsertId()
-	if err != nil {
-		return nil, err
-	}
-
+	id, _ := res.LastInsertId()
 	return &User{
 		ID:           id,
 		Username:     username,
@@ -119,8 +90,8 @@ func (s *SQLiteStore) GetUserByUsername(username string) (*User, error) {
 
 func (s *SQLiteStore) SaveGame(g *GameRecord) error {
 	_, err := s.db.Exec(`
-		INSERT INTO games (id, user_id, session_id, fen, history, history_san, engine_white, engine_black, status, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO games (id, user_id, session_id, fen, history, history_san, engine_white, engine_black, status, assessments, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			user_id=excluded.user_id,
 			session_id=excluded.session_id,
@@ -130,14 +101,15 @@ func (s *SQLiteStore) SaveGame(g *GameRecord) error {
 			engine_white=excluded.engine_white,
 			engine_black=excluded.engine_black,
 			status=excluded.status,
+			assessments=excluded.assessments,
 			updated_at=excluded.updated_at
-	`, g.ID, g.UserID, g.SessionID, g.FEN, g.History, g.HistorySAN, g.EngineWhite, g.EngineBlack, g.Status, g.CreatedAt, g.UpdatedAt)
+	`, g.ID, g.UserID, g.SessionID, g.FEN, g.History, g.HistorySAN, g.EngineWhite, g.EngineBlack, g.Status, g.Assessments, g.CreatedAt, g.UpdatedAt)
 	return err
 }
 
 func (s *SQLiteStore) ListGames(userID int64, sessionID string) ([]GameRecord, error) {
 	query := `
-		SELECT id, user_id, session_id, fen, history, history_san, engine_white, engine_black, status, created_at, updated_at
+		SELECT id, user_id, session_id, fen, history, history_san, engine_white, engine_black, status, assessments, created_at, updated_at
 		FROM games
 		WHERE (user_id > 0 AND user_id = ?) OR (user_id = 0 AND session_id = ?)
 		ORDER BY updated_at DESC
@@ -151,7 +123,7 @@ func (s *SQLiteStore) ListGames(userID int64, sessionID string) ([]GameRecord, e
 	var records []GameRecord
 	for rows.Next() {
 		var g GameRecord
-		if err := rows.Scan(&g.ID, &g.UserID, &g.SessionID, &g.FEN, &g.History, &g.HistorySAN, &g.EngineWhite, &g.EngineBlack, &g.Status, &g.CreatedAt, &g.UpdatedAt); err != nil {
+		if err := rows.Scan(&g.ID, &g.UserID, &g.SessionID, &g.FEN, &g.History, &g.HistorySAN, &g.EngineWhite, &g.EngineBlack, &g.Status, &g.Assessments, &g.CreatedAt, &g.UpdatedAt); err != nil {
 			return nil, err
 		}
 		records = append(records, g)
@@ -162,10 +134,10 @@ func (s *SQLiteStore) ListGames(userID int64, sessionID string) ([]GameRecord, e
 func (s *SQLiteStore) GetGame(id string) (*GameRecord, error) {
 	g := &GameRecord{}
 	err := s.db.QueryRow(`
-		SELECT id, user_id, session_id, fen, history, history_san, engine_white, engine_black, status, created_at, updated_at
+		SELECT id, user_id, session_id, fen, history, history_san, engine_white, engine_black, status, assessments, created_at, updated_at
 		FROM games
 		WHERE id = ?
-	`, id).Scan(&g.ID, &g.UserID, &g.SessionID, &g.FEN, &g.History, &g.HistorySAN, &g.EngineWhite, &g.EngineBlack, &g.Status, &g.CreatedAt, &g.UpdatedAt)
+	`, id).Scan(&g.ID, &g.UserID, &g.SessionID, &g.FEN, &g.History, &g.HistorySAN, &g.EngineWhite, &g.EngineBlack, &g.Status, &g.Assessments, &g.CreatedAt, &g.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
