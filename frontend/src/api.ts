@@ -44,11 +44,6 @@ export const api = {
     body: JSON.stringify({ engine_white, engine_black })
   }),
   
-  engineStep: (gameId: string, movetime: number) => request<StateJSON>(`/api/engine_step?game_id=${gameId}`, {
-    method: 'POST',
-    body: JSON.stringify({ movetime })
-  }),
-  
   getHint: (gameId: string, movetime: number) => request<HintResponse>(`/api/hint?game_id=${gameId}`, {
     method: 'POST',
     body: JSON.stringify({ movetime })

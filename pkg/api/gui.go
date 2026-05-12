@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"path"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -111,7 +112,6 @@ func (g *GUI) registerRoutes() {
 	g.mux.HandleFunc("GET /api/state", g.handleState)
 	g.mux.HandleFunc("POST /api/move", g.handleMove)
 	g.mux.HandleFunc("POST /api/new", g.handleNew)
-	g.mux.HandleFunc("POST /api/engine_step", g.handleEngineStep)
 	g.mux.HandleFunc("POST /api/hint", g.handleHint)
 	g.mux.HandleFunc("POST /api/assess", g.handleAssess)
 	g.mux.HandleFunc("POST /api/set_players", g.handleSetPlayers)
@@ -125,6 +125,7 @@ func (g *GUI) registerRoutes() {
 	g.mux.HandleFunc("GET /ws", g.handleWS)
 	g.mux.Handle("GET /assets/", http.FileServer(assetsFS))
 	// Catch-all route for SPA navigation (Dashboard, GameView, etc.)
+	g.mux.HandleFunc("GET /{$}", g.handleIndex)
 	g.mux.HandleFunc("GET /{path...}", g.handleIndex)
 }
 
@@ -195,6 +196,7 @@ func (g *GUI) getGame(r *http.Request) (*gameEntry, string, error) {
 	g.mu.Lock()
 	g.games[id] = entry
 	g.mu.Unlock()
+	go g.maybeTriggerEngine(entry)
 	return entry, id, nil
 }
 
@@ -290,8 +292,10 @@ func (g *GUI) handleCreateGame(w http.ResponseWriter, r *http.Request) {
 
 	id := uuid.New().String()
 	slog.Info("creating new game", "game_id", id, "user_id", userID, "session_id", sessionID)
+	gm := game.NewGame()
+	gm.EngineBlack = true // Default setup: White human vs Black engine
 	entry := &gameEntry{
-		game:      game.NewGame(),
+		game:      gm,
 		id:        id,
 		userID:    userID,
 		sessionID: sessionID,
@@ -321,6 +325,9 @@ func (g *GUI) handleListGames(w http.ResponseWriter, r *http.Request) {
 		slog.Error("list games error", "error", err)
 		http.Error(w, err.Error(), 500)
 		return
+	}
+	if records == nil {
+		records = []db.GameRecord{}
 	}
 	writeJSON(w, records)
 }
@@ -366,10 +373,14 @@ func (g *GUI) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (g *GUI) handleIndex(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" && path.Ext(r.URL.Path) != "" {
+	// Only serve index.html for navigation requests.
+	// If the path has an extension or starts with /assets/, it's likely a missing asset.
+	if (r.URL.Path != "/" && path.Ext(r.URL.Path) != "") || strings.HasPrefix(r.URL.Path, "/assets/") {
+		slog.Warn("asset not found", "path", r.URL.Path)
 		http.NotFound(w, r)
 		return
 	}
+	slog.Info("serving index.html", "path", r.URL.Path)
 	w.Header().Set("Content-Type", "text/html")
 	w.Write(guiHTML)
 }
@@ -456,6 +467,7 @@ func (g *GUI) handleMove(w http.ResponseWriter, r *http.Request) {
 	g.mu.Unlock()
 	
 	go g.syncGameToDB(entry)
+	go g.maybeTriggerEngine(entry)
 	writeJSON(w, snapshot)
 }
 
@@ -465,7 +477,10 @@ func (g *GUI) handleNew(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 404)
 		return
 	}
-	var req struct{ EngineWhite, EngineBlack bool }
+	var req struct {
+		EngineWhite bool `json:"engine_white"`
+		EngineBlack bool `json:"engine_black"`
+	}
 	json.NewDecoder(r.Body).Decode(&req)
 	g.mu.Lock()
 	if entry.thinking.Load() {
@@ -479,48 +494,7 @@ func (g *GUI) handleNew(w http.ResponseWriter, r *http.Request) {
 	g.mu.Unlock()
 
 	go g.syncGameToDB(entry)
-	writeJSON(w, snapshot)
-}
-
-func (g *GUI) handleEngineStep(w http.ResponseWriter, r *http.Request) {
-	entry, _, err := g.getGame(r)
-	if err != nil {
-		http.Error(w, err.Error(), 404)
-		return
-	}
-	var req struct{ MoveTime int `json:"movetime"` }
-	json.NewDecoder(r.Body).Decode(&req)
-	g.mu.Lock()
-	if entry.thinking.Load() || !entry.game.EngineToMove() || entry.game.Status() != game.StatusOngoing {
-		g.mu.Unlock()
-		http.Error(w, "busy or not engine turn", 409)
-		return
-	}
-	board := *entry.game.Board
-	hist := game.CopyHistory(entry.game.HistoryHash())
-	entry.thinking.Store(true)
-	entry.stopSearch.Store(false)
-	g.mu.Unlock()
-
-	defer entry.thinking.Store(false)
-
-	result := board.IterativeDeepening(core.SearchLimits{MoveTime: time.Duration(req.MoveTime) * time.Millisecond, History: hist}, &entry.stopSearch, nil)
-	
-	g.mu.Lock()
-	defer g.mu.Unlock()
-
-	if entry.stopSearch.Load() || !entry.game.EngineToMove() {
-		return
-	}
-
-	if result.BestMove != (core.Move{}) {
-		if matched, ok := game.MatchMove(entry.game.Board.GenerateLegalMoves(), result.BestMove); ok {
-			entry.game.PlayMove(matched)
-		}
-	}
-	
-	snapshot := g.snapshotLocked(entry)
-	go g.syncGameToDB(entry)
+	go g.maybeTriggerEngine(entry)
 	writeJSON(w, snapshot)
 }
 
@@ -565,7 +539,10 @@ func (g *GUI) handleAssess(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 404)
 		return
 	}
-	var req struct{ MoveTime int; Index *int }
+	var req struct {
+		MoveTime int  `json:"movetime"`
+		Index    *int `json:"index"`
+	}
 	json.NewDecoder(r.Body).Decode(&req)
 	g.mu.Lock()
 	if entry.thinking.Load() {
@@ -574,7 +551,9 @@ func (g *GUI) handleAssess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	idx := entry.game.LastHumanMoveIndex()
-	if req.Index != nil { idx = *req.Index }
+	if req.Index != nil {
+		idx = *req.Index
+	}
 	if idx < 0 || idx >= len(entry.game.UndoStack) {
 		g.mu.Unlock()
 		http.Error(w, "no move to assess", 400)
@@ -608,7 +587,10 @@ func (g *GUI) handleSetPlayers(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 404)
 		return
 	}
-	var req struct{ EngineWhite, EngineBlack bool }
+	var req struct {
+		EngineWhite bool `json:"engine_white"`
+		EngineBlack bool `json:"engine_black"`
+	}
 	json.NewDecoder(r.Body).Decode(&req)
 	g.mu.Lock()
 	entry.game.EngineWhite, entry.game.EngineBlack = req.EngineWhite, req.EngineBlack
@@ -618,6 +600,7 @@ func (g *GUI) handleSetPlayers(w http.ResponseWriter, r *http.Request) {
 	snapshot := g.snapshotLocked(entry)
 	g.mu.Unlock()
 	go g.syncGameToDB(entry)
+	go g.maybeTriggerEngine(entry)
 	writeJSON(w, snapshot)
 }
 
@@ -637,6 +620,7 @@ func (g *GUI) handleUndo(w http.ResponseWriter, r *http.Request) {
 	snapshot := g.snapshotLocked(entry)
 	g.mu.Unlock()
 	go g.syncGameToDB(entry)
+	go g.maybeTriggerEngine(entry)
 	writeJSON(w, snapshot)
 }
 
@@ -665,6 +649,7 @@ func (g *GUI) handleLoad(w http.ResponseWriter, r *http.Request) {
 	snapshot := g.snapshotLocked(entry)
 	g.mu.Unlock()
 	go g.syncGameToDB(entry)
+	go g.maybeTriggerEngine(entry)
 	writeJSON(w, snapshot)
 }
 
@@ -680,6 +665,63 @@ func (g *GUI) handleReplay(w http.ResponseWriter, r *http.Request) {
 	html := bytes.Replace(replayHTML, []byte(replayPlaceholder), data, 1)
 	w.Header().Set("Content-Type", "text/html")
 	w.Write(html)
+}
+
+func (g *GUI) maybeTriggerEngine(entry *gameEntry) {
+	g.mu.Lock()
+	if entry.thinking.Load() || !entry.game.EngineToMove() || entry.game.Status() != game.StatusOngoing {
+		g.mu.Unlock()
+		return
+	}
+
+	// Determine move time (hardcoded for now, can be made configurable)
+	moveTime := 1000 * time.Millisecond
+
+	// Setup state for background calculation
+	board := *entry.game.Board
+	hist := game.CopyHistory(entry.game.HistoryHash())
+	entry.thinking.Store(true)
+	entry.stopSearch.Store(false)
+
+	// Broadcast thinking state to clients
+	snapshot := g.snapshotLocked(entry)
+	g.mu.Unlock()
+
+	g.hub.BroadcastState(entry.id, snapshot)
+
+	go func(e *gameEntry, b core.Board, h map[uint64]int) {
+		defer e.thinking.Store(false)
+
+		result := b.IterativeDeepening(
+			core.SearchLimits{MoveTime: moveTime, History: h},
+			&e.stopSearch,
+			nil,
+		)
+
+		g.mu.Lock()
+		defer g.mu.Unlock()
+
+		// Final safety check: if user switched to human while we were thinking, abort.
+		if e.stopSearch.Load() || !e.game.EngineToMove() {
+			g.hub.BroadcastState(e.id, g.snapshotLocked(e))
+			return
+		}
+
+		if result.BestMove != (core.Move{}) {
+			if matched, ok := game.MatchMove(e.game.Board.GenerateLegalMoves(), result.BestMove); ok {
+				e.game.PlayMove(matched)
+			}
+		}
+
+		// Re-lock is handled by syncGameToDB which also broadcasts final state
+		go g.syncGameToDB(e)
+
+		// Check if we need to move again (e.g. Engine vs Engine)
+		// We use a small delay to avoid tight loop recursion if something is wrong
+		time.AfterFunc(100*time.Millisecond, func() {
+			g.maybeTriggerEngine(e)
+		})
+	}(entry, board, hist)
 }
 
 func (g *GUI) snapshotLocked(entry *gameEntry) stateJSON {
@@ -703,17 +745,26 @@ func (g *GUI) snapshotLocked(entry *gameEntry) stateJSON {
 }
 
 type stateJSON struct {
-	FEN, Turn string
-	EngineWhite, EngineBlack, EngineToMove bool
-	Status string
-	InCheck bool
-	LegalMoves, History, HistorySAN []string
-	LastMove *moveJSON
-	Thinking, TouchMove bool
-	TouchedSquare string
+	FEN            string    `json:"fen"`
+	Turn           string    `json:"turn"`
+	EngineWhite    bool      `json:"engine_white"`
+	EngineBlack    bool      `json:"engine_black"`
+	EngineToMove   bool      `json:"engine_to_move"`
+	Status         string    `json:"status"`
+	InCheck        bool      `json:"in_check"`
+	LegalMoves     []string  `json:"legal_moves"`
+	History        []string  `json:"history"`
+	HistorySAN     []string  `json:"history_san"`
+	LastMove       *moveJSON `json:"last_move"`
+	Thinking       bool      `json:"thinking"`
+	TouchMove      bool      `json:"touch_move"`
+	TouchedSquare  string    `json:"touched_square"`
 }
 
-type moveJSON struct { From, To string }
+type moveJSON struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+}
 
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")

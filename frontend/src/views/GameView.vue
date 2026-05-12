@@ -194,7 +194,7 @@ const statusMsg = computed(() => {
 });
 
 const historyPairs = computed(() => {
-  if (!state.value) return [];
+  if (!state.value || !state.value.history) return [];
   const display = (state.value.history_san && state.value.history_san.length === state.value.history.length)
     ? state.value.history_san : state.value.history;
   const res: any[] = [];
@@ -226,10 +226,6 @@ const updateState = (s: StateJSON) => {
   }
   lastSoundedHistoryLen = newLen;
   prevFenForSound = s.fen;
-  
-  if (!paused.value && s.status === 'ongoing' && s.engine_to_move && !s.thinking) {
-    scheduleEngine();
-  }
 };
 
 const connectWS = () => {
@@ -404,17 +400,6 @@ const runAssess = async (idx?: number, fromHistory = false) => {
   } catch (e: any) {
     assessInfo.value = '';
     toastStore.error('Assessment failed');
-  }
-};
-
-const scheduleEngine = async () => {
-  if (!state.value) return;
-  if (paused.value || state.value.status !== 'ongoing' || !state.value.engine_to_move || state.value.thinking) return;
-  const movetime = state.value.turn === 'w' ? whiteThinkTime.value : blackThinkTime.value;
-  try {
-    updateState(await api.engineStep(props.id, movetime));
-  } catch (e: any) {
-    console.error("Engine step failed", e);
   }
 };
 
