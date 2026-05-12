@@ -28,5 +28,5 @@ Idempotency keys enforced on state-mutating POSTs via Idempotency-Key header.
 - No Emojis: All documentation and log messages must use professional, high-signal technical tone without emojis.
 - Kubernetes-Native GitOps: The canonical deployment uses Kubernetes (k3s) managed via Kustomize. Ad-hoc bash scripts are prohibited for production. Docker Compose is strictly for local dev reference.
 - Security First: Passwords and tokens must be stored in Kubernetes Secrets. The platform must be served over HTTPS.
-- Database Discipline: Postgres only — no SQLite branch. Schema managed via pkg/db/migrations/ (embedded golang-migrate). Queries live in pkg/db/queries/ and regenerate pkg/db/gen/ via just db-generate.
+- Database Discipline: Postgres only — no SQLite branch. Schema is managed manually or via external tools. Queries live in pkg/db/queries/ and regenerate pkg/db/gen/ via just db-generate.
 - neoromantics Branding: Ensure all module paths (github.com/neoromantics/chess) and metadata reflect the neoromantics identity.

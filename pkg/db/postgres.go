@@ -3,22 +3,14 @@ package db
 import (
 	"context"
 	"database/sql"
-	"embed"
-	"errors"
 	"fmt"
 	"time"
 
-	"github.com/golang-migrate/migrate/v4"
-	migpostgres "github.com/golang-migrate/migrate/v4/database/postgres"
-	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"github.com/google/uuid"
 	_ "github.com/lib/pq"
 
 	"github.com/neoromantics/chess/pkg/db/gen"
 )
-
-//go:embed migrations/*.sql
-var migrationsFS embed.FS
 
 // PostgresStore is the sqlc-backed implementation of Store.
 // All queries are generated from pkg/db/queries/*.sql into pkg/db/gen.
@@ -27,8 +19,7 @@ type PostgresStore struct {
 	q  *gen.Queries
 }
 
-// OpenPostgres opens a pooled connection to Postgres, runs embedded
-// migrations to the latest version, and returns a ready-to-use Store.
+// OpenPostgres opens a pooled connection to Postgres and returns a ready-to-use Store.
 //
 // Pool sizing here matters for distributed deployments: many small API
 // pods sharing one Postgres mean we must cap each pod's open connections
@@ -53,38 +44,7 @@ func OpenPostgres(dsn string) (Store, error) {
 		return nil, fmt.Errorf("failed to ping postgres: %w", err)
 	}
 
-	if err := runMigrations(sqlDB); err != nil {
-		_ = sqlDB.Close()
-		return nil, fmt.Errorf("failed to run migrations: %w", err)
-	}
-
 	return &PostgresStore{db: sqlDB, q: gen.New(sqlDB)}, nil
-}
-
-// runMigrations applies all embedded migrations through golang-migrate.
-// Safe to call from every replica on startup — schema_migrations + the
-// advisory lock golang-migrate takes ensures only one applies at a time.
-func runMigrations(sqlDB *sql.DB) error {
-	src, err := iofs.New(migrationsFS, "migrations")
-	if err != nil {
-		return fmt.Errorf("migrations source: %w", err)
-	}
-	defer src.Close()
-
-	driver, err := migpostgres.WithInstance(sqlDB, &migpostgres.Config{})
-	if err != nil {
-		return fmt.Errorf("migrations driver: %w", err)
-	}
-
-	m, err := migrate.NewWithInstance("iofs", src, "postgres", driver)
-	if err != nil {
-		return fmt.Errorf("migrate init: %w", err)
-	}
-
-	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
-		return err
-	}
-	return nil
 }
 
 func (s *PostgresStore) Close() error { return s.db.Close() }

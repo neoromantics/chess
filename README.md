@@ -11,7 +11,7 @@ Three pods, three responsibilities, every cross-pod handoff over Redis:
 - **api** (Go, HPA 2-8) - Stateless HTTP + WebSocket entry. Auth, routing, game lifecycle, matchmaking, rating updates. Holds zero game state in memory.
 - **engine-worker** (Go, HPA 2-8) - CPU-bound search. Pulls jobs via Redis Streams (durable), publishes results via Redis pub/sub.
 - **Redis** - Operational backbone. Pub/sub, Streams (engine queue), distributed locks, leader election, and transient state (thinking flag, authoritative clocks).
-- **Postgres** - Durable source of truth. sqlc-generated queries, golang-migrate for schema management.
+- **Postgres** - Durable source of truth. sqlc-generated queries, manual schema management.
 
 ## Key Invariants
 - **No in-memory game state.** gameEntry is built per-request from Postgres.
