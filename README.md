@@ -13,10 +13,11 @@ This platform is engineered as a highly available, strictly consistent microserv
 - **Postgres (Persistence)**: The authoritative durable store for game lifecycles and analysis records.
 
 ## Key Features
-- **Strictly Consistent State:** Redis-backed distributed locks guarantee absolute consistency across active games, even during concurrent mutations across different K8s nodes.
-- **Reactive Stateless Broadcasts:** Redis Pub/Sub (`ws.broadcast`) ensures that WebSockets instantly stream the latest board state regardless of which pod processes the move, eliminating all DB caching overhead.
+- **Strictly Consistent State:** Redis-backed distributed locks (token + Lua compare-and-delete release) guarantee absolute consistency across active games, even during concurrent mutations across different K8s nodes.
+- **Reactive Stateless Broadcasts:** Redis Pub/Sub (`ws.broadcast`) streams board state from any pod to all WebSocket clients. Heartbeated WS connections cull half-open clients in ~60s.
 - **Standardized GitOps:** Automated CI/CD pipeline building multi-stage immutable containers, seamlessly rolled out to a K8s cluster using standard `Kustomize`.
 - **Authoritative Headless Engine:** The backend is the sole arbiter of time and legality. The Vue 3 frontend is a decoupled, reactive terminal.
+- **Schema-Versioned Persistence:** `sqlc`-generated type-safe queries against Postgres; `golang-migrate` runs embedded SQL migrations on boot from every replica (advisory-locked, so only one applies).
 
 ## Quick Start (Docker Compose)
 Docker Compose is maintained strictly as a local development reference to ensure parity. It is **not** used for VM or production deployment.
@@ -31,28 +32,38 @@ Visit http://localhost:8080.
 ## Operations
 | Command | Description |
 |---------|-------------|
-| just up | Build and start API, Worker, Redis, and DB |
+| just up | Build and start API, Worker, Redis, and DB. Auto-bootstraps `.env` on first run. |
 | just logs-api | Watch the API orchestrator logs |
 | just logs-worker | Watch the engine calculation nodes |
 | just build | Production-ready local build (Go + embedded frontend) |
 | just down | Stop all services |
-| just reset | Fully wipe the environment and restart |
+| just reset | Fully wipe environment (containers, `./postgres-data`, `.env`) and restart |
+| just db-generate | Regenerate `pkg/db/gen/*` from `pkg/db/queries/*.sql` (run after editing SQL) |
+| just secrets-init | Generate a fresh strong `.env` (Postgres creds + JWT) |
+| just deploy-prod | `kubectl apply -k deploy/kustomize/overlays/prod` |
 
 ## Project Structure
 ```
 .
 ├── cmd/
-│   ├── chess/          # API Server (Orchestrator)
-│   └── engine-worker/  # Distributed Calculation Node
+│   ├── chess/                # API Server (Orchestrator)
+│   └── engine-worker/        # Distributed Calculation Node
 ├── pkg/
-│   ├── api/            # Headless API, WebSockets & Event Hub
-│   ├── bus/            # Redis Pub/Sub Event Bus
-│   ├── core/           # Pure Chess Engine (Search & Eval)
-│   ├── db/             # Postgres persistence (sqlc + golang-migrate)
-│   ├── game/           # Authoritative Game Logic
-│   └── auth/           # Secure JWT/Bcrypt authentication
-├── frontend/           # Vue 3 Reactive SPA
-└── deploy/             # Kubernetes & Production Manifests
+│   ├── api/                  # Headless API, WebSockets, middleware (rate limit, recovery, CORS)
+│   ├── bus/                  # Redis pub/sub, BLPOP queue, token-based distributed lock
+│   ├── core/                 # Pure Chess Engine (Search & Eval) — zero deps
+│   ├── db/
+│   │   ├── migrations/       # golang-migrate up/down SQL, embedded into the binary
+│   │   ├── queries/          # sqlc source-of-truth SQL
+│   │   ├── gen/              # sqlc-generated (DO NOT hand-edit — `just db-generate`)
+│   │   ├── store.go          # Storage interface
+│   │   └── postgres.go       # sqlc-backed implementation + connection pool
+│   ├── game/                 # Authoritative Game Logic
+│   ├── auth/                 # JWT/bcrypt; lazy secret resolution
+│   └── uci/                  # UCI protocol parser (stdio mode)
+├── frontend/                 # Vue 3 + TypeScript SPA, embedded via //go:embed
+├── deploy/kustomize/         # Base + prod overlay for k3s
+└── sqlc.yaml                 # sqlc generator config
 ```
 
 ## Development

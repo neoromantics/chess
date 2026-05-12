@@ -60,5 +60,16 @@ just build
 ## 🔗 Distributed Stack Overview
 - **API Pods (100% Stateless)**: Handles WS and HTTP. Zero in-memory game state. Reads/writes to Postgres on demand. Infinitely scalable behind standard load balancers.
 - **Worker Pods (Stateless Engine)**: CPU-intensive. Subscribes to Redis `BLPOP` queues for move calculation.
-- **Redis (Event Bus & Queues)**: The operational backbone. Acts as the WebSocket broadcast bus, task queue for engine searches, and distributed lock manager.
+- **Redis (Event Bus & Queues)**: The operational backbone. Acts as the WebSocket broadcast bus, task queue for engine searches, and distributed lock manager (token + Lua compare-and-delete release).
 - **Postgres (Authoritative State)**: The single source of truth for long-term persistence and active game states.
+
+## 🗄 Persistence & Schema Migrations
+
+The API container starts up by:
+1. Reading `DATABASE_URL` from the environment (required — pod will crash-loop with a clear log line if missing).
+2. Opening a pooled Postgres connection (`MaxOpenConns=25`, `MaxIdleConns=5`, `ConnMaxLifetime=30m`).
+3. Applying any pending migrations from `pkg/db/migrations/`, embedded into the binary via `//go:embed`. `golang-migrate` holds a Postgres advisory lock during migration, so every replica running this on startup is safe — only one will apply, the rest fast-path to `ErrNoChange`.
+
+Schema and queries live in two places:
+- `pkg/db/migrations/000001_initial.{up,down}.sql` — versioned, append-only. Add `000002_*.sql` for new changes; never edit an applied migration.
+- `pkg/db/queries/queries.sql` — sqlc input. After editing, run `just db-generate` to regenerate `pkg/db/gen/*` and commit both the SQL and the generated code.
