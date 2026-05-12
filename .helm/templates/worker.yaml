@@ -1,0 +1,24 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Chart.Name }}-worker
+  labels:
+    app: {{ .Chart.Name }}-worker
+spec:
+  replicas: {{ .Values.worker.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Chart.Name }}-worker
+  template:
+    metadata:
+      labels:
+        app: {{ .Chart.Name }}-worker
+    spec:
+      containers:
+      - name: worker
+        image: {{ .Values.werf.image.chess_worker }}
+        env:
+        - name: REDIS_URL
+          value: "{{ .Chart.Name }}-redis:{{ .Values.redis.port }}"
+        resources:
+          {{- toYaml .Values.worker.resources | nindent 10 }}

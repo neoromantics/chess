@@ -2,7 +2,6 @@
 
 default:
     @just --list
-
 # --- Production Operations (Docker Compose) ---
 
 # Build the production binary with embedded frontend
@@ -21,10 +20,26 @@ up:
 scale n:
     docker-compose up -d --scale worker={{n}}
 
-
 # Stop all services
 down:
     docker-compose down
+
+# --- Kubernetes Operations (Werf & Helm) ---
+
+# Build images and deploy to Kubernetes using Werf/Helm
+# Usage: just converge env=prod
+converge env="dev":
+    werf converge --env {{env}}
+
+# Build images only using Werf
+werf-build:
+    werf build
+
+# Delete the application from Kubernetes
+dismiss env="dev":
+    werf dismiss --env {{env}}
+
+# --- Development Workflow ---
 
 # View real-time logs from all services
 logs:

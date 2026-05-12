@@ -16,4 +16,5 @@
 - **Pure Go Search**: Keep `pkg/core` zero-dependency and high-performance. It is the core IP of the platform.
 - **Service Purity**: Remove all "GUI" terminology from the backend. It is a headless data manager.
 - **Docker-First Workflow**: Docker is the canonical environment. Use `Justfile` recipes (`just up`, `just logs-api`) as the primary interface for operations.
+- **Werf & Helm Orchestration**: Kubernetes deployment must use **Werf** and **Helm**. All K8s manifests must be templated in `.helm/templates` and images must be built via `werf.yaml`.
 - **neoromantics Branding**: Ensure all module paths (`github.com/neoromantics/chess`) and metadata reflect the neoromantics identity.

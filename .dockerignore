@@ -11,3 +11,6 @@ chess.exe
 *.db-wal
 .env
 pkg/api/dist/
+.helm/
+werf.yaml
+.werf/

@@ -1,107 +1,53 @@
-# Deployment Guide
+# Deployment Guide: neoromantics Chess Platform
 
-This guide covers how to deploy the Chess Platform for web production.
+This platform is designed for professional Kubernetes deployment using **Werf** and **Helm**.
 
-## Docker (Recommended)
+## 🏗 Prerequisites
+- **Kubernetes Cluster**: Access to a K8s cluster (GKE, EKS, local k3s/Minikube).
+- **Werf**: The primary build and deployment orchestrator ([werf.io](https://werf.io)).
+- **Helm**: Template engine for K8s manifests.
+- **Redis & Postgres**: Provided in the Helm chart, but can be swapped for managed services.
 
-The easiest way to deploy is using the provided `Dockerfile`.
+## 🚀 Deployment Workflow
 
-### Build the image
+### 1. Configure Secret Data
+Update `.helm/values.yaml` or create a custom values file for your environment (e.g., `values-prod.yaml`). Ensure `jwtSecret` and `databaseUrl` are secure.
+
+### 2. Build & Deploy with Werf
+Werf handles the entire lifecycle: building images, tagging them, and deploying the Helm chart.
+
 ```bash
-docker build -t neoromantics/chess .
+# Deploy to the 'dev' namespace
+just converge env=dev
+
+# Deploy to 'prod' with custom settings
+just converge env=prod
 ```
 
-### Run the container
+### 3. Scaling Workers
+The Engine Worker pool can be scaled independently via Helm values or the command line.
+
 ```bash
-docker run -d \
-  -p 8080:8080 \
-  -e JWT_SECRET=your-secret-key \
-  -v $(pwd)/data:/app/data \
-  --name chess \
-  neoromantics/chess
+# Scale to 10 workers in production
+werf converge --env prod --set "worker.replicaCount=10"
 ```
 
-## Docker Compose
+## 🛠 CI/CD Integration
+Werf is designed for GitOps. In a professional pipeline (GitHub Actions, GitLab CI):
+1. Werf builds the images based on the Git commit SHA.
+2. It caches stages in your container registry.
+3. It performs a zero-downtime rolling update on your K8s cluster.
 
-For a production-ready setup with persistent storage:
+## 📦 Local Binary (Single File)
+For quick internal testing or low-traffic instances, you can build a single Go binary that includes the embedded frontend:
 
-```yaml
-services:
-  chess:
-    image: neoromantics/chess
-    build: .
-    ports:
-      - "8080:8080"
-    volumes:
-      - ./chess-data:/app/data
-    environment:
-      - PORT=8080
-      - DB_PATH=/app/data/chess.db
-      - JWT_SECRET=generate-a-long-random-string
-    restart: always
-```
-
-Run with: `docker-compose up -d`
-
-## Kubernetes (Cloud Scale)
-
-For high-concurrency environments, use the manifests in `deploy/k8s`.
-
-### 1. Create Secrets
 ```bash
-kubectl create secret generic chess-secrets --from-literal=jwt-secret=your-long-random-key
+just build
+./chess -server
 ```
 
-### 2. Apply Manifests
-```bash
-kubectl apply -f deploy/k8s/api.yaml
-```
-
-This will launch a load-balanced cluster of 3 API pods. For commercial scale, follow the **Scaling Roadmap** in the project documentation.
-
-## Configuration (Environment Variables)
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `PORT` | The port the Go server listens on | `8080` |
-| `DB_PATH` | Path to the SQLite database file | `/app/data/chess.db` |
-| `JWT_SECRET` | Secret key for signing session tokens | `change-me` |
-
-## Production Architecture (Nginx + HTTPS)
-
-In production, you should run the application behind a reverse proxy like **Nginx** or **Caddy** to handle SSL/TLS (HTTPS).
-
-### Nginx Example
-```nginx
-server {
-    server_name chess.example.com;
-
-    location / {
-        proxy_pass http://localhost:8080;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-
-    listen 443 ssl; # managed by Certbot
-    # ... ssl certificates ...
-}
-```
-
-### Caddy Example
-```caddy
-chess.example.com {
-    reverse_proxy localhost:8080
-}
-```
-
-## Health Checks & Monitoring
-
-The backend provides a health check endpoint at `/health`.
-
-- **Liveness/Readiness**: Use `GET /health` for Kubernetes or Docker health checks.
-- **Logging**: The application uses structured JSON logging (`slog`). Logs can be collected using standard tools like Fluentbit or ELK stack.
-
-## Data Persistence
-The `chess.db` file in the data volume stores all user accounts and past games. Ensure this volume is backed up regularly.
+## 🔗 Distributed Stack Overview
+- **API Pods**: Stateless, handles WS and Auth.
+- **Worker Pods**: CPU-intensive, subscribes to Redis tasks.
+- **Redis**: Acts as the message broker and transient state store.
+- **Postgres**: Authoritative persistent storage.
