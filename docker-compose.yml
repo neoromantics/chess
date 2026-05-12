@@ -14,7 +14,7 @@ services:
       - PORT=8080
       - DATABASE_URL=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable
       - REDIS_URL=redis:6379
-      - JWT_SECRET=${JWT_SECRET:-development-secret-key}
+      - JWT_SECRET=${JWT_SECRET}
     restart: always
 
   worker:
@@ -31,13 +31,13 @@ services:
   db:
     image: postgres:16-alpine
     environment:
-      - POSTGRES_USER=${POSTGRES_USER:-chess}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-chess}
-      - POSTGRES_DB=${POSTGRES_DB:-chess}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
     volumes:
       - ./postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U chess"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
       interval: 5s
       timeout: 5s
       retries: 5

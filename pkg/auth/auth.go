@@ -20,9 +20,13 @@ var (
 
 func init() {
 	if len(jwtSecret) == 0 {
-		// SECURITY: In production, JWT_SECRET MUST be set via the environment.
-		// This fallback is ONLY acceptable for local development.
-		jwtSecret = []byte("dev-only-insecure-jwt-secret-do-not-use-in-production")
+		// SECURITY: In production, JWT_SECRET MUST be set via environment/K8s Secrets.
+		// Without it, we generate a random ephemeral secret per process start.
+		// This means tokens will NOT survive pod restarts — by design.
+		jwtSecret = []byte(uuid.New().String())
+		println("⚠️  WARNING: JWT_SECRET not set. Using ephemeral random secret.")
+		println("   All user sessions will be invalidated on restart.")
+		println("   Set JWT_SECRET via 'just secrets-init' or K8s Secrets for production.")
 	}
 }
 

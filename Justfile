@@ -70,3 +70,17 @@ fmt:
 # Clean up all build artifacts and node modules
 clean:
     rm -rf chess build pkg/api/dist frontend/dist frontend/node_modules
+
+# --- Secrets Management ---
+
+# Generate a local .env file with strong random credentials
+secrets-init:
+    ./scripts/secrets.sh init
+
+# Create/update chess-secrets in the K8s cluster from your local .env
+secrets-apply:
+    ./scripts/secrets.sh k8s-apply
+
+# Rotate all secrets and rolling-restart pods in production
+secrets-rotate:
+    ./scripts/secrets.sh k8s-rotate
