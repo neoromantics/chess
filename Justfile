@@ -5,6 +5,13 @@ default:
 
 # --- Production Operations (Docker Compose) ---
 
+# Build the production binary with embedded frontend
+build:
+    cd frontend && npm install && npm run build
+    mkdir -p pkg/api/dist
+    cp -r frontend/dist/* pkg/api/dist/
+    go build -o chess ./cmd/chess
+
 # Start the entire distributed stack (API, Worker, Postgres)
 up:
     docker-compose up --build -d
@@ -16,6 +23,14 @@ down:
 # View real-time logs from all services
 logs:
     docker-compose logs -f
+
+# View real-time logs from the API server
+logs-api:
+    docker-compose logs -f api
+
+# View real-time logs from the Engine Worker
+logs-worker:
+    docker-compose logs -f worker
 
 # View status of running containers
 status:

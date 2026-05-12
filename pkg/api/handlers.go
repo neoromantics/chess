@@ -18,6 +18,35 @@ import (
 	"github.com/taiyanliu/chess/pkg/uci"
 )
 
+func (s *Server) registerRoutes() {
+	s.mux.HandleFunc("GET /health", s.handleHealth)
+	s.mux.HandleFunc("POST /api/auth/signup", s.handleSignup)
+	s.mux.HandleFunc("POST /api/auth/login", s.handleLogin)
+	s.mux.HandleFunc("POST /api/auth/logout", s.handleLogout)
+	s.mux.HandleFunc("GET /api/user/me", s.handleMe)
+	s.mux.HandleFunc("POST /api/games/new", s.handleCreateGame)
+	s.mux.HandleFunc("GET /api/games", s.handleListGames)
+	s.mux.HandleFunc("DELETE /api/games/delete", s.handleDeleteGame)
+	s.mux.HandleFunc("GET /api/state", s.handleState)
+	s.mux.HandleFunc("POST /api/move", s.handleMove)
+	s.mux.HandleFunc("POST /api/new", s.handleNew)
+	s.mux.HandleFunc("POST /api/hint", s.handleHint)
+	s.mux.HandleFunc("POST /api/assess", s.handleAssess)
+	s.mux.HandleFunc("POST /api/set_players", s.handleSetPlayers)
+	s.mux.HandleFunc("POST /api/touch", s.handleTouch)
+	s.mux.HandleFunc("POST /api/touch_move", s.handleTouchMove)
+	s.mux.HandleFunc("POST /api/undo", s.handleUndo)
+	s.mux.HandleFunc("POST /api/ping", s.handlePing)
+	s.mux.HandleFunc("GET /api/save", s.handleSave)
+	s.mux.HandleFunc("POST /api/load", s.handleLoad)
+	s.mux.HandleFunc("GET /api/replay.html", s.handleReplay)
+	s.mux.HandleFunc("GET /ws", s.handleWS)
+	s.mux.Handle("GET /assets/", http.FileServer(assetsFS))
+	// Catch-all route for SPA navigation (Dashboard, GameView, etc.)
+	s.mux.HandleFunc("GET /{$}", s.handleIndex)
+	s.mux.HandleFunc("GET /{path...}", s.handleIndex)
+}
+
 func (s *Server) getGame(r *http.Request) (*gameEntry, string, error) {
 	id := r.URL.Query().Get("game_id")
 	if id == "" {
@@ -38,13 +67,11 @@ func (s *Server) getGame(r *http.Request) (*gameEntry, string, error) {
 		return nil, "", fmt.Errorf("game not found")
 	}
 
-	user, userOK := auth.GetUser(r.Context())
+	user, _ := auth.GetUser(r.Context())
 	sessionID := auth.GetSessionID(r.Context())
 
 	authorized := false
-	if userOK && record.UserID == user.UserID {
-		authorized = true
-	} else if record.UserID == 0 && record.SessionID == sessionID {
+	if (user != nil && record.UserID == user.UserID) || (record.UserID == 0 && record.SessionID == sessionID) {
 		authorized = true
 	}
 
@@ -101,6 +128,8 @@ func (s *Server) syncGameToDB(entry *gameEntry) {
 	s.db.SaveGame(record)
 	s.hub.BroadcastState(entry.id, snapshot)
 }
+
+// Auth Handlers
 
 func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -159,6 +188,8 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, user)
 }
 
+// Game Management Handlers
+
 func (s *Server) handleCreateGame(w http.ResponseWriter, r *http.Request) {
 	user, _ := auth.GetUser(r.Context())
 	sessionID := auth.GetSessionID(r.Context())
@@ -191,11 +222,11 @@ func (s *Server) handleCreateGame(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListGames(w http.ResponseWriter, r *http.Request) {
-	user, userOK := auth.GetUser(r.Context())
+	user, _ := auth.GetUser(r.Context())
 	sessionID := auth.GetSessionID(r.Context())
 
 	var userID int64
-	if userOK {
+	if user != nil {
 		userID = user.UserID
 	}
 
@@ -213,16 +244,14 @@ func (s *Server) handleListGames(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDeleteGame(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("game_id")
-	user, userOK := auth.GetUser(r.Context())
+	user, _ := auth.GetUser(r.Context())
 	sessionID := auth.GetSessionID(r.Context())
 
 	s.mu.Lock()
 	entry, ok := s.games[id]
 	if ok {
 		authorized := false
-		if userOK && entry.userID == user.UserID {
-			authorized = true
-		} else if entry.userID == 0 && entry.sessionID == sessionID {
+		if (user != nil && entry.userID == user.UserID) || (entry.userID == 0 && entry.sessionID == sessionID) {
 			authorized = true
 		}
 		if !authorized {
@@ -236,7 +265,7 @@ func (s *Server) handleDeleteGame(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 
 	var userID int64
-	if userOK {
+	if user != nil {
 		userID = user.UserID
 	}
 	err := s.db.DeleteGame(id, userID)
@@ -247,70 +276,18 @@ func (s *Server) handleDeleteGame(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(204)
 }
 
-func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, map[string]string{"status": "ok", "time": time.Now().Format(time.RFC3339)})
-}
-
-func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
-	if (r.URL.Path != "/" && path.Ext(r.URL.Path) != "") || strings.HasPrefix(r.URL.Path, "/assets/") {
-		slog.Warn("asset not found", "path", r.URL.Path)
-		http.NotFound(w, r)
-		return
-	}
-	slog.Info("serving index.html", "path", r.URL.Path)
-	w.Header().Set("Content-Type", "text/html")
-	w.Write(indexHTML)
-}
-
-func (s *Server) handlePing(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	s.lastPing = time.Now()
-	s.mu.Unlock()
-	w.WriteHeader(204)
-}
+// Play Handlers
 
 func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 	entry, id, err := s.getGame(r)
 	if err != nil {
-		slog.Error("handleState error", "error", err)
+		slog.Error("handleState error", "error", err, "game_id", id)
 		http.Error(w, err.Error(), 404)
 		return
 	}
-	slog.Info("fetching state", "game_id", id)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	writeJSON(w, s.snapshotLocked(entry))
-}
-
-func (s *Server) handleTouch(w http.ResponseWriter, r *http.Request) {
-	entry, _, err := s.getGame(r)
-	if err != nil {
-		http.Error(w, err.Error(), 404)
-		return
-	}
-	var req struct{ Square string `json:"square"` }
-	json.NewDecoder(r.Body).Decode(&req)
-	sq, _ := core.ParseSquare(req.Square)
-	s.mu.Lock()
-	entry.game.Touch(sq)
-	snapshot := s.snapshotLocked(entry)
-	s.mu.Unlock()
-	writeJSON(w, snapshot)
-}
-
-func (s *Server) handleTouchMove(w http.ResponseWriter, r *http.Request) {
-	entry, _, err := s.getGame(r)
-	if err != nil {
-		http.Error(w, err.Error(), 404)
-		return
-	}
-	var req struct{ Enabled bool `json:"enabled"` }
-	json.NewDecoder(r.Body).Decode(&req)
-	s.mu.Lock()
-	entry.game.TouchMove = req.Enabled
-	snapshot := s.snapshotLocked(entry)
-	s.mu.Unlock()
-	writeJSON(w, snapshot)
 }
 
 func (s *Server) handleMove(w http.ResponseWriter, r *http.Request) {
@@ -377,17 +354,64 @@ func (s *Server) handleNew(w http.ResponseWriter, r *http.Request) {
 		EngineBlack bool `json:"engine_black"`
 	}
 	json.NewDecoder(r.Body).Decode(&req)
+	
 	s.mu.Lock()
-	if entry.thinking.Load() {
-		s.mu.Unlock()
-		http.Error(w, "busy", 409)
-		return
-	}
+	// Signal any current search to stop
+	entry.stopSearch.Store(true)
+	
 	entry.game.Reset()
 	entry.game.EngineWhite, entry.game.EngineBlack = req.EngineWhite, req.EngineBlack
 	snapshot := s.snapshotLocked(entry)
 	s.mu.Unlock()
 
+	go s.syncGameToDB(entry)
+	go s.maybeTriggerEngine(entry)
+	writeJSON(w, snapshot)
+}
+
+func (s *Server) handleSetPlayers(w http.ResponseWriter, r *http.Request) {
+	entry, _, err := s.getGame(r)
+	if err != nil {
+		http.Error(w, err.Error(), 404)
+		return
+	}
+	var req struct {
+		EngineWhite    bool `json:"engine_white"`
+		EngineBlack    bool `json:"engine_black"`
+		WhiteThinkTime int  `json:"white_think_time"`
+		BlackThinkTime int  `json:"black_think_time"`
+	}
+	json.NewDecoder(r.Body).Decode(&req)
+	
+	s.mu.Lock()
+	entry.game.EngineWhite, entry.game.EngineBlack = req.EngineWhite, req.EngineBlack
+	if req.WhiteThinkTime > 0 {
+		entry.whiteThinkTime = time.Duration(req.WhiteThinkTime) * time.Millisecond
+	}
+	if req.BlackThinkTime > 0 {
+		entry.blackThinkTime = time.Duration(req.BlackThinkTime) * time.Millisecond
+	}
+	
+	entry.stopSearch.Store(true)
+	
+	snapshot := s.snapshotLocked(entry)
+	s.mu.Unlock()
+	go s.syncGameToDB(entry)
+	go s.maybeTriggerEngine(entry)
+	writeJSON(w, snapshot)
+}
+
+func (s *Server) handleUndo(w http.ResponseWriter, r *http.Request) {
+	entry, _, err := s.getGame(r)
+	if err != nil {
+		http.Error(w, err.Error(), 404)
+		return
+	}
+	s.mu.Lock()
+	entry.stopSearch.Store(true)
+	entry.game.Undo()
+	snapshot := s.snapshotLocked(entry)
+	s.mu.Unlock()
 	go s.syncGameToDB(entry)
 	go s.maybeTriggerEngine(entry)
 	writeJSON(w, snapshot)
@@ -412,6 +436,7 @@ func (s *Server) handleHint(w http.ResponseWriter, r *http.Request) {
 	entry.thinking.Store(true)
 	entry.stopSearch.Store(false)
 	s.mu.Unlock()
+	
 	defer entry.thinking.Store(false)
 	result := board.IterativeDeepening(core.SearchLimits{MoveTime: time.Duration(req.MoveTime) * time.Millisecond, History: hist}, &entry.stopSearch, nil)
 	
@@ -459,6 +484,7 @@ func (s *Server) handleAssess(w http.ResponseWriter, r *http.Request) {
 	entry.thinking.Store(true)
 	entry.stopSearch.Store(false)
 	s.mu.Unlock()
+	
 	defer entry.thinking.Store(false)
 	t := time.Duration(req.MoveTime) * time.Millisecond
 	resBefore := before.IterativeDeepening(core.SearchLimits{MoveTime: t}, &entry.stopSearch, nil)
@@ -476,55 +502,34 @@ func (s *Server) handleAssess(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) handleSetPlayers(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleTouch(w http.ResponseWriter, r *http.Request) {
 	entry, _, err := s.getGame(r)
 	if err != nil {
 		http.Error(w, err.Error(), 404)
 		return
 	}
-	var req struct {
-		EngineWhite    bool `json:"engine_white"`
-		EngineBlack    bool `json:"engine_black"`
-		WhiteThinkTime int  `json:"white_think_time"`
-		BlackThinkTime int  `json:"black_think_time"`
-	}
+	var req struct{ Square string `json:"square"` }
 	json.NewDecoder(r.Body).Decode(&req)
-	
+	sq, _ := core.ParseSquare(req.Square)
 	s.mu.Lock()
-	entry.game.EngineWhite, entry.game.EngineBlack = req.EngineWhite, req.EngineBlack
-	if req.WhiteThinkTime > 0 {
-		entry.whiteThinkTime = time.Duration(req.WhiteThinkTime) * time.Millisecond
-	}
-	if req.BlackThinkTime > 0 {
-		entry.blackThinkTime = time.Duration(req.BlackThinkTime) * time.Millisecond
-	}
-	
-	entry.stopSearch.Store(true)
-	
+	entry.game.Touch(sq)
 	snapshot := s.snapshotLocked(entry)
 	s.mu.Unlock()
-	go s.syncGameToDB(entry)
-	go s.maybeTriggerEngine(entry)
 	writeJSON(w, snapshot)
 }
 
-func (s *Server) handleUndo(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleTouchMove(w http.ResponseWriter, r *http.Request) {
 	entry, _, err := s.getGame(r)
 	if err != nil {
 		http.Error(w, err.Error(), 404)
 		return
 	}
+	var req struct{ Enabled bool `json:"enabled"` }
+	json.NewDecoder(r.Body).Decode(&req)
 	s.mu.Lock()
-	if entry.thinking.Load() {
-		s.mu.Unlock()
-		http.Error(w, "busy", 409)
-		return
-	}
-	entry.game.Undo()
+	entry.game.TouchMove = req.Enabled
 	snapshot := s.snapshotLocked(entry)
 	s.mu.Unlock()
-	go s.syncGameToDB(entry)
-	go s.maybeTriggerEngine(entry)
 	writeJSON(w, snapshot)
 }
 
@@ -549,6 +554,7 @@ func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
 	var sg struct { StartFEN string; Moves []string; EngineWhite, EngineBlack bool }
 	json.NewDecoder(r.Body).Decode(&sg)
 	s.mu.Lock()
+	entry.stopSearch.Store(true)
 	entry.game.Load(sg.StartFEN, sg.Moves, sg.EngineWhite, sg.EngineBlack)
 	snapshot := s.snapshotLocked(entry)
 	s.mu.Unlock()
@@ -570,6 +576,31 @@ func (s *Server) handleReplay(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html")
 	w.Write(html)
 }
+
+// Infrastructure Handlers
+
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, map[string]string{"status": "ok", "time": time.Now().Format(time.RFC3339)})
+}
+
+func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
+	if (r.URL.Path != "/" && path.Ext(r.URL.Path) != "") || strings.HasPrefix(r.URL.Path, "/assets/") {
+		slog.Warn("asset not found", "path", r.URL.Path)
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html")
+	w.Write(indexHTML)
+}
+
+func (s *Server) handlePing(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	s.lastPing = time.Now()
+	s.mu.Unlock()
+	w.WriteHeader(204)
+}
+
+// Authoritative Engine Logic
 
 func (s *Server) maybeTriggerEngine(entry *gameEntry) {
 	s.mu.Lock()
@@ -600,6 +631,19 @@ func (s *Server) maybeTriggerEngine(entry *gameEntry) {
 	s.hub.BroadcastState(entry.id, snapshot)
 
 	go func(e *gameEntry, b core.Board, h map[uint64]int, t time.Duration) {
+		slog.Info("engine starting calculation", "game_id", e.id, "movetime", t)
+		
+		// ALWAYS ensure thinking is cleared
+		defer e.thinking.Store(false)
+		
+		// Safety: ensure a re-check happens after this goroutine exits
+		// to handle settings changes or subsequent moves.
+		defer func() {
+			time.AfterFunc(100*time.Millisecond, func() {
+				s.maybeTriggerEngine(e)
+			})
+		}()
+
 		result := b.IterativeDeepening(
 			core.SearchLimits{MoveTime: t, History: h},
 			&e.stopSearch,
@@ -607,29 +651,23 @@ func (s *Server) maybeTriggerEngine(entry *gameEntry) {
 		)
 
 		s.mu.Lock()
-		e.thinking.Store(false)
+		defer s.mu.Unlock()
 
 		if e.stopSearch.Load() || !e.game.EngineToMove() {
 			slog.Info("engine search aborted or settings changed", "game_id", e.id)
-			s.mu.Unlock()
-			time.AfterFunc(100*time.Millisecond, func() {
-				s.maybeTriggerEngine(e)
-			})
+			// syncGameToDB will broadcast the new 'thinking: false' state
+			go s.syncGameToDB(e) 
 			return
 		}
 
 		if result.BestMove != (core.Move{}) {
 			if matched, ok := game.MatchMove(e.game.Board.GenerateLegalMoves(), result.BestMove); ok {
+				slog.Info("engine playing move", "game_id", e.id, "move", matched.String())
 				e.game.PlayMove(matched)
 			}
 		}
-		s.mu.Unlock()
 
 		go s.syncGameToDB(e)
-
-		time.AfterFunc(100*time.Millisecond, func() {
-			s.maybeTriggerEngine(e)
-		})
 	}(entry, board, hist, moveTime)
 }
 
