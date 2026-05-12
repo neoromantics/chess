@@ -444,24 +444,52 @@ func (g *GUI) handleMove(w http.ResponseWriter, r *http.Request) {
 	}
 	var req struct{ Move string `json:"move"` }
 	json.NewDecoder(r.Body).Decode(&req)
+	
 	g.mu.Lock()
-	if entry.thinking.Load() || entry.game.TouchLost || entry.game.EngineToMove() {
+	// 1. Is the engine already thinking?
+	if entry.thinking.Load() {
 		g.mu.Unlock()
-		http.Error(w, "busy or not your turn", 409)
+		http.Error(w, "engine is thinking", 409)
 		return
 	}
+	
+	// 2. Is the game still ongoing?
+	if entry.game.Status() != game.StatusOngoing {
+		g.mu.Unlock()
+		http.Error(w, "game is already finished", 403)
+		return
+	}
+	
+	// 3. Is it actually the engine's turn to move? 
+	// If so, the human cannot send a manual move via POST.
+	if entry.game.EngineToMove() {
+		g.mu.Unlock()
+		http.Error(w, "it is the engine's turn", 403)
+		return
+	}
+	
+	// 4. Has the player already lost via touch-move rule?
+	if entry.game.TouchLost {
+		g.mu.Unlock()
+		http.Error(w, "touch-move violation: game lost", 403)
+		return
+	}
+
 	m, err := entry.game.Board.ParseUCIMove(req.Move)
 	if err != nil {
 		g.mu.Unlock()
-		http.Error(w, err.Error(), 400)
+		http.Error(w, "invalid move format", 400)
 		return
 	}
+	
+	// 5. Is the move legally available in this position?
 	matched, ok := game.MatchMove(entry.game.Board.GenerateLegalMoves(), m)
 	if !ok {
 		g.mu.Unlock()
 		http.Error(w, "illegal move", 403)
 		return
 	}
+	
 	entry.game.PlayMove(matched)
 	snapshot := g.snapshotLocked(entry)
 	g.mu.Unlock()
