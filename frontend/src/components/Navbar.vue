@@ -7,6 +7,10 @@
       
       <div class="nav-links">
         <template v-if="authStore.user">
+          <router-link to="/invites" class="btn-text invites-link">
+            Invites
+            <span v-if="inviteStore.pendingCount > 0" class="badge">{{ inviteStore.pendingCount }}</span>
+          </router-link>
           <span class="user-greeting">Welcome, <strong>{{ authStore.user.username }}</strong></span>
           <button @click="handleLogout" class="btn-text">Logout</button>
         </template>
@@ -21,10 +25,12 @@
 
 <script setup lang="ts">
 import { useAuthStore } from '../stores/auth';
+import { useInviteStore } from '../stores/invites';
 import { useRouter } from 'vue-router';
 import { useToastStore } from '../stores/toast';
 
 const authStore = useAuthStore();
+const inviteStore = useInviteStore();
 const router = useRouter();
 const toastStore = useToastStore();
 
@@ -50,4 +56,7 @@ const handleLogout = async () => {
 
 .btn-primary-small { background: #4a6b8a; color: white; border: none; padding: 6px 16px; border-radius: 4px; cursor: pointer; font-weight: 600; font-size: 14px; text-decoration: none; }
 .btn-primary-small:hover { background: #5a7b9a; }
+
+.invites-link { display: inline-flex; align-items: center; gap: 6px; }
+.badge { background: #d4544c; color: white; font-size: 11px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; display: inline-flex; align-items: center; justify-content: center; font-weight: 700; }
 </style>

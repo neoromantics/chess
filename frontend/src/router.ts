@@ -3,10 +3,12 @@ import Dashboard from './views/Dashboard.vue';
 import Login from './views/Login.vue';
 import Signup from './views/Signup.vue';
 import GameView from './views/GameView.vue';
+import Invites from './views/Invites.vue';
 import { useAuthStore } from './stores/auth';
 
 const routes: RouteRecordRaw[] = [
   { path: '/', component: Dashboard, meta: { requiresAuth: true } },
+  { path: '/invites', component: Invites, meta: { requiresAuth: true } },
   { path: '/login', component: Login, meta: { guestOnly: true } },
   { path: '/signup', component: Signup, meta: { guestOnly: true } },
   { path: '/game/:id', component: GameView, props: true, meta: { requiresAuth: true } },

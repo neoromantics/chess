@@ -1,4 +1,4 @@
-import { StateJSON, HintResponse, AssessResponse } from './types';
+import { StateJSON, HintResponse, AssessResponse, InviteWire, UserSummary } from './types';
 
 const API_BASE = (import.meta.env.VITE_API_URL as string) || '';
 
@@ -43,6 +43,19 @@ export const api = {
     }),
   listGames: () => request<any[]>('/api/games'),
   deleteGame: (gameId: string) => request<void>(`/api/games/delete?game_id=${gameId}`, { method: 'DELETE' }),
+
+  // === Invites ===
+  searchUsers: (q: string) => request<UserSummary[]>(`/api/users/search?q=${encodeURIComponent(q)}`),
+  listPendingInvites: () => request<{ received: InviteWire[]; sent: InviteWire[] }>('/api/invites/pending'),
+  sendInvite: (body: { to_username: string; time_control: string; rated: boolean }) =>
+    request<InviteWire>('/api/invites/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  acceptInvite: (id: string) => request<InviteWire>(`/api/invites/${id}/accept`, { method: 'POST' }),
+  declineInvite: (id: string) => request<void>(`/api/invites/${id}/decline`, { method: 'POST' }),
+  cancelInvite: (id: string) => request<void>(`/api/invites/${id}/cancel`, { method: 'POST' }),
 
   // Game actions (require game_id)
   getState: (gameId: string) => request<StateJSON>(`/api/state?game_id=${gameId}`),

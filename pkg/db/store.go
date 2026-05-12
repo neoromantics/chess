@@ -140,5 +140,8 @@ type Store interface {
 	AcceptInvite(inviteID uuid.UUID, toUserID int64, gameID string) (int64, error)
 	DeclineInvite(inviteID uuid.UUID, toUserID int64) (int64, error)
 	CancelInvite(inviteID uuid.UUID, fromUserID int64) (int64, error)
-	ExpireStaleInvites() (int64, error)
+	// ExpireStaleInvites flips pending → expired for invites past their
+	// TTL, returning the affected rows so the sweeper can broadcast a
+	// per-invite event. Called only by the leader-elected sweeper.
+	ExpireStaleInvites() ([]Invite, error)
 }

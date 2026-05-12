@@ -188,10 +188,13 @@ SET status      = 'cancelled',
     resolved_at = NOW()
 WHERE id = $1 AND from_user_id = $2 AND status = 'pending';
 
--- name: ExpireStaleInvites :execrows
--- Called periodically by the leader-elected invite sweeper. Returns the
--- count so the sweeper can publish per-invite expired events if desired.
+-- name: ExpireStaleInvites :many
+-- Called periodically by the leader-elected invite sweeper. RETURNING
+-- gives us the affected rows in one trip so we can publish per-invite
+-- expired events without a second SELECT.
 UPDATE invites
 SET status      = 'expired',
     resolved_at = NOW()
-WHERE status = 'pending' AND expires_at <= NOW();
+WHERE status = 'pending' AND expires_at <= NOW()
+RETURNING id, from_user_id, to_user_id, time_control, rated, status, game_id,
+          created_at, expires_at, resolved_at;

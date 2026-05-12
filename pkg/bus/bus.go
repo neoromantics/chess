@@ -197,6 +197,12 @@ func (c *Client) Close() error {
 	return c.rdb.Close()
 }
 
+// Rdb exposes the underlying *redis.Client for callers that need to use
+// primitives the bus wrapper doesn't surface (currently pkg/leader for
+// SET NX EX + script-based release). Use sparingly — most callers
+// should stay on the typed Publish/Subscribe/LockGame surface.
+func (c *Client) Rdb() *redis.Client { return c.rdb }
+
 // Enqueue pushes a JSON-encoded payload onto a Redis List (RPUSH).
 // This guarantees exactly-once delivery: only one consumer will BLPOP the task.
 func (c *Client) Enqueue(ctx context.Context, queue string, payload any) error {

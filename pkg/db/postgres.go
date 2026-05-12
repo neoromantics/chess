@@ -348,8 +348,16 @@ func (s *PostgresStore) CancelInvite(inviteID uuid.UUID, fromUserID int64) (int6
 	})
 }
 
-func (s *PostgresStore) ExpireStaleInvites() (int64, error) {
-	return s.q.ExpireStaleInvites(context.Background())
+func (s *PostgresStore) ExpireStaleInvites() ([]Invite, error) {
+	rows, err := s.q.ExpireStaleInvites(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Invite, len(rows))
+	for i, r := range rows {
+		out[i] = *inviteFromRow(r)
+	}
+	return out, nil
 }
 
 // --- mappers between sqlc-generated row types and the Store DTOs ---

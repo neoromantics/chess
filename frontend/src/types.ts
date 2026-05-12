@@ -66,3 +66,26 @@ export interface ReplayFrame {
   from?: string;
   to?: string;
 }
+
+// Phase 2: invites
+export interface InviteWire {
+  id: string;
+  from_user_id: number;
+  from_username?: string;
+  to_user_id: number;
+  to_username?: string;
+  time_control: string;
+  rated: boolean;
+  status: 'pending' | 'accepted' | 'declined' | 'cancelled' | 'expired';
+  game_id?: string | null;
+  created_at: string;
+  expires_at: string;
+}
+
+export interface UserSummary {
+  id: number;
+  username: string;
+  display_name: string;
+  country: string;
+  rating: number;
+}

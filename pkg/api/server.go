@@ -73,6 +73,11 @@ func NewServer(database db.Store, eventBus *bus.Client) *Server {
 	// shutdown and integration tests.
 	go s.hub.Run(context.Background())
 	s.listenToEngine()
+	// Leader-elected sweepers. Every api pod attempts the election; one
+	// wins and runs the loop. The others sit on the cheap retry timer.
+	// Adding more sweepers (matchmaker pairing, rating updater, presence
+	// GC) is a one-line addition each, named uniquely.
+	s.startInviteSweeper(context.Background())
 	s.mux = http.NewServeMux()
 	s.registerRoutes()
 	return s

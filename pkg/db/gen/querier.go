@@ -31,9 +31,10 @@ type Querier interface {
 	// Authorization is enforced by the handler via getGame() before this runs,
 	// so we delete strictly by primary key.
 	DeleteGame(ctx context.Context, id string) (int64, error)
-	// Called periodically by the leader-elected invite sweeper. Returns the
-	// count so the sweeper can publish per-invite expired events if desired.
-	ExpireStaleInvites(ctx context.Context) (int64, error)
+	// Called periodically by the leader-elected invite sweeper. RETURNING
+	// gives us the affected rows in one trip so we can publish per-invite
+	// expired events without a second SELECT.
+	ExpireStaleInvites(ctx context.Context) ([]Invite, error)
 	GetGame(ctx context.Context, id string) (GetGameRow, error)
 	GetInvite(ctx context.Context, id uuid.UUID) (Invite, error)
 	GetUserByID(ctx context.Context, id int64) (User, error)

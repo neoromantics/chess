@@ -222,21 +222,50 @@ func (q *Queries) DeleteGame(ctx context.Context, id string) (int64, error) {
 	return result.RowsAffected()
 }
 
-const expireStaleInvites = `-- name: ExpireStaleInvites :execrows
+const expireStaleInvites = `-- name: ExpireStaleInvites :many
 UPDATE invites
 SET status      = 'expired',
     resolved_at = NOW()
 WHERE status = 'pending' AND expires_at <= NOW()
+RETURNING id, from_user_id, to_user_id, time_control, rated, status, game_id,
+          created_at, expires_at, resolved_at
 `
 
-// Called periodically by the leader-elected invite sweeper. Returns the
-// count so the sweeper can publish per-invite expired events if desired.
-func (q *Queries) ExpireStaleInvites(ctx context.Context) (int64, error) {
-	result, err := q.db.ExecContext(ctx, expireStaleInvites)
+// Called periodically by the leader-elected invite sweeper. RETURNING
+// gives us the affected rows in one trip so we can publish per-invite
+// expired events without a second SELECT.
+func (q *Queries) ExpireStaleInvites(ctx context.Context) ([]Invite, error) {
+	rows, err := q.db.QueryContext(ctx, expireStaleInvites)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	return result.RowsAffected()
+	defer rows.Close()
+	items := []Invite{}
+	for rows.Next() {
+		var i Invite
+		if err := rows.Scan(
+			&i.ID,
+			&i.FromUserID,
+			&i.ToUserID,
+			&i.TimeControl,
+			&i.Rated,
+			&i.Status,
+			&i.GameID,
+			&i.CreatedAt,
+			&i.ExpiresAt,
+			&i.ResolvedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getGame = `-- name: GetGame :one

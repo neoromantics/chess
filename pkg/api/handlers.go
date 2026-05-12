@@ -84,6 +84,15 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("PUT /api/user/profile", requireAuth(s.handleUpdateProfile))
 	s.mux.HandleFunc("POST /api/user/password", requireAuth(s.handleChangePassword))
 	s.mux.HandleFunc("GET /api/user/stats", requireAuth(s.handleUserStats))
+	s.mux.HandleFunc("GET /api/users/search", requireAuth(s.handleUserSearch))
+
+	// Invites — Phase 2. Durable PG row drives /api/invites/pending for
+	// reconnect sync; Redis user.evt.{id} drives live push.
+	s.mux.HandleFunc("POST /api/invites/send", requireAuth(s.handleSendInvite))
+	s.mux.HandleFunc("GET /api/invites/pending", requireAuth(s.handleListPendingInvites))
+	s.mux.HandleFunc("POST /api/invites/{id}/accept", requireAuth(s.handleAcceptInvite))
+	s.mux.HandleFunc("POST /api/invites/{id}/decline", requireAuth(s.handleDeclineInvite))
+	s.mux.HandleFunc("POST /api/invites/{id}/cancel", requireAuth(s.handleCancelInvite))
 
 	// Game management — requires login. Per-game endpoints below also
 	// flow through getGame(), which double-checks ownership.
