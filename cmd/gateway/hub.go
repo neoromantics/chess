@@ -137,7 +137,7 @@ func (h *Hub) deliver(kind channelKind, key string, payload []byte) {
 	} else {
 		clients = h.userSubs[key]
 	}
-	
+
 	// Copy pointers to avoid holding lock during send
 	targets := make([]*Client, 0, len(clients))
 	for c := range clients {
@@ -160,4 +160,3 @@ const (
 	kindGame channelKind = iota
 	kindUser
 )
-

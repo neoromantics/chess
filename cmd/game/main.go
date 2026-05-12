@@ -186,6 +186,8 @@ func (s *GameService) processCommand(ctx context.Context, msg redis.XMessage) {
 		s.handleResign(ctx, cmd)
 	case eventbus.CmdNewGame:
 		s.handleNewGame(ctx, cmd)
+	case eventbus.CmdCreatePvPGame:
+		s.handleCreatePvPGame(ctx, cmd)
 	case eventbus.CmdHint:
 		s.handleHint(ctx, cmd)
 	case eventbus.CmdAssess:
@@ -229,6 +231,51 @@ func (s *GameService) handleNewGame(ctx context.Context, cmd eventbus.Command) {
 	}
 
 	slog.Info("new game created", "game_id", id, "user_id", cmd.UserID)
+
+	s.bus.EmitEvent(ctx, eventbus.Event{
+		Type:   "GameStarted",
+		GameID: id,
+	})
+}
+
+func (s *GameService) handleCreatePvPGame(ctx context.Context, cmd eventbus.Command) {
+	var payload eventbus.CreatePvPGameCmd
+	if err := json.Unmarshal(cmd.Payload, &payload); err != nil {
+		return
+	}
+
+	gm := game.NewGame()
+	id := cmd.GameID
+
+	white := payload.WhiteUserID
+	black := payload.BlackUserID
+
+	rec := &db.GameRecord{
+		ID:             id,
+		WhiteUserID:    &white,
+		BlackUserID:    &black,
+		FEN:            gm.Board.FEN(),
+		History:        "[]",
+		HistorySAN:     "[]",
+		EngineWhite:    false,
+		EngineBlack:    false,
+		WhiteThinkTime: 1000,
+		BlackThinkTime: 1000,
+		TimeControl:    payload.TimeControl,
+		Rated:          payload.Rated,
+		Status:         "ongoing",
+		Result:         "*",
+		Assessments:    "[]",
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
+	}
+
+	if err := s.db.SaveGame(rec); err != nil {
+		slog.Error("failed to create pvp game", "error", err)
+		return
+	}
+
+	slog.Info("new pvp game created", "game_id", id, "white", white, "black", black)
 
 	s.bus.EmitEvent(ctx, eventbus.Event{
 		Type:   "GameStarted",

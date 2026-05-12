@@ -22,11 +22,11 @@ const (
 
 // EngineRequest represents a request for the engine to calculate a move.
 type EngineRequest struct {
-	GameID   string         `json:"game_id"`
-	FEN      string         `json:"fen"`
-	History  map[uint64]int `json:"history"`
-	MoveTime time.Duration  `json:"movetime"`
-	Context  string         `json:"context"` // "move", "hint", "assess"
+	GameID   string            `json:"game_id"`
+	FEN      string            `json:"fen"`
+	History  map[uint64]int    `json:"history"`
+	MoveTime time.Duration     `json:"movetime"`
+	Context  string            `json:"context"` // "move", "hint", "assess"
 	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
@@ -40,17 +40,25 @@ type EngineResponse struct {
 	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
-
 // Command types
 const (
-	CmdMakeMove    = "MakeMove"
-	CmdResign      = "Resign"
-	CmdOfferDraw   = "OfferDraw"
-	CmdAcceptDraw  = "AcceptDraw"
-	CmdDeclineDraw = "DeclineDraw"
-	CmdHint        = "Hint"
-	CmdAssess      = "Assess"
-	CmdNewGame     = "NewGame"
+	CmdMakeMove      = "MakeMove"
+	CmdResign        = "Resign"
+	CmdOfferDraw     = "OfferDraw"
+	CmdAcceptDraw    = "AcceptDraw"
+	CmdDeclineDraw   = "DeclineDraw"
+	CmdHint          = "Hint"
+	CmdAssess        = "Assess"
+	CmdNewGame       = "NewGame"
+	CmdCreatePvPGame = "CreatePvPGame"
+
+	// Matchmaking Commands
+	CmdJoinQueue     = "JoinQueue"
+	CmdLeaveQueue    = "LeaveQueue"
+	CmdSendInvite    = "SendInvite"
+	CmdAcceptInvite  = "AcceptInvite"
+	CmdDeclineInvite = "DeclineInvite"
+	CmdCancelInvite  = "CancelInvite"
 )
 
 // Command payloads
@@ -59,19 +67,53 @@ type MakeMoveCmd struct {
 }
 
 type ResignCmd struct{}
-
 type OfferDrawCmd struct{}
-
 type AcceptDrawCmd struct{}
-
 type DeclineDrawCmd struct{}
+
+type CreatePvPGameCmd struct {
+	WhiteUserID int64  `json:"white_user_id"`
+	BlackUserID int64  `json:"black_user_id"`
+	TimeControl string `json:"time_control"`
+	Rated       bool   `json:"rated"`
+}
+
+type JoinQueueCmd struct {
+	TimeControl string `json:"time_control"`
+	Rating      int    `json:"rating"`
+}
+
+type LeaveQueueCmd struct {
+	TimeControl string `json:"time_control"`
+}
+
+type SendInviteCmd struct {
+	ToUserID    int64  `json:"to_user_id"`
+	TimeControl string `json:"time_control"`
+	Rated       bool   `json:"rated"`
+}
+
+type AcceptInviteCmd struct {
+	InviteID string `json:"invite_id"`
+}
+
+type DeclineInviteCmd struct {
+	InviteID string `json:"invite_id"`
+}
+
+type CancelInviteCmd struct {
+	InviteID string `json:"invite_id"`
+}
 
 // Event types
 const (
-	EvtMovePlayed   = "MovePlayed"
-	EvtGameFinished = "GameFinished"
-	EvtMatchFound   = "MatchFound"
-	EvtInviteSent   = "InviteSent"
+	EvtMovePlayed      = "MovePlayed"
+	EvtGameFinished    = "GameFinished"
+	EvtMatchFound      = "MatchFound"
+	EvtInviteSent      = "InviteSent"
+	EvtInviteAccepted  = "InviteAccepted"
+	EvtInviteDeclined  = "InviteDeclined"
+	EvtInviteCancelled = "InviteCancelled"
 )
 
 // Event payloads
@@ -90,7 +132,20 @@ type GameFinishedEvt struct {
 	Result string `json:"result"`
 }
 
-// Command is an intent to change state. Dispatched by Gateway, consumed by Game service.
+type MatchFoundEvt struct {
+	GameID      string `json:"game_id"`
+	WhiteUserID int64  `json:"white_user_id"`
+	BlackUserID int64  `json:"black_user_id"`
+}
+
+type InviteSentEvt struct {
+	InviteID    string `json:"invite_id"`
+	FromUserID  int64  `json:"from_user_id"`
+	ToUserID    int64  `json:"to_user_id"`
+	TimeControl string `json:"time_control"`
+}
+
+// Command is an intent to change state. Dispatched by Gateway, consumed by services.
 type Command struct {
 	ID        string          `json:"id"`
 	Type      string          `json:"type"`
@@ -108,7 +163,6 @@ type Event struct {
 	Payload   json.RawMessage `json:"payload"`
 	Timestamp time.Time       `json:"timestamp"`
 }
-
 
 // Client wraps the Redis client for Command/Event sourcing.
 type Client struct {
