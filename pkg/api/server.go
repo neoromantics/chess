@@ -6,7 +6,8 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
-	"time"
+	"os"
+	"sync"
 
 	"github.com/neoromantics/chess/pkg/auth"
 	"github.com/neoromantics/chess/pkg/bus"
@@ -49,8 +50,9 @@ const maxRequestBody int64 = 1 << 20
 // Server is now entirely stateless regarding active games.
 
 type Server struct {
-	mux *http.ServeMux
-	db  db.Store
+	podID string
+	mux   *http.ServeMux
+	db    db.Store
 	hub *Hub
 	bus *bus.Client
 
@@ -60,7 +62,11 @@ type Server struct {
 }
 
 func NewServer(database db.Store, eventBus *bus.Client) *Server {
+	podID, _ := os.Hostname()
+	if podID == "" { podID = "api-pod" }
+
 	s := &Server{
+		podID:         podID,
 		db:            database,
 		hub:           NewHub(eventBus),
 		bus:           eventBus,

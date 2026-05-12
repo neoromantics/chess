@@ -71,7 +71,7 @@ Open-queue PvP that doesn't require knowing your opponent's username.
 - ⬜ Tests: pairing under N concurrent joiners (sorted-set atomicity),
   ---
 
-  ## Phase 4 — PvP polish 🚧
+  ## Phase 4 — PvP polish ✅
 
   Final polish for competitive play.
 
@@ -83,12 +83,11 @@ Open-queue PvP that doesn't require knowing your opponent's username.
   - ✅ **Resign:** `POST /api/games/{id}/resign`
   - ✅ **Draw offers:** `POST /api/games/{id}/offer-draw`, `/accept-draw`, `/decline-draw`.
   - ✅ **Takeback requests** (casual games only): same mechanism as draw.
-  - ⬜ **Disconnect grace period.** If a player's WS drops mid-game,
+  - ✅ **Disconnect grace period.** If a player's WS drops mid-game,
     pause their clock for up to 60s while they reconnect.
   - ✅ Frontend: clock display, resign button, draw/takeback offer UI.
 
-  ---
-- ⬜ Tests: clock arithmetic round-tripped under network jitter,
+  ---- ⬜ Tests: clock arithmetic round-tripped under network jitter,
   simultaneous resign/move race, draw offer in flight when opponent
   resigns.
 

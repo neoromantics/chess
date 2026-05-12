@@ -337,6 +337,38 @@ func (c *Client) DelTakebackOffer(ctx context.Context, gameID string) error {
 	return c.rdb.Del(ctx, "takebackoffer:"+gameID).Err()
 }
 
+// TrackConnection records a WebSocket connection for a user in a game.
+func (c *Client) TrackConnection(ctx context.Context, gameID string, userID int64, podID string) error {
+	key := fmt.Sprintf("conns:%s:%d", gameID, userID)
+	return c.rdb.SAdd(ctx, key, podID).Err()
+}
+
+// UntrackConnection removes a WebSocket connection record.
+func (c *Client) UntrackConnection(ctx context.Context, gameID string, userID int64, podID string) (int64, error) {
+	key := fmt.Sprintf("conns:%s:%d", gameID, userID)
+	c.rdb.SRem(ctx, key, podID)
+	return c.rdb.SCard(ctx, key).Result()
+}
+
+// SetGracePeriod starts the reconnection grace period (clock pause).
+func (c *Client) SetGracePeriod(ctx context.Context, gameID string, side core.Color, ttl time.Duration) error {
+	key := fmt.Sprintf("grace:%s:%v", gameID, side)
+	return c.rdb.Set(ctx, key, "1", ttl).Err()
+}
+
+// IsInGracePeriod checks if a player is currently in the reconnection window.
+func (c *Client) IsInGracePeriod(ctx context.Context, gameID string, side core.Color) bool {
+	key := fmt.Sprintf("grace:%s:%v", gameID, side)
+	val, err := c.rdb.Exists(ctx, key).Result()
+	return err == nil && val > 0
+}
+
+// DelGracePeriod removes the grace period (player reconnected).
+func (c *Client) DelGracePeriod(ctx context.Context, gameID string, side core.Color) error {
+	key := fmt.Sprintf("grace:%s:%v", gameID, side)
+	return c.rdb.Del(ctx, key).Err()
+}
+
 // StreamAdd adds a message to a Redis Stream (XADD).
 func (c *Client) StreamAdd(ctx context.Context, stream string, payload any) (string, error) {
 	data, err := json.Marshal(payload)

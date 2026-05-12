@@ -82,6 +82,16 @@ func (s *Server) sweepClocks(ctx context.Context) {
 			// Fast check passed, do authoritative check under lock
 			s.executeWithGameLock(ctx, id, func(entry *gameEntry) {
 				movingSide := entry.game.Board.SideToMove
+				
+				// Check grace period before deducting
+				if s.bus.IsInGracePeriod(ctx, id, movingSide) {
+					// Pause clock: update TurnStartedAt to now so deduction is 0
+					c := s.getClock(ctx, id)
+					c.TurnStartedAt = time.Now().UnixMilli()
+					s.bus.SetClock(ctx, id, *c)
+					return
+				}
+
 				c := s.getClock(ctx, id)
 				e := time.Now().UnixMilli() - c.TurnStartedAt
 				if e < 0 { e = 0 }

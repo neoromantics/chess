@@ -229,6 +229,13 @@ func (s *Server) handleWSGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Track connection in Redis (distributed)
+	s.bus.TrackConnection(context.Background(), gameID, user.UserID, s.podID)
+	// Player reconnected, clear any grace period
+	side := core.White
+	if rec.BlackUserID != nil && *rec.BlackUserID == user.UserID { side = core.Black }
+	s.bus.DelGracePeriod(context.Background(), gameID, side)
+
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		slog.Error("ws upgrade failed", "error", err)
@@ -236,8 +243,21 @@ func (s *Server) handleWSGame(w http.ResponseWriter, r *http.Request) {
 	}
 	c := &Client{hub: s.hub, conn: conn, send: make(chan []byte, 256), kind: kindGame, key: gameID}
 	s.hub.register <- c
+
+	// Handle distributed cleanup
+	go func() {
+		c.readPump()
+		count, _ := s.bus.UntrackConnection(context.Background(), gameID, user.UserID, s.podID)
+		if count == 0 {
+			// Authoritative status check
+			freshRec, err := s.db.GetGame(gameID)
+			if err == nil && freshRec.Status == "ongoing" {
+				slog.Info("player fully disconnected, starting grace period", "game_id", gameID, "user_id", user.UserID)
+				s.bus.SetGracePeriod(context.Background(), gameID, side, 60*time.Second)
+			}
+		}
+	}()
 	go c.writePump()
-	go c.readPump()
 }
 
 func (s *Server) handleWSUser(w http.ResponseWriter, r *http.Request) {
