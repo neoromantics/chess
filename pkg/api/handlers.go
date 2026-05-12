@@ -18,6 +18,35 @@ import (
 	"github.com/neoromantics/chess/pkg/uci"
 )
 
+func (s *Server) registerRoutes() {
+	s.mux.HandleFunc("GET /health", s.handleHealth)
+	s.mux.HandleFunc("POST /api/auth/signup", s.handleSignup)
+	s.mux.HandleFunc("POST /api/auth/login", s.handleLogin)
+	s.mux.HandleFunc("POST /api/auth/logout", s.handleLogout)
+	s.mux.HandleFunc("GET /api/user/me", s.handleMe)
+	s.mux.HandleFunc("POST /api/games/new", s.handleCreateGame)
+	s.mux.HandleFunc("GET /api/games", s.handleListGames)
+	s.mux.HandleFunc("DELETE /api/games/delete", s.handleDeleteGame)
+	s.mux.HandleFunc("GET /api/state", s.handleState)
+	s.mux.HandleFunc("POST /api/move", s.handleMove)
+	s.mux.HandleFunc("POST /api/new", s.handleNew)
+	s.mux.HandleFunc("POST /api/hint", s.handleHint)
+	s.mux.HandleFunc("POST /api/assess", s.handleAssess)
+	s.mux.HandleFunc("POST /api/set_players", s.handleSetPlayers)
+	s.mux.HandleFunc("POST /api/touch", s.handleTouch)
+	s.mux.HandleFunc("POST /api/touch_move", s.handleTouchMove)
+	s.mux.HandleFunc("POST /api/undo", s.handleUndo)
+	s.mux.HandleFunc("POST /api/ping", s.handlePing)
+	s.mux.HandleFunc("GET /api/save", s.handleSave)
+	s.mux.HandleFunc("POST /api/load", s.handleLoad)
+	s.mux.HandleFunc("GET /api/replay.html", s.handleReplay)
+	s.mux.HandleFunc("GET /ws", s.handleWS)
+	s.mux.Handle("GET /assets/", http.FileServer(assetsFS))
+	// Catch-all route for SPA navigation (Dashboard, GameView, etc.)
+	s.mux.HandleFunc("GET /{$}", s.handleIndex)
+	s.mux.HandleFunc("GET /{path...}", s.handleIndex)
+}
+
 func (s *Server) getGame(r *http.Request) (*gameEntry, string, error) {
 	id := r.URL.Query().Get("game_id")
 	if id == "" {
@@ -623,10 +652,8 @@ func (s *Server) maybeTriggerEngine(entry *gameEntry) {
 		)
 
 		s.mu.Lock()
-		if e.stopSearch.Load() || !e.game.EngineToMove() {
-			slog.Info("engine search aborted or settings changed", "game_id", e.id)
+		if e.stopSearch.Load() || !e.game.EngineToMove() || e.game.Status() != game.StatusOngoing {
 			s.mu.Unlock()
-			// Use a specialized sync to avoid deadlock
 			s.syncGameToDB(e) 
 			return
 		}

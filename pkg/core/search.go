@@ -132,11 +132,10 @@ func (b *Board) IterativeDeepening(limits SearchLimits, stop *atomic.Bool, infoC
 }
 
 func (s *Searcher) shouldStop() bool {
-	if s.stopFlag.Load() {
+	if s.stopFlag != nil && s.stopFlag.Load() {
 		return true
 	}
 	if s.hasDeadline && (s.nodes&2047 == 0) && time.Now().After(s.deadline) {
-		s.stopFlag.Store(true)
 		return true
 	}
 	return false
