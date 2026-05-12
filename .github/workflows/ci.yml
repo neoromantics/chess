@@ -168,18 +168,24 @@ jobs:
     needs: [docker]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
-      - name: Deploy to k3s via SSH
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.DEPLOY_SSH_HOST }}
-          username: ${{ secrets.DEPLOY_SSH_USER }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
-          script: |
-            if [ ! -d "~/chess" ]; then
-              git clone https://github.com/neoromantics/chess.git ~/chess
-            fi
-            cd ~/chess
-            git fetch origin main
-            git reset --hard origin/main
-            kubectl apply -k deploy/kustomize/overlays/prod
-            kubectl rollout restart deployment chess-gateway chess-user-service chess-game-service chess-matchmaker chess-rating-updater chess-worker -n chess
+      - uses: actions/checkout@v4
+      - name: Deploy to k3s via SSH (Push Manifests)
+        run: |
+          # 1. Recreate .env for Kustomize
+          echo "${{ secrets.PROD_ENV_FILE }}" > .env
+          
+          # 2. Render manifests locally
+          kubectl kustomize deploy/kustomize/overlays/prod > manifest.yaml
+          
+          # 3. Setup SSH
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.DEPLOY_SSH_HOST }} >> ~/.ssh/known_hosts
+          
+          # 4. Pipe manifest to remote kubectl
+          ssh ${{ secrets.DEPLOY_SSH_USER }}@${{ secrets.DEPLOY_SSH_HOST }} "kubectl apply -f -" < manifest.yaml
+          
+          # 5. Force rollout restart
+          ssh ${{ secrets.DEPLOY_SSH_USER }}@${{ secrets.DEPLOY_SSH_HOST }} "kubectl rollout restart deployment chess-gateway chess-user-service chess-game-service chess-matchmaker chess-rating-updater chess-worker -n chess"
+
