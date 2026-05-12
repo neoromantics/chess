@@ -1429,16 +1429,16 @@ func (s *Server) maybeTriggerEngine(entry *gameEntry) {
 	}
 
 	go func() {
-		if err := s.bus.Enqueue(context.Background(), bus.EngineRequestChannel, req); err != nil {
+		if _, err := s.bus.StreamAdd(context.Background(), bus.EngineRequestChannel, req); err != nil {
 			slog.Error("failed to dispatch engine request", "error", err)
 			entry.mu.Lock()
 			s.setThinking(context.Background(), entry.id, false)
 			entry.mu.Unlock()
 			s.syncGameToDB(entry, nil)
-			return
+		} else {
+			slog.Info("engine request dispatched to worker stream", "game_id", entry.id, "movetime", moveTime)
+			s.scheduleEngineTimeout(entry.id, moveTime)
 		}
-		slog.Info("engine request dispatched to worker", "game_id", entry.id, "movetime", moveTime)
-		s.scheduleEngineTimeout(entry.id, moveTime)
 	}()
 }
 

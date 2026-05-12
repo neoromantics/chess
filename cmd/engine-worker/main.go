@@ -17,6 +17,7 @@ import (
 
 	"github.com/neoromantics/chess/pkg/bus"
 	"github.com/neoromantics/chess/pkg/core"
+	"github.com/neoromantics/chess/pkg/leader"
 )
 
 var activeSearches sync.Map // game_id -> *atomic.Bool
@@ -24,7 +25,12 @@ var activeSearches sync.Map // game_id -> *atomic.Bool
 func main() {
 	flag.Parse()
 
-	log.Println("Engine Worker starting...")
+	hostname, _ := os.Hostname()
+	if hostname == "" {
+		hostname = fmt.Sprintf("worker-%d", os.Getpid())
+	}
+
+	log.Printf("Engine Worker [%s] starting...", hostname)
 
 	redisAddr := os.Getenv("REDIS_URL")
 	if redisAddr == "" {
@@ -39,51 +45,38 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Subscribe to game finished events (Archive/Rating placeholder)
+	// 1. Leader-elected janitor for Redis Streams (XCLAIM stale tasks)
+	startJanitor(ctx, eventBus, hostname)
+
+	// 2. Event Subscriptions (Pub/Sub)
 	eventBus.Subscribe(ctx, bus.GameFinishedEventChannel, func(payload []byte) {
 		var event bus.GameFinishedEvent
 		if err := json.Unmarshal(payload, &event); err != nil {
-			log.Printf("Worker: failed to unmarshal event: %v", err)
 			return
 		}
-		log.Printf("Worker [ARCHIVE/RATING]: Received GAME_FINISHED event for ID: %s - Result: %s", event.GameID, event.Status)
+		log.Printf("Worker [ARCHIVE]: Received GAME_FINISHED event for ID: %s", event.GameID)
 	})
 
-	// Subscribe to engine abort signals (still Pub/Sub — all workers must hear aborts)
 	eventBus.Subscribe(ctx, bus.EngineAbortChannel, func(payload []byte) {
 		var abort bus.EngineAbort
 		if err := json.Unmarshal(payload, &abort); err != nil {
-			log.Printf("Worker: failed to unmarshal abort: %v", err)
 			return
 		}
-
 		if stop, ok := activeSearches.Load(abort.GameID); ok {
 			log.Printf("Worker [ENGINE]: Aborting search for ID: %s", abort.GameID)
 			stop.(*atomic.Bool).Store(true)
 		}
 	})
 
-	// CPU-bounded semaphore: limits concurrent engine searches to the
-	// container's effective core budget. runtime.NumCPU() returns the host
-	// CPU count and IGNORES cgroup CPU limits — on a 16-core node with
-	// cpu.limit=1, that would spawn 16 parallel searches all fighting for
-	// 6% of one core. GOMAXPROCS(0) is cgroup-aware since Go 1.22, so it
-	// reflects the actual scheduler parallelism we're allowed.
-	//
-	// Override with WORKER_CONCURRENCY env when running ad-hoc or
-	// experimenting with oversubscription.
+	// 3. Main Stream Consumer Loop
 	maxConcurrent := runtime.GOMAXPROCS(0)
 	if v := os.Getenv("WORKER_CONCURRENCY"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			maxConcurrent = n
 		}
 	}
-	if maxConcurrent < 1 {
-		maxConcurrent = 1
-	}
 	sem := make(chan struct{}, maxConcurrent)
-	log.Printf("Worker [ENGINE]: Bounded concurrency to %d parallel searches (GOMAXPROCS=%d, NumCPU=%d)",
-		maxConcurrent, runtime.GOMAXPROCS(0), runtime.NumCPU())
+	log.Printf("Worker [ENGINE]: Bounded concurrency to %d parallel searches", maxConcurrent)
 
 	go func() {
 		<-sigChan
@@ -91,42 +84,38 @@ func main() {
 		cancel()
 	}()
 
-	// Main dequeue loop: pulls tasks from the Redis List one at a time.
-	// BLPOP ensures exactly-once delivery — only this worker gets this task.
 	for {
 		select {
 		case <-ctx.Done():
-			log.Println("Worker: context cancelled, draining active searches...")
-			// Wait for all active searches to finish
-			for i := 0; i < maxConcurrent; i++ {
-				sem <- struct{}{}
-			}
-			log.Println("Worker: graceful shutdown complete")
 			return
-		case sem <- struct{}{}: // Acquire semaphore slot before dequeuing
-			payload, err := eventBus.Dequeue(ctx, bus.EngineRequestChannel, 2*time.Second)
+		case sem <- struct{}{}:
+			// Read one message from the stream group
+			msgs, err := eventBus.StreamReadGroup(ctx, bus.EngineRequestChannel, "engine-workers", hostname, 2*time.Second)
 			if err != nil {
-				<-sem // Release slot on error
-				if ctx.Err() != nil {
-					return
+				<-sem
+				if ctx.Err() == nil {
+					log.Printf("Worker: stream read error: %v", err)
 				}
-				// BLPOP timeout — just loop again
+				continue
+			}
+			if len(msgs) == 0 {
+				<-sem
 				continue
 			}
 
+			msg := msgs[0]
 			var req bus.EngineRequest
-			if err := json.Unmarshal(payload, &req); err != nil {
+			if err := json.Unmarshal([]byte(msg.Values["data"].(string)), &req); err != nil {
 				<-sem
 				log.Printf("Worker: failed to unmarshal request: %v", err)
+				eventBus.StreamAck(ctx, bus.EngineRequestChannel, "engine-workers", msg.ID)
 				continue
 			}
 
-			log.Printf("Worker [ENGINE]: Dequeued task for ID: %s - Context: %s - Time: %v", req.GameID, req.Context, req.MoveTime)
+			go func(r bus.EngineRequest, streamID string) {
+				defer func() { <-sem }()
+				defer eventBus.StreamAck(context.Background(), bus.EngineRequestChannel, "engine-workers", streamID)
 
-			go func(r bus.EngineRequest) {
-				defer func() { <-sem }() // Release semaphore when done
-
-				// Register active search
 				stop := &atomic.Bool{}
 				activeSearches.Store(r.GameID, stop)
 				defer activeSearches.Delete(r.GameID)
@@ -135,17 +124,46 @@ func main() {
 				if err := eventBus.Publish(context.Background(), bus.EngineResponseChannel, resp); err != nil {
 					log.Printf("Worker: failed to publish response: %v", err)
 				}
-				log.Printf("Worker [ENGINE]: Published response for ID: %s - Move: %s", resp.GameID, resp.BestMove)
-			}(req)
+			}(req, msg.ID)
 		}
 	}
+}
+
+func startJanitor(ctx context.Context, b *bus.Client, hostname string) {
+	election := leader.NewElection(b.Rdb(), "worker-janitor", leader.WithLeaseTTL(15*time.Second))
+	go election.Run(ctx, func(leaderCtx context.Context) {
+		log.Println("Worker Janitor: assumed leadership")
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-leaderCtx.Done():
+				return
+			case <-ticker.C:
+				// XCLAIM jobs pending for > 60s
+				pending, err := b.StreamPending(leaderCtx, bus.EngineRequestChannel, "engine-workers", 10)
+				if err != nil {
+					continue
+				}
+				var staleIDs []string
+				for _, p := range pending {
+					if p.Idle > 60*time.Second {
+						staleIDs = append(staleIDs, p.ID)
+					}
+				}
+				if len(staleIDs) > 0 {
+					log.Printf("Worker Janitor: claiming %d stale tasks", len(staleIDs))
+					b.StreamClaim(leaderCtx, bus.EngineRequestChannel, "engine-workers", hostname, 60*time.Second, staleIDs)
+				}
+			}
+		}
+	})
 }
 
 // ProcessRequest runs the engine on the given position.
 func ProcessRequest(req bus.EngineRequest, stop *atomic.Bool) bus.EngineResponse {
 	b, err := core.ParseFEN(req.FEN)
 	if err != nil {
-		log.Printf("Worker: failed to parse FEN: %v", err)
 		return bus.EngineResponse{GameID: req.GameID, Context: req.Context, Metadata: req.Metadata}
 	}
 
@@ -156,24 +174,15 @@ func ProcessRequest(req bus.EngineRequest, stop *atomic.Bool) bus.EngineResponse
 			return bus.EngineResponse{GameID: req.GameID, Context: req.Context, Metadata: req.Metadata}
 		}
 
-		// 1. Search for best move
 		resBest := b.IterativeDeepening(core.SearchLimits{MoveTime: req.MoveTime, History: req.History}, stop, nil)
-
-		// 2. Evaluate user's move
-		// We make the move on a copy and search to get a reliable score
 		bAfter := *b
 		bAfter.MakeMove(m)
-		// Search depth should match roughly for fair comparison
 		resUser := bAfter.IterativeDeepening(core.SearchLimits{MoveTime: req.MoveTime, History: req.History}, stop, nil)
-
-		// In chess engine, score is relative to side to move.
-		// For CP loss we need absolute scores or relative to the player who moved.
-		// ProcessRequest receives b before userMove, so b.SideToMove is the player.
 
 		resp := bus.EngineResponse{
 			GameID:   req.GameID,
 			BestMove: resBest.BestMove.String(),
-			Score:    resBest.Score, // Engine's best score
+			Score:    resBest.Score,
 			Depth:    resBest.Depth,
 			Context:  req.Context,
 			Metadata: make(map[string]string),
@@ -181,16 +190,12 @@ func ProcessRequest(req bus.EngineRequest, stop *atomic.Bool) bus.EngineResponse
 		for k, v := range req.Metadata {
 			resp.Metadata[k] = v
 		}
-
-		// Add results to metadata
 		resp.Metadata["best_score"] = fmt.Sprintf("%d", resBest.Score)
-		resp.Metadata["user_score"] = fmt.Sprintf("%d", -resUser.Score) // Flip because it's opponent's turn after move
+		resp.Metadata["user_score"] = fmt.Sprintf("%d", -resUser.Score)
 		resp.Metadata["player_side"] = fmt.Sprintf("%v", b.SideToMove)
-
 		return resp
 	}
 
-	// Default (move or hint)
 	res := b.IterativeDeepening(core.SearchLimits{
 		MoveTime: req.MoveTime,
 		History:  req.History,

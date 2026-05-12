@@ -94,11 +94,11 @@ Open-queue PvP that doesn't require knowing your opponent's username.
 
 ---
 
-## Phase 5 — Hardening ⬜
+## Phase 5 — Hardening 🚧
 
 Production resilience the platform will need at any non-trivial scale.
 
-- ⬜ **Redis Streams for engine queue** + consumer groups + XCLAIM.
+- ✅ **Redis Streams for engine queue** + consumer groups + XCLAIM.
   Replaces the current `BLPOP` + ad-hoc inflight-key pattern with
   native at-least-once delivery and visibility timeout. Worker
   acknowledges on response publish; un-acked tasks reappear after the

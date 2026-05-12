@@ -337,6 +337,85 @@ func (c *Client) DelTakebackOffer(ctx context.Context, gameID string) error {
 	return c.rdb.Del(ctx, "takebackoffer:"+gameID).Err()
 }
 
+// StreamAdd adds a message to a Redis Stream (XADD).
+func (c *Client) StreamAdd(ctx context.Context, stream string, payload any) (string, error) {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
+	id, err := c.rdb.XAdd(ctx, &redis.XAddArgs{
+		Stream: stream,
+		Values: map[string]interface{}{"data": data},
+	}).Result()
+	if err != nil {
+		return "", fmt.Errorf("failed to XADD to %s: %w", stream, err)
+	}
+
+	slog.Debug("streamed message", "stream", stream, "id", id)
+	return id, nil
+}
+
+// StreamReadGroup blocks until a message is available in a consumer group (XREADGROUP).
+// It automatically creates the group if it doesn't exist (MKSTREAM).
+func (c *Client) StreamReadGroup(ctx context.Context, stream, group, consumer string, timeout time.Duration) ([]redis.XMessage, error) {
+	// 1. Ensure group exists
+	err := c.rdb.XGroupCreateMkStream(ctx, stream, group, "0").Err()
+	if err != nil && !strings.Contains(err.Error(), "BUSYGROUP") {
+		return nil, fmt.Errorf("failed to create group %s: %w", group, err)
+	}
+
+	// 2. Read from group
+	entries, err := c.rdb.XReadGroup(ctx, &redis.XReadGroupArgs{
+		Group:    group,
+		Consumer: consumer,
+		Streams:  []string{stream, ">"},
+		Count:    1,
+		Block:    timeout,
+		NoAck:    false,
+	}).Result()
+
+	if err != nil {
+		if err == redis.Nil {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	if len(entries) == 0 || len(entries[0].Messages) == 0 {
+		return nil, nil
+	}
+
+	return entries[0].Messages, nil
+}
+
+// StreamAck acknowledges a message in a consumer group (XACK).
+func (c *Client) StreamAck(ctx context.Context, stream, group, id string) error {
+	return c.rdb.XAck(ctx, stream, group, id).Err()
+}
+
+// StreamPending retrieves pending messages for auto-recovery (XPENDING).
+func (c *Client) StreamPending(ctx context.Context, stream, group string, count int64) ([]redis.XPendingExt, error) {
+	return c.rdb.XPendingExt(ctx, &redis.XPendingExtArgs{
+		Stream: stream,
+		Group:  group,
+		Start:  "-",
+		End:    "+",
+		Count:  count,
+	}).Result()
+}
+
+// StreamClaim reassigns a pending message to a new consumer (XCLAIM).
+func (c *Client) StreamClaim(ctx context.Context, stream, group, consumer string, minIdle time.Duration, ids []string) ([]redis.XMessage, error) {
+	return c.rdb.XClaim(ctx, &redis.XClaimArgs{
+		Stream:   stream,
+		Group:    group,
+		Consumer: consumer,
+		MinIdle:  minIdle,
+		Messages: ids,
+	}).Result()
+}
+
 // Enqueue pushes a JSON-encoded payload onto a Redis List (RPUSH).
 // This guarantees exactly-once delivery: only one consumer will BLPOP the task.
 func (c *Client) Enqueue(ctx context.Context, queue string, payload any) error {
