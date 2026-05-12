@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/neoromantics/chess/pkg/bus"
+	"github.com/neoromantics/chess/pkg/core"
 	"github.com/neoromantics/chess/pkg/db"
 	"github.com/neoromantics/chess/pkg/game"
 )
@@ -80,6 +81,7 @@ func NewServer(database db.Store, eventBus *bus.Client) *Server {
 	}
 	go s.hub.Run()
 	s.listenToEngine()
+	s.StartClockTicker()
 	s.mux = http.NewServeMux()
 	s.registerRoutes()
 	return s
@@ -96,6 +98,44 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	handler = LoggerMiddleware(handler)
 	handler = SecurityHeadersMiddleware(handler)
 	handler.ServeHTTP(w, r)
+}
+
+func (s *Server) StartClockTicker() {
+	go func() {
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			s.mu.Lock()
+			now := time.Now()
+			for id, entry := range s.games {
+				gm := entry.game
+				if gm.Status() == game.StatusOngoing {
+					elapsed := now.Sub(gm.LastTick).Milliseconds()
+					if gm.Board.SideToMove == core.White {
+						gm.WhiteTime -= elapsed
+					} else {
+						gm.BlackTime -= elapsed
+					}
+					gm.LastTick = now
+					
+					// Detect timeout
+					if gm.WhiteTime <= 0 || gm.BlackTime <= 0 {
+						if gm.WhiteTime < 0 { gm.WhiteTime = 0 }
+						if gm.BlackTime < 0 { gm.BlackTime = 0 }
+						slog.Info("game timeout detected", "game_id", id)
+						// syncGameToDB will broadcast the terminal state
+						s.mu.Unlock()
+						s.syncGameToDB(entry, nil)
+						s.mu.Lock()
+					} else {
+						// Periodic sync/broadcast to keep clients updated
+						s.hub.BroadcastEvent(id, "state", s.snapshotLocked(entry))
+					}
+				}
+			}
+			s.mu.Unlock()
+		}
+	}()
 }
 
 func (s *Server) StartCacheManager() {

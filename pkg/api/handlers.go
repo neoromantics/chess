@@ -880,6 +880,8 @@ func (s *Server) snapshotLocked(entry *gameEntry) stateJSON {
 		TouchMove: game.TouchMove, TouchedSquare: core.SquareName(game.TouchedSq),
 		WhiteThinkTime: int(entry.whiteThinkTime / time.Millisecond),
 		BlackThinkTime: int(entry.blackThinkTime / time.Millisecond),
+		WhiteTime:      game.WhiteTime,
+		BlackTime:      game.BlackTime,
 		Assessments:    assessments,
 	}
 }
@@ -901,6 +903,8 @@ type stateJSON struct {
 	TouchedSquare  string    `json:"touched_square"`
 	WhiteThinkTime int       `json:"white_think_time"`
 	BlackThinkTime int       `json:"black_think_time"`
+	WhiteTime      int64     `json:"white_time"`
+	BlackTime      int64     `json:"black_time"`
 	Assessments    []any     `json:"assessments"`
 }
 
