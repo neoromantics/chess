@@ -66,6 +66,18 @@ func (s *Server) registerRoutes() {
 func (s *Server) getGame(r *http.Request) (*gameEntry, string, error) {
 	id := r.URL.Query().Get("game_id")
 	if id == "" {
+		// Fallback for RESTful paths /game/{id}
+		parts := strings.Split(r.URL.Path, "/")
+		for i, p := range parts {
+			if p == "game" && i+1 < len(parts) {
+				id = parts[i+1]
+				break
+			}
+		}
+	}
+	
+	if id == "" {
+		slog.Warn("missing game_id in request", "path", r.URL.Path, "method", r.Method)
 		return nil, "", fmt.Errorf("missing game_id")
 	}
 

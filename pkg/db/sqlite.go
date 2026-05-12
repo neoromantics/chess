@@ -53,7 +53,17 @@ func (s *SQLiteStore) init() error {
 			updated_at DATETIME NOT NULL
 		);
 	`)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Migrations for existing tables (SQLite doesn't support ADD COLUMN IF NOT EXISTS)
+	s.db.Exec("ALTER TABLE users ADD COLUMN is_premium BOOLEAN NOT NULL DEFAULT FALSE")
+	s.db.Exec("ALTER TABLE users ADD COLUMN elo INTEGER NOT NULL DEFAULT 1200")
+	s.db.Exec("ALTER TABLE users ADD COLUMN bio TEXT NOT NULL DEFAULT ''")
+	s.db.Exec("ALTER TABLE games ADD COLUMN assessments TEXT NOT NULL DEFAULT '[]'")
+
+	return nil
 }
 
 func (s *SQLiteStore) Close() error {
