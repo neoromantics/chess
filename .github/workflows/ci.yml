@@ -50,7 +50,7 @@ jobs:
 
       - name: Smoke Test (UCI Worker)
         run: |
-          out=$(printf 'uci\nposition startpos\ngo depth 4\nquit\n' | ./chess-worker)
+          out=$(printf 'uci\nposition startpos\ngo depth 4\nquit\n' | ./chess-worker -uci)
           echo "$out"
           echo "$out" | grep -q '^bestmove '
 

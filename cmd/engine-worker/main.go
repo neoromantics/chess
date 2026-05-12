@@ -17,12 +17,24 @@ import (
 
 	"github.com/neoromantics/chess/pkg/core"
 	"github.com/neoromantics/chess/pkg/eventbus"
+	"github.com/neoromantics/chess/pkg/uci"
+	"golang.org/x/term"
 )
 
-var activeSearches sync.Map // game_id -> *atomic.Bool
+var (
+	activeSearches sync.Map // game_id -> *atomic.Bool
+	uciMode        = flag.Bool("uci", false, "Run in pure UCI mode (CLI)")
+)
 
 func main() {
 	flag.Parse()
+
+	// 1. Check for UCI mode (explicit flag or piped input)
+	if *uciMode || !term.IsTerminal(int(os.Stdin.Fd())) {
+		u := uci.NewUCI(os.Stdout)
+		u.Run(os.Stdin)
+		return
+	}
 
 	hostname, _ := os.Hostname()
 	if hostname == "" {
