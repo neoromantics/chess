@@ -172,6 +172,42 @@ func (c *Client) SubscribePattern(ctx context.Context, pattern string, handler f
 	return nil
 }
 
+// Ping checks the Redis connection.
+func (c *Client) Ping(ctx context.Context) error {
+	return c.rdb.Ping(ctx).Err()
+}
+
+// SetSortedSet adds a member to a Redis sorted set with a score.
+func (c *Client) SetSortedSet(ctx context.Context, key string, member string, score float64) error {
+	return c.rdb.ZAdd(ctx, key, redis.Z{Score: score, Member: member}).Err()
+}
+
+// RemoveFromSortedSet removes one or more members from a Redis sorted set.
+func (c *Client) RemoveFromSortedSet(ctx context.Context, key string, members ...any) error {
+	return c.rdb.ZRem(ctx, key, members...).Err()
+}
+
+type ZMember struct {
+	Member string
+	Score  float64
+}
+
+// GetSortedSetRangeWithScores retrieves a range of members from a sorted set with their scores.
+func (c *Client) GetSortedSetRangeWithScores(ctx context.Context, key string, start, stop int64) ([]ZMember, error) {
+	zs, err := c.rdb.ZRangeWithScores(ctx, key, start, stop).Result()
+	if err != nil {
+		return nil, err
+	}
+	res := make([]ZMember, len(zs))
+	for i, z := range zs {
+		res[i] = ZMember{
+			Member: z.Member.(string),
+			Score:  z.Score,
+		}
+	}
+	return res, nil
+}
+
 // SetState stores a transient value in Redis with a TTL.
 func (c *Client) SetState(ctx context.Context, key string, value string, ttl time.Duration) error {
 	return c.rdb.Set(ctx, key, value, ttl).Err()
@@ -185,11 +221,6 @@ func (c *Client) GetState(ctx context.Context, key string) (string, error) {
 // DelState removes a transient value from Redis.
 func (c *Client) DelState(ctx context.Context, key string) error {
 	return c.rdb.Del(ctx, key).Err()
-}
-
-// Ping checks the Redis connection.
-func (c *Client) Ping(ctx context.Context) error {
-	return c.rdb.Ping(ctx).Err()
 }
 
 // Close closes the Redis connection.

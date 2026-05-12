@@ -86,6 +86,11 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/user/stats", requireAuth(s.handleUserStats))
 	s.mux.HandleFunc("GET /api/users/search", requireAuth(s.handleUserSearch))
 
+	// Matchmaking — Phase 3. Redis sorted-set queue + leader-elected
+	// pairing loop.
+	s.mux.HandleFunc("POST /api/matchmaking/join", requireAuth(s.handleMatchmakingJoin))
+	s.mux.HandleFunc("POST /api/matchmaking/leave", requireAuth(s.handleMatchmakingLeave))
+
 	// Invites — Phase 2. Durable PG row drives /api/invites/pending for
 	// reconnect sync; Redis user.evt.{id} drives live push.
 	s.mux.HandleFunc("POST /api/invites/send", requireAuth(s.handleSendInvite))
@@ -140,6 +145,13 @@ type gameEntry struct {
 
 	whiteThinkTime time.Duration
 	blackThinkTime time.Duration
+
+	// Platform fields (Phase 3)
+	WhiteUserID *int64
+	BlackUserID *int64
+	TimeControl string
+	Rated       bool
+	Result      string
 }
 
 func (s *Server) getGame(r *http.Request) (*gameEntry, error) {
@@ -184,6 +196,12 @@ func (s *Server) getGame(r *http.Request) (*gameEntry, error) {
 		createdAt:      record.CreatedAt,
 		whiteThinkTime: time.Duration(record.WhiteThinkTime) * time.Millisecond,
 		blackThinkTime: time.Duration(record.BlackThinkTime) * time.Millisecond,
+		// Platform fields
+		WhiteUserID: record.WhiteUserID,
+		BlackUserID: record.BlackUserID,
+		TimeControl: record.TimeControl,
+		Rated:       record.Rated,
+		Result:      record.Result,
 	}
 	entry.stopSearch.Store(false)
 	return entry, nil
@@ -264,9 +282,24 @@ func (s *Server) syncGameToDB(entry *gameEntry, newAssess any) {
 	}
 	assessJSON, _ := json.Marshal(assessments)
 
+	// Automatically set result if game ended
+	res := entry.Result
+	if status != game.StatusOngoing && res == "*" {
+		switch status {
+		case game.StatusCheckmate:
+			if gm.Board.SideToMove == core.White { res = "0-1" } else { res = "1-0" }
+		case game.StatusTimeout:
+			if gm.WhiteTime <= 0 { res = "0-1" } else { res = "1-0" }
+		case game.StatusStalemate, game.StatusDraw50, game.StatusDrawRepetition, game.StatusDrawInsufficient:
+			res = "1/2-1/2"
+		}
+	}
+
 	gameRec := &db.GameRecord{
 		ID:             entry.id,
 		UserID:         entry.userID,
+		WhiteUserID:    entry.WhiteUserID,
+		BlackUserID:    entry.BlackUserID,
 		FEN:            gm.Board.FEN(),
 		History:        string(hist),
 		HistorySAN:     string(histSAN),
@@ -274,7 +307,10 @@ func (s *Server) syncGameToDB(entry *gameEntry, newAssess any) {
 		EngineBlack:    gm.EngineBlack,
 		WhiteThinkTime: int(entry.whiteThinkTime.Milliseconds()),
 		BlackThinkTime: int(entry.blackThinkTime.Milliseconds()),
+		TimeControl:    entry.TimeControl,
+		Rated:          entry.Rated,
 		Status:         string(status),
+		Result:         res,
 		Assessments:    string(assessJSON),
 		CreatedAt:      entry.createdAt,
 		UpdatedAt:      time.Now(),
@@ -554,7 +590,15 @@ func (s *Server) handleCreateGame(w http.ResponseWriter, r *http.Request) {
 		createdAt:      time.Now(),
 		whiteThinkTime: whiteThink,
 		blackThinkTime: blackThink,
+		// Platform fields
+		WhiteUserID: &user.UserID,
+		BlackUserID: nil, // against engine
+		TimeControl: "engine",
+		Rated:       false,
+		Result:      "*",
 	}
+	if gm.EngineWhite { entry.WhiteUserID = nil }
+	if !gm.EngineBlack { entry.BlackUserID = &user.UserID }
 	entry.stopSearch.Store(false)
 
 	s.syncGameToDB(entry, nil)
@@ -729,6 +773,15 @@ func (s *Server) handleNew(w http.ResponseWriter, r *http.Request) {
 
 		entry.game.Reset()
 		entry.game.EngineWhite, entry.game.EngineBlack = req.EngineWhite, req.EngineBlack
+		
+		// Reset platform fields
+		entry.Result = "*"
+		user, _ := auth.GetUser(r.Context())
+		entry.WhiteUserID = &user.UserID
+		entry.BlackUserID = nil
+		if entry.game.EngineWhite { entry.WhiteUserID = nil }
+		if !entry.game.EngineBlack { entry.BlackUserID = &user.UserID }
+
 		snapshot := s.snapshotLocked(entry)
 		entry.mu.Unlock()
 

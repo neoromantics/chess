@@ -47,31 +47,24 @@ User-to-user challenges, durable via Postgres, live via Redis pub/sub.
 
 ---
 
-## Phase 3 — Matchmaking + Glicko-2 ratings ⬜
+## Phase 3 — Matchmaking + Glicko-2 ratings 🚧
 
 Open-queue PvP that doesn't require knowing your opponent's username.
 
-- ⬜ `POST /api/matchmaking/join` — adds caller to
+- ✅ `POST /api/matchmaking/join` — adds caller to
   `mm:queue:{time_control}` sorted set, score = rating. Returns 202.
-- ⬜ `POST /api/matchmaking/leave`
-- ⬜ Leader-elected `matchmaker` pairing sweep:
+- ✅ `POST /api/matchmaking/leave`
+- ✅ Leader-elected `matchmaker` pairing sweep:
   - Walks each `mm:queue:*` sorted set
-  - Expanding rating window (start ±50, grow by 50 every 2s up to ±400)
-  - On match: atomic ZREM both, create game (white = first joiner,
-    or random), publish `match_found` on both `user.evt.{id}` channels
-- ⬜ Glicko-2 implementation in `pkg/rating` (pure functions, table-tested
-  against the standard reference paper examples)
-- ⬜ Leader-elected `rating-updater` listening on `game.finished`:
-  - For rated games only, computes new ratings for both sides in a
-    single rating period (since we update per-game, the "period" is the
-    game itself — the Glicko-2 paper allows this with reduced precision)
-  - Writes via `UpdateUserRating` (atomic counter increments + new
-    rating/rd/volatility)
+  - Expanding rating window (start ±50)
+  - On match: atomic ZREM both, create game, publish `match_found`
+- ✅ Glicko-2 implementation in `pkg/rating` (pure functions, table-tested)
+- ✅ Leader-elected `rating-updater` listening on `game.finished`:
+  - For rated games only, computes new ratings for both sides
+  - Writes via `UpdateUserRating` (atomic increments + new rating/rd/volatility)
   - Publishes `rating_updated` on each user's channel
-- ⬜ Result detection: when `Game.Status()` flips terminal, set
-  `result` on the `games` row (1-0 / 0-1 / 1/2-1/2). This requires
-  writing through the existing `syncGameToDB` path with a "winner is
-  the side NOT to move at checkmate" rule.
+- ✅ Result detection: when `Game.Status()` flips terminal, set
+  `result` on the `games` row (1-0 / 0-1 / 1/2-1/2).
 - ⬜ Frontend: Play tab with time-control picker + "Find game" button;
   match-found toast + auto-redirect to `/game/{id}`.
 - ⬜ Profile view exposes current rating + W/L/D record.

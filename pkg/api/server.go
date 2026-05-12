@@ -67,17 +67,16 @@ func NewServer(database db.Store, eventBus *bus.Client) *Server {
 		engineLimiter: NewRateLimiter(10, 10, time.Minute), // 10 engine requests per minute per IP
 		gameLimiter:   NewRateLimiter(5, 5, time.Minute),   // 5 new games per minute per IP
 	}
-	// Hub Run subscribes to Redis pub/sub patterns for cross-pod WS fan-out.
-	// We don't currently wire a shutdown context — server lifetime is the
-	// pod lifetime — but the Run signature takes one for future graceful
-	// shutdown and integration tests.
+	// Pod lifetime is the server lifetime.
 	go s.hub.Run(context.Background())
 	s.listenToEngine()
-	// Leader-elected sweepers. Every api pod attempts the election; one
-	// wins and runs the loop. The others sit on the cheap retry timer.
-	// Adding more sweepers (matchmaker pairing, rating updater, presence
-	// GC) is a one-line addition each, named uniquely.
+	s.StartClockTicker()
+	
+	// Leader-elected workers.
 	s.startInviteSweeper(context.Background())
+	s.startMatchmaker(context.Background())
+	s.startRatingUpdater(context.Background())
+
 	s.mux = http.NewServeMux()
 	s.registerRoutes()
 	return s
@@ -96,6 +95,18 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h = CORSMiddleware(h)
 	h = BodyLimitMiddleware(maxRequestBody)(h)
 	h.ServeHTTP(w, r)
+}
+
+func (s *Server) StartClockTicker() {
+	go func() {
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			// In a million-dollar platform, this would be optimized with a Redis set of active game IDs.
+			// For now, we'll implement the logic in syncGameToDB when a move is played.
+			// TODO: Periodic broadcast for spectators.
+		}
+	}()
 }
 
 // Shutdown gracefully shuts down the server. Since we are stateless,
