@@ -122,6 +122,13 @@ func (c *Client) readPump() {
 			cmdType = eventbus.CmdResign
 		case "offer_draw":
 			cmdType = eventbus.CmdOfferDraw
+		case "hint":
+			// We can dispatch these directly or via Command
+			cmdType = "Hint"
+		case "assess":
+			cmdType = "Assess"
+		case "new_game":
+			cmdType = "NewGame"
 		}
 
 		if cmdType != "" {

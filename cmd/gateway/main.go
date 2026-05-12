@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"os"
 
+	"github.com/google/uuid"
 	"github.com/neoromantics/chess/pkg/auth"
 	"github.com/neoromantics/chess/pkg/eventbus"
 )
@@ -31,6 +33,15 @@ func main() {
 	userSvcURL, err := url.Parse(userSvcURLStr)
 	if err != nil {
 		log.Fatalf("invalid user service URL: %v", err)
+	}
+
+	gameSvcURLStr := os.Getenv("GAME_SERVICE_URL")
+	if gameSvcURLStr == "" {
+		gameSvcURLStr = "http://game-service:8080"
+	}
+	gameSvcURL, err := url.Parse(gameSvcURLStr)
+	if err != nil {
+		log.Fatalf("invalid game service URL: %v", err)
 	}
 
 	redisAddr := os.Getenv("REDIS_URL")
@@ -62,14 +73,45 @@ func main() {
 	mux.HandleFunc("/api/auth/", userProxy.ServeHTTP)
 	mux.HandleFunc("/api/user/", userProxy.ServeHTTP)
 
-	// 3. WebSockets (Placeholders for now)
+	// 3. Reverse proxy to Game Service
+	gameProxy := httputil.NewSingleHostReverseProxy(gameSvcURL)
+	mux.HandleFunc("/api/state", gameProxy.ServeHTTP)
+	mux.HandleFunc("/api/games", gameProxy.ServeHTTP)
+
+	// 4. New Game creation (Intent dispatch)
+	mux.HandleFunc("POST /api/games/new", gw.handleCreateGame)
+
+	// 5. WebSockets
 	mux.HandleFunc("/ws", gw.handleWSGame)
 	mux.HandleFunc("/ws/user", gw.handleWSUser)
 
-	// 4. Static Assets & SPA Routing
+	// 6. Static Assets & SPA Routing
 	mux.HandleFunc("/", gw.handleIndex)
 
 	log.Printf("Gateway Service starting on port %s...", port)
 	log.Fatal(http.ListenAndServe(":"+port, auth.Middleware(mux)))
 }
 
+func (gw *Gateway) handleCreateGame(w http.ResponseWriter, r *http.Request) {
+	user, ok := auth.GetUser(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", 401)
+		return
+	}
+
+	gameID := uuid.New().String()
+
+	cmd := eventbus.Command{
+		Type:   eventbus.CmdNewGame,
+		GameID: gameID,
+		UserID: user.UserID,
+	}
+
+	if _, err := gw.bus.SendCommand(r.Context(), cmd); err != nil {
+		http.Error(w, "failed to dispatch game creation", 500)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"id": gameID})
+}

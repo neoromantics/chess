@@ -13,10 +13,33 @@ import (
 
 // Stream/Channel names
 const (
-	StreamGameCommands = "game:commands"
-	StreamGameEvents   = "game:events"
-	ChannelUserEvents  = "user:events:" // Prefix: user:events:{userID}
+	StreamGameCommands   = "game:commands"
+	StreamGameEvents     = "game:events"
+	StreamEngineRequests = "engine:requests"
+	ChannelEngineResults = "engine:results"
+	ChannelUserEvents    = "user:events:" // Prefix: user:events:{userID}
 )
+
+// EngineRequest represents a request for the engine to calculate a move.
+type EngineRequest struct {
+	GameID   string         `json:"game_id"`
+	FEN      string         `json:"fen"`
+	History  map[uint64]int `json:"history"`
+	MoveTime time.Duration  `json:"movetime"`
+	Context  string         `json:"context"` // "move", "hint", "assess"
+	Metadata map[string]string `json:"metadata,omitempty"`
+}
+
+// EngineResponse represents the result of an engine calculation.
+type EngineResponse struct {
+	GameID   string            `json:"game_id"`
+	BestMove string            `json:"best_move"` // UCI format
+	Score    int               `json:"score"`
+	Depth    int               `json:"depth"`
+	Context  string            `json:"context"`
+	Metadata map[string]string `json:"metadata,omitempty"`
+}
+
 
 // Command types
 const (
@@ -25,7 +48,23 @@ const (
 	CmdOfferDraw   = "OfferDraw"
 	CmdAcceptDraw  = "AcceptDraw"
 	CmdDeclineDraw = "DeclineDraw"
+	CmdHint        = "Hint"
+	CmdAssess      = "Assess"
+	CmdNewGame     = "NewGame"
 )
+
+// Command payloads
+type MakeMoveCmd struct {
+	Move string `json:"move"` // UCI format
+}
+
+type ResignCmd struct{}
+
+type OfferDrawCmd struct{}
+
+type AcceptDrawCmd struct{}
+
+type DeclineDrawCmd struct{}
 
 // Event types
 const (
@@ -34,6 +73,22 @@ const (
 	EvtMatchFound   = "MatchFound"
 	EvtInviteSent   = "InviteSent"
 )
+
+// Event payloads
+type MovePlayedEvt struct {
+	Move       string   `json:"move"` // UCI
+	SAN        string   `json:"san"`
+	FEN        string   `json:"fen"`
+	History    []string `json:"history"`
+	HistorySAN []string `json:"history_san"`
+	WhiteTime  int64    `json:"white_time"`
+	BlackTime  int64    `json:"black_time"`
+}
+
+type GameFinishedEvt struct {
+	Status string `json:"status"`
+	Result string `json:"result"`
+}
 
 // Command is an intent to change state. Dispatched by Gateway, consumed by Game service.
 type Command struct {
@@ -53,6 +108,7 @@ type Event struct {
 	Payload   json.RawMessage `json:"payload"`
 	Timestamp time.Time       `json:"timestamp"`
 }
+
 
 // Client wraps the Redis client for Command/Event sourcing.
 type Client struct {
@@ -132,6 +188,32 @@ func (c *Client) ReadCommands(ctx context.Context, group, consumer string, timeo
 // ReadEvents blocks until an event is available in the game:events stream.
 func (c *Client) ReadEvents(ctx context.Context, group, consumer string, timeout time.Duration) ([]redis.XMessage, error) {
 	return c.readStream(ctx, StreamGameEvents, group, consumer, timeout)
+}
+
+// SendEngineRequest appends a calculation task to the engine:requests stream.
+func (c *Client) SendEngineRequest(ctx context.Context, req EngineRequest) (string, error) {
+	data, err := json.Marshal(req)
+	if err != nil {
+		return "", err
+	}
+	return c.rdb.XAdd(ctx, &redis.XAddArgs{
+		Stream: StreamEngineRequests,
+		Values: map[string]interface{}{"data": data},
+	}).Result()
+}
+
+// ReadEngineRequests blocks until a task is available in the engine:requests stream.
+func (c *Client) ReadEngineRequests(ctx context.Context, group, consumer string, timeout time.Duration) ([]redis.XMessage, error) {
+	return c.readStream(ctx, StreamEngineRequests, group, consumer, timeout)
+}
+
+// SendEngineResponse publishes a calculation result to the engine:results channel.
+func (c *Client) SendEngineResponse(ctx context.Context, resp EngineResponse) error {
+	data, err := json.Marshal(resp)
+	if err != nil {
+		return err
+	}
+	return c.rdb.Publish(ctx, ChannelEngineResults, data).Err()
 }
 
 func (c *Client) readStream(ctx context.Context, stream, group, consumer string, timeout time.Duration) ([]redis.XMessage, error) {
