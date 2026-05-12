@@ -39,10 +39,26 @@ Your GitHub repository must have the following Secrets configured to allow the C
 Once configured, pushing to the `main` branch will automatically build Docker images, push them to `ghcr.io`, and deploy them via Kustomize over SSH.
 
 ### 4. Scaling Workers
-The Engine Worker pool can be scaled independently to handle increased load:
+The Engine Worker pool autoscales via HPA on CPU utilization (target 70%). Default bounds: `minReplicas=2`, `maxReplicas=8`. To override transiently:
 ```bash
 kubectl scale deployment chess-worker -n chess --replicas=10
 ```
+The HPA will reclaim the override on its next reconcile (~30s) if the CPU signal doesn't justify the headcount.
+
+**Why CPU and not queue depth?** Queue depth is the *cleaner* signal because it directly measures unsatisfied demand, but it requires KEDA (Phase 5). CPU utilization is a fair proxy today: an actively-searching worker pegs its core, so sustained high CPU across the fleet means the queue is being chased. Switch to KEDA once the cluster grows beyond a single VM.
+
+**Each worker pod runs exactly one search at a time.** Go's `GOMAXPROCS(0)` reads the cgroup CPU limit, so on a 1-core pod (the default Guaranteed QoS shape), `WORKER_CONCURRENCY` defaults to 1. To handle more concurrent searches, **scale out** (more pods), don't pack threads into one pod and starve them — the original code used `runtime.NumCPU()` which ignored cgroup limits and would silently oversubscribe 16:1 on a fat node.
+
+### 5. Scaling API
+The API HPA scales on CPU + memory (target 70% / 75%). WebSocket connections accumulate goroutine stacks, so memory is often the binding constraint before CPU. Custom WS-connection-count metrics are a Phase-5 deliverable.
+
+### 6. PodDisruptionBudgets
+Both deployments have `minAvailable=1` PDBs so node maintenance can't drain the entire fleet at once. During HPA scale-down or rolling updates, k8s waits for replacement pods to be Ready before terminating the next.
+
+### 7. Redis durability
+The Redis deployment is single-primary with AOF persistence (`appendfsync everysec`) — a hard crash loses at most ~1s of pub/sub fan-out events. The engine queue (Redis List) and durable state (game records, invites) survive because Postgres is the source of truth; pub/sub is acceleration only.
+
+Sentinel/HA is intentionally deferred to Phase 5 hardening — the cost of running Sentinel + 2 replicas + a failover script doesn't yet justify the resilience gain on a single-node k3s cluster. When you add a second physical node, the upgrade path is documented in `deploy/kustomize/base/resources.yaml` (commented stub).
 
 ## 🐳 Local Development vs Production
 

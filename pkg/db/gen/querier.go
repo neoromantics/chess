@@ -6,26 +6,56 @@ package gen
 
 import (
 	"context"
+
+	"github.com/google/uuid"
 )
 
 type Querier interface {
-	CountUserDraws(ctx context.Context, userID int64) (int64, error)
-	CountUserGames(ctx context.Context, userID int64) (int64, error)
-	CountUserWins(ctx context.Context, userID int64) (int64, error)
+	// Atomic accept: only the recipient may accept, and only while pending.
+	// game_id is recorded so both clients can navigate to the new game.
+	AcceptInvite(ctx context.Context, arg AcceptInviteParams) (int64, error)
+	// Sender-initiated cancel; e.g. they closed the tab or sent by mistake.
+	CancelInvite(ctx context.Context, arg CancelInviteParams) (int64, error)
+	CountUserDraws(ctx context.Context, dollar_1 int64) (int64, error)
+	// Explicit BIGINT cast on $1 so sqlc infers int64 (not sql.NullInt64) for
+	// the param — white_user_id is nullable but the user-id we filter by is not.
+	CountUserGames(ctx context.Context, dollar_1 int64) (int64, error)
+	CountUserWins(ctx context.Context, dollar_1 int64) (int64, error)
+	// === INVITES ===
+	// Direct user-to-user challenges. PG row is the durable record so a
+	// recipient who's offline sees the invite when they reconnect; Redis
+	// pub/sub on user.evt.{id} is the realtime push when they're online.
+	CreateInvite(ctx context.Context, arg CreateInviteParams) (Invite, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
+	DeclineInvite(ctx context.Context, arg DeclineInviteParams) (int64, error)
 	// Authorization is enforced by the handler via getGame() before this runs,
-	// so we delete strictly by primary key. Re-filtering by user_id here was a
-	// footgun for anonymous games that became owned (or vice-versa) across a
-	// login/logout boundary — the row matches authz but not the DELETE filter,
-	// and the API silently 204'd with nothing deleted.
+	// so we delete strictly by primary key.
 	DeleteGame(ctx context.Context, id string) (int64, error)
-	GetGame(ctx context.Context, id string) (Game, error)
+	// Called periodically by the leader-elected invite sweeper. Returns the
+	// count so the sweeper can publish per-invite expired events if desired.
+	ExpireStaleInvites(ctx context.Context) (int64, error)
+	GetGame(ctx context.Context, id string) (GetGameRow, error)
+	GetInvite(ctx context.Context, id uuid.UUID) (Invite, error)
 	GetUserByID(ctx context.Context, id int64) (User, error)
 	GetUserByUsername(ctx context.Context, username string) (User, error)
-	ListGames(ctx context.Context, userID int64) ([]Game, error)
+	// Games where the user is on either side OR (transitional) the legacy
+	// single-user owner. ORDER BY updated_at DESC matches the dashboard view.
+	ListGames(ctx context.Context, dollar_1 int64) ([]ListGamesRow, error)
+	// The reconnect-handshake backlog query. Returns invites the user hasn't
+	// yet acted on, newest first.
+	ListPendingInvitesForUser(ctx context.Context, toUserID int64) ([]Invite, error)
+	ListPendingInvitesFromUser(ctx context.Context, fromUserID int64) ([]Invite, error)
+	// For invite autocomplete. Case-insensitive prefix match, capped.
+	SearchUsersByPrefix(ctx context.Context, username string) ([]SearchUsersByPrefixRow, error)
 	UpdateLastLogin(ctx context.Context, id int64) error
 	UpdatePassword(ctx context.Context, arg UpdatePasswordParams) error
 	UpdateUserProfile(ctx context.Context, arg UpdateUserProfileParams) error
+	// Glicko-2 outcome write. Called by the leader-elected rating updater
+	// after a rated game completes. All four fields move atomically so we
+	// never expose a half-updated rating to readers.
+	UpdateUserRating(ctx context.Context, arg UpdateUserRatingParams) error
+	// white_user_id / black_user_id supersede user_id but we keep both populated
+	// during the Phase 1 transition. user_id will be dropped in a later migration.
 	UpsertGame(ctx context.Context, arg UpsertGameParams) error
 }
 

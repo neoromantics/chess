@@ -5,23 +5,44 @@
 package gen
 
 import (
+	"database/sql"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type Game struct {
-	ID             string    `json:"id"`
-	UserID         int64     `json:"user_id"`
-	Fen            string    `json:"fen"`
-	History        string    `json:"history"`
-	HistorySan     string    `json:"history_san"`
-	EngineWhite    bool      `json:"engine_white"`
-	EngineBlack    bool      `json:"engine_black"`
-	WhiteThinkTime int32     `json:"white_think_time"`
-	BlackThinkTime int32     `json:"black_think_time"`
-	Status         string    `json:"status"`
-	Assessments    string    `json:"assessments"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ID             string        `json:"id"`
+	UserID         int64         `json:"user_id"`
+	Fen            string        `json:"fen"`
+	History        string        `json:"history"`
+	HistorySan     string        `json:"history_san"`
+	EngineWhite    bool          `json:"engine_white"`
+	EngineBlack    bool          `json:"engine_black"`
+	WhiteThinkTime int32         `json:"white_think_time"`
+	BlackThinkTime int32         `json:"black_think_time"`
+	Status         string        `json:"status"`
+	Assessments    string        `json:"assessments"`
+	CreatedAt      time.Time     `json:"created_at"`
+	UpdatedAt      time.Time     `json:"updated_at"`
+	WhiteUserID    sql.NullInt64 `json:"white_user_id"`
+	BlackUserID    sql.NullInt64 `json:"black_user_id"`
+	TimeControl    string        `json:"time_control"`
+	Rated          bool          `json:"rated"`
+	Result         string        `json:"result"`
+}
+
+type Invite struct {
+	ID          uuid.UUID      `json:"id"`
+	FromUserID  int64          `json:"from_user_id"`
+	ToUserID    int64          `json:"to_user_id"`
+	TimeControl string         `json:"time_control"`
+	Rated       bool           `json:"rated"`
+	Status      string         `json:"status"`
+	GameID      sql.NullString `json:"game_id"`
+	CreatedAt   time.Time      `json:"created_at"`
+	ExpiresAt   time.Time      `json:"expires_at"`
+	ResolvedAt  sql.NullTime   `json:"resolved_at"`
 }
 
 type User struct {
@@ -36,4 +57,11 @@ type User struct {
 	Bio          string    `json:"bio"`
 	LastLogin    time.Time `json:"last_login"`
 	CreatedAt    time.Time `json:"created_at"`
+	Rating       float32   `json:"rating"`
+	Rd           float32   `json:"rd"`
+	Volatility   float32   `json:"volatility"`
+	GamesPlayed  int32     `json:"games_played"`
+	Wins         int32     `json:"wins"`
+	Losses       int32     `json:"losses"`
+	Draws        int32     `json:"draws"`
 }

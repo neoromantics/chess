@@ -64,12 +64,40 @@ spec:
     targetPort: 5432
 ---
 # === REDIS ===
+# Single primary today. AOF persistence is enabled so a Redis restart
+# loses ~1s of pub/sub events at worst, not minutes of queued engine
+# requests. Sentinel/HA is a Phase 5 hardening task.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: chess-redis-config
+data:
+  redis.conf: |
+    appendonly yes
+    appendfsync everysec
+    # Cap memory to avoid OOMKill on tournament-day surges; eviction
+    # policy keeps the pub/sub keyspace warm and drops least-used state.
+    maxmemory 200mb
+    maxmemory-policy allkeys-lru
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: chess-redis-pvc
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: chess-redis
 spec:
   replicas: 1
+  strategy:
+    type: Recreate  # PVC is RWO; rolling update would deadlock.
   selector:
     matchLabels:
       app: chess-redis
@@ -81,13 +109,33 @@ spec:
       containers:
       - name: redis
         image: redis:7-alpine
+        args: ["/etc/redis/redis.conf"]
         ports:
         - containerPort: 6379
+        volumeMounts:
+        - name: config
+          mountPath: /etc/redis
+        - name: data
+          mountPath: /data
         readinessProbe:
           exec:
             command: ["redis-cli", "ping"]
           initialDelaySeconds: 3
           periodSeconds: 5
+        resources:
+          requests:
+            cpu: 50m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+      volumes:
+      - name: config
+        configMap:
+          name: chess-redis-config
+      - name: data
+        persistentVolumeClaim:
+          claimName: chess-redis-pvc
 ---
 apiVersion: v1
 kind: Service
@@ -177,7 +225,51 @@ spec:
   - port: 80
     targetPort: 8080
 ---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: chess-api-pdb
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: chess-api
+---
+# API HPA. The signal is CPU + memory because we don't yet ship a
+# custom WebSocket-connection-count metric. Memory matters more than
+# CPU here — long-lived WS connections accumulate goroutine stacks.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: chess-api-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: chess-api
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 75
+---
 # === ENGINE WORKER ===
+# Guaranteed QoS class: requests == limits. This is deliberate — chess
+# search is CPU-bound and benefits from predictable scheduling. The Go
+# runtime reads GOMAXPROCS from the cgroup limit (1 core here), so each
+# pod runs exactly one search at a time. To handle more concurrent
+# searches, scale OUT (more pods via HPA), don't pack threads into one
+# pod and starve them.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -192,6 +284,7 @@ spec:
       labels:
         app: chess-worker
     spec:
+      terminationGracePeriodSeconds: 30
       containers:
       - name: worker
         image: ghcr.io/neoromantics/chess/worker:latest
@@ -200,11 +293,57 @@ spec:
           value: chess-redis:6379
         resources:
           requests:
-            cpu: 200m
-            memory: 128Mi
+            cpu: 1000m
+            memory: 256Mi
           limits:
             cpu: 1000m
             memory: 256Mi
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: chess-worker-pdb
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: chess-worker
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: chess-worker-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: chess-worker
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+  # CPU-based scaling is a fair proxy for queue depth here: a worker
+  # actively searching pegs its core. When average CPU stays high, the
+  # queue is being chased — add pods. KEDA-on-Redis-list-length is the
+  # cleaner v2; that's Phase 5.
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 30
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Pods
+        value: 1
+        periodSeconds: 60
 ---
 # === INGRESS WITH TLS ===
 apiVersion: networking.k8s.io/v1

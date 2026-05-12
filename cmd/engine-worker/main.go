@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -62,15 +63,27 @@ func main() {
 		}
 	})
 
-	// CPU-bounded semaphore: limits concurrent engine searches to available cores.
-	// If the worker is at capacity, it won't dequeue the next task, allowing
-	// another idle worker pod to pick it up from the Redis queue.
-	maxConcurrent := runtime.NumCPU()
+	// CPU-bounded semaphore: limits concurrent engine searches to the
+	// container's effective core budget. runtime.NumCPU() returns the host
+	// CPU count and IGNORES cgroup CPU limits — on a 16-core node with
+	// cpu.limit=1, that would spawn 16 parallel searches all fighting for
+	// 6% of one core. GOMAXPROCS(0) is cgroup-aware since Go 1.22, so it
+	// reflects the actual scheduler parallelism we're allowed.
+	//
+	// Override with WORKER_CONCURRENCY env when running ad-hoc or
+	// experimenting with oversubscription.
+	maxConcurrent := runtime.GOMAXPROCS(0)
+	if v := os.Getenv("WORKER_CONCURRENCY"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			maxConcurrent = n
+		}
+	}
 	if maxConcurrent < 1 {
 		maxConcurrent = 1
 	}
 	sem := make(chan struct{}, maxConcurrent)
-	log.Printf("Worker [ENGINE]: Bounded concurrency to %d parallel searches", maxConcurrent)
+	log.Printf("Worker [ENGINE]: Bounded concurrency to %d parallel searches (GOMAXPROCS=%d, NumCPU=%d)",
+		maxConcurrent, runtime.GOMAXPROCS(0), runtime.NumCPU())
 
 	go func() {
 		<-sigChan

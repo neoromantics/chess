@@ -1,0 +1,23 @@
+DROP TABLE IF EXISTS invites;
+
+DROP INDEX IF EXISTS games_updated_idx;
+DROP INDEX IF EXISTS games_black_user_idx;
+DROP INDEX IF EXISTS games_white_user_idx;
+
+ALTER TABLE games
+  DROP CONSTRAINT IF EXISTS games_has_opponent,
+  DROP CONSTRAINT IF EXISTS games_has_player,
+  DROP COLUMN IF EXISTS result,
+  DROP COLUMN IF EXISTS rated,
+  DROP COLUMN IF EXISTS time_control,
+  DROP COLUMN IF EXISTS black_user_id,
+  DROP COLUMN IF EXISTS white_user_id;
+
+ALTER TABLE users
+  DROP COLUMN IF EXISTS draws,
+  DROP COLUMN IF EXISTS losses,
+  DROP COLUMN IF EXISTS wins,
+  DROP COLUMN IF EXISTS games_played,
+  DROP COLUMN IF EXISTS volatility,
+  DROP COLUMN IF EXISTS rd,
+  DROP COLUMN IF EXISTS rating;

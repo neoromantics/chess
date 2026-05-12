@@ -5,19 +5,43 @@
 
 A professional, distributed chess platform architected for commercial scale. Built with Go, Vue 3 (TypeScript), and Redis.
 
-## Enterprise Distributed Architecture
-This platform is engineered as a highly available, strictly consistent microservices ecosystem:
-- **API Gateway (Go)**: A strictly 100% stateless, event-driven orchestrator. Holds ZERO game state in memory. Clocks and game state are derived dynamically from Postgres timestamps, allowing infinite scaling behind standard load balancers without sticky sessions.
-- **Engine Worker Pool (Go)**: CPU-intensive search and evaluation offloaded to a horizontally scalable pool of dedicated worker nodes reading from Redis `BLPOP` queues.
-- **Redis (State Sync & Concurrency)**: Serves as the operational backbone. Provides distributed locking (preventing race conditions) and acts as the global `ws.broadcast` bus, allowing any pod to stream state instantly to all clients.
-- **Postgres (Persistence)**: The authoritative durable store for game lifecycles and analysis records.
+## Distributed Architecture
+Three pods, three responsibilities, every cross-pod handoff over Redis:
 
-## Key Features
-- **Strictly Consistent State:** Redis-backed distributed locks (token + Lua compare-and-delete release) guarantee absolute consistency across active games, even during concurrent mutations across different K8s nodes.
-- **Reactive Stateless Broadcasts:** Redis Pub/Sub (`ws.broadcast`) streams board state from any pod to all WebSocket clients. Heartbeated WS connections cull half-open clients in ~60s.
-- **Standardized GitOps:** Automated CI/CD pipeline building multi-stage immutable containers, seamlessly rolled out to a K8s cluster using standard `Kustomize`.
-- **Authoritative Headless Engine:** The backend is the sole arbiter of time and legality. The Vue 3 frontend is a decoupled, reactive terminal.
-- **Schema-Versioned Persistence:** `sqlc`-generated type-safe queries against Postgres; `golang-migrate` runs embedded SQL migrations on boot from every replica (advisory-locked, so only one applies).
+- **`api` (Go, HPA 2–8)** — Stateless HTTP + WebSocket entry. Auth, routing, game lifecycle, matchmaking pairing loop (leader-elected goroutine), invite delivery, rating updates (leader-elected goroutine). Holds zero game state in memory; every request fetches fresh from Postgres.
+- **`engine-worker` (Go, HPA 2–8)** — CPU-bound search. Pulls jobs via Redis `BLPOP` (exactly-once), publishes results via Redis pub/sub, listens for abort signals. Concurrency per pod = `runtime.GOMAXPROCS(0)` so cgroup CPU limits are respected (a Phase-1 fix — `runtime.NumCPU()` ignores them).
+- **Redis** — Pub/sub (game + per-user channels), BLPOP queue (engine work), SET-NX leases (distributed game lock, leader election), KV (thinking flag, presence). AOF persistence (`appendfsync everysec`); Sentinel/HA is a Phase-5 hardening task.
+- **Postgres** — Durable truth. sqlc-generated queries, golang-migrate (advisory-locked across replicas).
+
+## Event topology
+Two Redis pub/sub keyspaces drive every realtime push:
+- `game.evt.{game_id}` — moves, hints, assessments, status changes, game-end. Every API pod `PSUBSCRIBE`s `game.evt.*` and fans out to its locally-attached WebSocket clients on `/ws/game`. This is what makes two players on different pods see each other's moves.
+- `user.evt.{user_id}` — invites, match-found, friend events. Fans out the same way to `/ws/user` subscribers.
+
+**Realtime vs durable delivery:**
+- Ephemeral events (move broadcasts, clock ticks) live only in pub/sub. Reconnect re-syncs via `GET /api/state`.
+- Durable events (invites, match results) write to Postgres first **and** publish for live push. Reconnect fetches outstanding via REST (`/api/invites/pending` etc.), so a user who was offline when invited still sees it.
+
+## Key invariants
+- **No in-memory game state.** `gameEntry` is built per-request from Postgres; in-pod `gameRegistry` does not exist.
+- **All cross-pod fan-out via Redis pub/sub.** The WS Hub is a pub/sub-driven connection registry — never a source of truth.
+- **Engine search is one-per-pod.** Concurrency caps at `GOMAXPROCS(0)`. Scale horizontally (more worker pods), not vertically (more goroutines per pod).
+- **Engine requests have a timeout.** API schedules `AfterFunc(2*movetime + 3s)` to clear the `thinking:{id}` flag and broadcast a fresh state if the worker never responds — so a worker crash recovers in one move-time, not the legacy 2-minute eternity.
+- **Distributed game lock is correct.** SET-NX with a random token; release runs a Lua compare-and-delete so a slow holder past TTL cannot blow away its successor's lock.
+
+## Schema (post-000003)
+- `users` — Glicko-2 rating (`rating`, `rd`, `volatility`) + `wins/losses/draws/games_played` counters. Legacy `elo` column retained until 000004.
+- `games` — Dual ownership: `white_user_id`, `black_user_id` (nullable; null = engine plays that side). `time_control`, `rated`, `result` (`*`/`1-0`/`0-1`/`1/2-1/2`). Legacy `user_id` retained for Phase-1 transition.
+- `invites` — Direct user-to-user challenges. Status enum (`pending`/`accepted`/`declined`/`expired`/`cancelled`), TTL via `expires_at`, optional `game_id` back-reference once accepted.
+
+## Phased roadmap
+| # | Phase | Status |
+|---|---|---|
+| 1 | Foundation: Redis-driven WS fan-out, schema 000003, leader election, engine resilience | **Done** |
+| 2 | Direct invites (user-to-user) | Next |
+| 3 | Matchmaking queue + Glicko-2 rating updates | After 2 |
+| 4 | PvP polish: server-authoritative clocks, draw/resign/takeback | After 3 |
+| 5 | Hardening: Redis Sentinel, KEDA queue-depth HPA, Redis Streams for engine queue, observability | After 4 |
 
 ## Quick Start (Docker Compose)
 Docker Compose is maintained strictly as a local development reference to ensure parity. It is **not** used for VM or production deployment.
@@ -49,16 +73,17 @@ Visit http://localhost:8080.
 │   ├── chess/                # API Server (Orchestrator)
 │   └── engine-worker/        # Distributed Calculation Node
 ├── pkg/
-│   ├── api/                  # Headless API, WebSockets, middleware (rate limit, recovery, CORS)
-│   ├── bus/                  # Redis pub/sub, BLPOP queue, token-based distributed lock
-│   ├── core/                 # Pure Chess Engine (Search & Eval) — zero deps
+│   ├── api/                  # HTTP + WebSocket entry, middleware, Hub (cross-pod fanout)
+│   ├── bus/                  # Redis pub/sub, BLPOP queue, distributed lock, channel helpers
+│   ├── leader/               # Redis-backed singleton leader election (matchmaker, sweepers)
+│   ├── core/                 # Pure chess engine (search & eval) — zero deps
 │   ├── db/
 │   │   ├── migrations/       # golang-migrate up/down SQL, embedded into the binary
 │   │   ├── queries/          # sqlc source-of-truth SQL
 │   │   ├── gen/              # sqlc-generated (DO NOT hand-edit — `just db-generate`)
-│   │   ├── store.go          # Storage interface
+│   │   ├── store.go          # Storage interface (users, games, invites, ratings)
 │   │   └── postgres.go       # sqlc-backed implementation + connection pool
-│   ├── game/                 # Authoritative Game Logic
+│   ├── game/                 # Authoritative game logic
 │   ├── auth/                 # JWT/bcrypt; lazy secret resolution
 │   └── uci/                  # UCI protocol parser (stdio mode)
 ├── frontend/                 # Vue 3 + TypeScript SPA, embedded via //go:embed

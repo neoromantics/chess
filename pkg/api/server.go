@@ -62,12 +62,16 @@ type Server struct {
 func NewServer(database db.Store, eventBus *bus.Client) *Server {
 	s := &Server{
 		db:            database,
-		hub:           NewHub(),
+		hub:           NewHub(eventBus),
 		bus:           eventBus,
 		engineLimiter: NewRateLimiter(10, 10, time.Minute), // 10 engine requests per minute per IP
 		gameLimiter:   NewRateLimiter(5, 5, time.Minute),   // 5 new games per minute per IP
 	}
-	go s.hub.Run()
+	// Hub Run subscribes to Redis pub/sub patterns for cross-pod WS fan-out.
+	// We don't currently wire a shutdown context — server lifetime is the
+	// pod lifetime — but the Run signature takes one for future graceful
+	// shutdown and integration tests.
+	go s.hub.Run(context.Background())
 	s.listenToEngine()
 	s.mux = http.NewServeMux()
 	s.registerRoutes()

@@ -7,49 +7,153 @@ package gen
 
 import (
 	"context"
+	"database/sql"
 	"time"
+
+	"github.com/google/uuid"
 )
+
+const acceptInvite = `-- name: AcceptInvite :execrows
+UPDATE invites
+SET status      = 'accepted',
+    game_id     = $3,
+    resolved_at = NOW()
+WHERE id = $1 AND to_user_id = $2 AND status = 'pending' AND expires_at > NOW()
+`
+
+type AcceptInviteParams struct {
+	ID       uuid.UUID      `json:"id"`
+	ToUserID int64          `json:"to_user_id"`
+	GameID   sql.NullString `json:"game_id"`
+}
+
+// Atomic accept: only the recipient may accept, and only while pending.
+// game_id is recorded so both clients can navigate to the new game.
+func (q *Queries) AcceptInvite(ctx context.Context, arg AcceptInviteParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, acceptInvite, arg.ID, arg.ToUserID, arg.GameID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const cancelInvite = `-- name: CancelInvite :execrows
+UPDATE invites
+SET status      = 'cancelled',
+    resolved_at = NOW()
+WHERE id = $1 AND from_user_id = $2 AND status = 'pending'
+`
+
+type CancelInviteParams struct {
+	ID         uuid.UUID `json:"id"`
+	FromUserID int64     `json:"from_user_id"`
+}
+
+// Sender-initiated cancel; e.g. they closed the tab or sent by mistake.
+func (q *Queries) CancelInvite(ctx context.Context, arg CancelInviteParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, cancelInvite, arg.ID, arg.FromUserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
 
 const countUserDraws = `-- name: CountUserDraws :one
 SELECT COUNT(*) FROM games
-WHERE user_id = $1
-  AND status IN ('stalemate', 'draw50', 'draw_repetition', 'draw_insufficient')
+WHERE (white_user_id = $1::BIGINT OR black_user_id = $1::BIGINT OR user_id = $1::BIGINT)
+  AND (result = '1/2-1/2'
+       OR status IN ('stalemate', 'draw50', 'draw_repetition', 'draw_insufficient'))
 `
 
-func (q *Queries) CountUserDraws(ctx context.Context, userID int64) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countUserDraws, userID)
+func (q *Queries) CountUserDraws(ctx context.Context, dollar_1 int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countUserDraws, dollar_1)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
 }
 
 const countUserGames = `-- name: CountUserGames :one
-SELECT COUNT(*) FROM games WHERE user_id = $1
+SELECT COUNT(*) FROM games
+WHERE white_user_id = $1::BIGINT
+   OR black_user_id = $1::BIGINT
+   OR user_id       = $1::BIGINT
 `
 
-func (q *Queries) CountUserGames(ctx context.Context, userID int64) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countUserGames, userID)
+// Explicit BIGINT cast on $1 so sqlc infers int64 (not sql.NullInt64) for
+// the param — white_user_id is nullable but the user-id we filter by is not.
+func (q *Queries) CountUserGames(ctx context.Context, dollar_1 int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countUserGames, dollar_1)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
 }
 
 const countUserWins = `-- name: CountUserWins :one
-SELECT COUNT(*) FROM games WHERE user_id = $1 AND status = 'checkmate'
+SELECT COUNT(*) FROM games
+WHERE (white_user_id = $1::BIGINT AND result = '1-0')
+   OR (black_user_id = $1::BIGINT AND result = '0-1')
+   OR (user_id       = $1::BIGINT AND status = 'checkmate' AND result IN ('*', '1-0', '0-1'))
 `
 
-func (q *Queries) CountUserWins(ctx context.Context, userID int64) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countUserWins, userID)
+func (q *Queries) CountUserWins(ctx context.Context, dollar_1 int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countUserWins, dollar_1)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const createInvite = `-- name: CreateInvite :one
+
+INSERT INTO invites (id, from_user_id, to_user_id, time_control, rated, status, expires_at)
+VALUES ($1, $2, $3, $4, $5, 'pending', $6)
+RETURNING id, from_user_id, to_user_id, time_control, rated, status, game_id,
+          created_at, expires_at, resolved_at
+`
+
+type CreateInviteParams struct {
+	ID          uuid.UUID `json:"id"`
+	FromUserID  int64     `json:"from_user_id"`
+	ToUserID    int64     `json:"to_user_id"`
+	TimeControl string    `json:"time_control"`
+	Rated       bool      `json:"rated"`
+	ExpiresAt   time.Time `json:"expires_at"`
+}
+
+// === INVITES ===
+// Direct user-to-user challenges. PG row is the durable record so a
+// recipient who's offline sees the invite when they reconnect; Redis
+// pub/sub on user.evt.{id} is the realtime push when they're online.
+func (q *Queries) CreateInvite(ctx context.Context, arg CreateInviteParams) (Invite, error) {
+	row := q.db.QueryRowContext(ctx, createInvite,
+		arg.ID,
+		arg.FromUserID,
+		arg.ToUserID,
+		arg.TimeControl,
+		arg.Rated,
+		arg.ExpiresAt,
+	)
+	var i Invite
+	err := row.Scan(
+		&i.ID,
+		&i.FromUserID,
+		&i.ToUserID,
+		&i.TimeControl,
+		&i.Rated,
+		&i.Status,
+		&i.GameID,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.ResolvedAt,
+	)
+	return i, err
 }
 
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (username, password_hash, elo)
 VALUES ($1, $2, 1200)
 RETURNING id, username, password_hash, display_name, avatar_url, country,
-          is_premium, elo, bio, last_login, created_at
+          is_premium, elo, bio, last_login, created_at,
+          rating, rd, volatility, games_played, wins, losses, draws
 `
 
 type CreateUserParams struct {
@@ -72,8 +176,35 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.Bio,
 		&i.LastLogin,
 		&i.CreatedAt,
+		&i.Rating,
+		&i.Rd,
+		&i.Volatility,
+		&i.GamesPlayed,
+		&i.Wins,
+		&i.Losses,
+		&i.Draws,
 	)
 	return i, err
+}
+
+const declineInvite = `-- name: DeclineInvite :execrows
+UPDATE invites
+SET status      = 'declined',
+    resolved_at = NOW()
+WHERE id = $1 AND to_user_id = $2 AND status = 'pending'
+`
+
+type DeclineInviteParams struct {
+	ID       uuid.UUID `json:"id"`
+	ToUserID int64     `json:"to_user_id"`
+}
+
+func (q *Queries) DeclineInvite(ctx context.Context, arg DeclineInviteParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, declineInvite, arg.ID, arg.ToUserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const deleteGame = `-- name: DeleteGame :execrows
@@ -82,10 +213,7 @@ WHERE id = $1
 `
 
 // Authorization is enforced by the handler via getGame() before this runs,
-// so we delete strictly by primary key. Re-filtering by user_id here was a
-// footgun for anonymous games that became owned (or vice-versa) across a
-// login/logout boundary — the row matches authz but not the DELETE filter,
-// and the API silently 204'd with nothing deleted.
+// so we delete strictly by primary key.
 func (q *Queries) DeleteGame(ctx context.Context, id string) (int64, error) {
 	result, err := q.db.ExecContext(ctx, deleteGame, id)
 	if err != nil {
@@ -94,20 +222,62 @@ func (q *Queries) DeleteGame(ctx context.Context, id string) (int64, error) {
 	return result.RowsAffected()
 }
 
+const expireStaleInvites = `-- name: ExpireStaleInvites :execrows
+UPDATE invites
+SET status      = 'expired',
+    resolved_at = NOW()
+WHERE status = 'pending' AND expires_at <= NOW()
+`
+
+// Called periodically by the leader-elected invite sweeper. Returns the
+// count so the sweeper can publish per-invite expired events if desired.
+func (q *Queries) ExpireStaleInvites(ctx context.Context) (int64, error) {
+	result, err := q.db.ExecContext(ctx, expireStaleInvites)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const getGame = `-- name: GetGame :one
-SELECT id, user_id, fen, history, history_san,
+SELECT id, user_id, white_user_id, black_user_id,
+       fen, history, history_san,
        engine_white, engine_black, white_think_time, black_think_time,
-       status, assessments, created_at, updated_at
+       time_control, rated, status, result, assessments,
+       created_at, updated_at
 FROM games
 WHERE id = $1
 `
 
-func (q *Queries) GetGame(ctx context.Context, id string) (Game, error) {
+type GetGameRow struct {
+	ID             string        `json:"id"`
+	UserID         int64         `json:"user_id"`
+	WhiteUserID    sql.NullInt64 `json:"white_user_id"`
+	BlackUserID    sql.NullInt64 `json:"black_user_id"`
+	Fen            string        `json:"fen"`
+	History        string        `json:"history"`
+	HistorySan     string        `json:"history_san"`
+	EngineWhite    bool          `json:"engine_white"`
+	EngineBlack    bool          `json:"engine_black"`
+	WhiteThinkTime int32         `json:"white_think_time"`
+	BlackThinkTime int32         `json:"black_think_time"`
+	TimeControl    string        `json:"time_control"`
+	Rated          bool          `json:"rated"`
+	Status         string        `json:"status"`
+	Result         string        `json:"result"`
+	Assessments    string        `json:"assessments"`
+	CreatedAt      time.Time     `json:"created_at"`
+	UpdatedAt      time.Time     `json:"updated_at"`
+}
+
+func (q *Queries) GetGame(ctx context.Context, id string) (GetGameRow, error) {
 	row := q.db.QueryRowContext(ctx, getGame, id)
-	var i Game
+	var i GetGameRow
 	err := row.Scan(
 		&i.ID,
 		&i.UserID,
+		&i.WhiteUserID,
+		&i.BlackUserID,
 		&i.Fen,
 		&i.History,
 		&i.HistorySan,
@@ -115,7 +285,10 @@ func (q *Queries) GetGame(ctx context.Context, id string) (Game, error) {
 		&i.EngineBlack,
 		&i.WhiteThinkTime,
 		&i.BlackThinkTime,
+		&i.TimeControl,
+		&i.Rated,
 		&i.Status,
+		&i.Result,
 		&i.Assessments,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -123,9 +296,35 @@ func (q *Queries) GetGame(ctx context.Context, id string) (Game, error) {
 	return i, err
 }
 
+const getInvite = `-- name: GetInvite :one
+SELECT id, from_user_id, to_user_id, time_control, rated, status, game_id,
+       created_at, expires_at, resolved_at
+FROM invites
+WHERE id = $1
+`
+
+func (q *Queries) GetInvite(ctx context.Context, id uuid.UUID) (Invite, error) {
+	row := q.db.QueryRowContext(ctx, getInvite, id)
+	var i Invite
+	err := row.Scan(
+		&i.ID,
+		&i.FromUserID,
+		&i.ToUserID,
+		&i.TimeControl,
+		&i.Rated,
+		&i.Status,
+		&i.GameID,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.ResolvedAt,
+	)
+	return i, err
+}
+
 const getUserByID = `-- name: GetUserByID :one
 SELECT id, username, password_hash, display_name, avatar_url, country,
-       is_premium, elo, bio, last_login, created_at
+       is_premium, elo, bio, last_login, created_at,
+       rating, rd, volatility, games_played, wins, losses, draws
 FROM users
 WHERE id = $1
 `
@@ -145,13 +344,21 @@ func (q *Queries) GetUserByID(ctx context.Context, id int64) (User, error) {
 		&i.Bio,
 		&i.LastLogin,
 		&i.CreatedAt,
+		&i.Rating,
+		&i.Rd,
+		&i.Volatility,
+		&i.GamesPlayed,
+		&i.Wins,
+		&i.Losses,
+		&i.Draws,
 	)
 	return i, err
 }
 
 const getUserByUsername = `-- name: GetUserByUsername :one
 SELECT id, username, password_hash, display_name, avatar_url, country,
-       is_premium, elo, bio, last_login, created_at
+       is_premium, elo, bio, last_login, created_at,
+       rating, rd, volatility, games_played, wins, losses, draws
 FROM users
 WHERE username = $1
 `
@@ -171,31 +378,67 @@ func (q *Queries) GetUserByUsername(ctx context.Context, username string) (User,
 		&i.Bio,
 		&i.LastLogin,
 		&i.CreatedAt,
+		&i.Rating,
+		&i.Rd,
+		&i.Volatility,
+		&i.GamesPlayed,
+		&i.Wins,
+		&i.Losses,
+		&i.Draws,
 	)
 	return i, err
 }
 
 const listGames = `-- name: ListGames :many
-SELECT id, user_id, fen, history, history_san,
+SELECT id, user_id, white_user_id, black_user_id,
+       fen, history, history_san,
        engine_white, engine_black, white_think_time, black_think_time,
-       status, assessments, created_at, updated_at
+       time_control, rated, status, result, assessments,
+       created_at, updated_at
 FROM games
-WHERE user_id = $1
+WHERE white_user_id = $1::BIGINT
+   OR black_user_id = $1::BIGINT
+   OR user_id       = $1::BIGINT
 ORDER BY updated_at DESC
 `
 
-func (q *Queries) ListGames(ctx context.Context, userID int64) ([]Game, error) {
-	rows, err := q.db.QueryContext(ctx, listGames, userID)
+type ListGamesRow struct {
+	ID             string        `json:"id"`
+	UserID         int64         `json:"user_id"`
+	WhiteUserID    sql.NullInt64 `json:"white_user_id"`
+	BlackUserID    sql.NullInt64 `json:"black_user_id"`
+	Fen            string        `json:"fen"`
+	History        string        `json:"history"`
+	HistorySan     string        `json:"history_san"`
+	EngineWhite    bool          `json:"engine_white"`
+	EngineBlack    bool          `json:"engine_black"`
+	WhiteThinkTime int32         `json:"white_think_time"`
+	BlackThinkTime int32         `json:"black_think_time"`
+	TimeControl    string        `json:"time_control"`
+	Rated          bool          `json:"rated"`
+	Status         string        `json:"status"`
+	Result         string        `json:"result"`
+	Assessments    string        `json:"assessments"`
+	CreatedAt      time.Time     `json:"created_at"`
+	UpdatedAt      time.Time     `json:"updated_at"`
+}
+
+// Games where the user is on either side OR (transitional) the legacy
+// single-user owner. ORDER BY updated_at DESC matches the dashboard view.
+func (q *Queries) ListGames(ctx context.Context, dollar_1 int64) ([]ListGamesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listGames, dollar_1)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []Game{}
+	items := []ListGamesRow{}
 	for rows.Next() {
-		var i Game
+		var i ListGamesRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.UserID,
+			&i.WhiteUserID,
+			&i.BlackUserID,
 			&i.Fen,
 			&i.History,
 			&i.HistorySan,
@@ -203,10 +446,145 @@ func (q *Queries) ListGames(ctx context.Context, userID int64) ([]Game, error) {
 			&i.EngineBlack,
 			&i.WhiteThinkTime,
 			&i.BlackThinkTime,
+			&i.TimeControl,
+			&i.Rated,
 			&i.Status,
+			&i.Result,
 			&i.Assessments,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPendingInvitesForUser = `-- name: ListPendingInvitesForUser :many
+SELECT id, from_user_id, to_user_id, time_control, rated, status, game_id,
+       created_at, expires_at, resolved_at
+FROM invites
+WHERE to_user_id = $1 AND status = 'pending' AND expires_at > NOW()
+ORDER BY created_at DESC
+`
+
+// The reconnect-handshake backlog query. Returns invites the user hasn't
+// yet acted on, newest first.
+func (q *Queries) ListPendingInvitesForUser(ctx context.Context, toUserID int64) ([]Invite, error) {
+	rows, err := q.db.QueryContext(ctx, listPendingInvitesForUser, toUserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Invite{}
+	for rows.Next() {
+		var i Invite
+		if err := rows.Scan(
+			&i.ID,
+			&i.FromUserID,
+			&i.ToUserID,
+			&i.TimeControl,
+			&i.Rated,
+			&i.Status,
+			&i.GameID,
+			&i.CreatedAt,
+			&i.ExpiresAt,
+			&i.ResolvedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPendingInvitesFromUser = `-- name: ListPendingInvitesFromUser :many
+SELECT id, from_user_id, to_user_id, time_control, rated, status, game_id,
+       created_at, expires_at, resolved_at
+FROM invites
+WHERE from_user_id = $1 AND status = 'pending' AND expires_at > NOW()
+ORDER BY created_at DESC
+`
+
+func (q *Queries) ListPendingInvitesFromUser(ctx context.Context, fromUserID int64) ([]Invite, error) {
+	rows, err := q.db.QueryContext(ctx, listPendingInvitesFromUser, fromUserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Invite{}
+	for rows.Next() {
+		var i Invite
+		if err := rows.Scan(
+			&i.ID,
+			&i.FromUserID,
+			&i.ToUserID,
+			&i.TimeControl,
+			&i.Rated,
+			&i.Status,
+			&i.GameID,
+			&i.CreatedAt,
+			&i.ExpiresAt,
+			&i.ResolvedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const searchUsersByPrefix = `-- name: SearchUsersByPrefix :many
+SELECT id, username, display_name, country, rating
+FROM users
+WHERE username ILIKE $1
+ORDER BY username
+LIMIT 10
+`
+
+type SearchUsersByPrefixRow struct {
+	ID          int64   `json:"id"`
+	Username    string  `json:"username"`
+	DisplayName string  `json:"display_name"`
+	Country     string  `json:"country"`
+	Rating      float32 `json:"rating"`
+}
+
+// For invite autocomplete. Case-insensitive prefix match, capped.
+func (q *Queries) SearchUsersByPrefix(ctx context.Context, username string) ([]SearchUsersByPrefixRow, error) {
+	rows, err := q.db.QueryContext(ctx, searchUsersByPrefix, username)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SearchUsersByPrefixRow{}
+	for rows.Next() {
+		var i SearchUsersByPrefixRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Username,
+			&i.DisplayName,
+			&i.Country,
+			&i.Rating,
 		); err != nil {
 			return nil, err
 		}
@@ -272,15 +650,57 @@ func (q *Queries) UpdateUserProfile(ctx context.Context, arg UpdateUserProfilePa
 	return err
 }
 
+const updateUserRating = `-- name: UpdateUserRating :exec
+UPDATE users
+SET rating       = $2,
+    rd           = $3,
+    volatility   = $4,
+    games_played = games_played + 1,
+    wins         = wins   + $5,
+    losses       = losses + $6,
+    draws        = draws  + $7
+WHERE id = $1
+`
+
+type UpdateUserRatingParams struct {
+	ID         int64   `json:"id"`
+	Rating     float32 `json:"rating"`
+	Rd         float32 `json:"rd"`
+	Volatility float32 `json:"volatility"`
+	Wins       int32   `json:"wins"`
+	Losses     int32   `json:"losses"`
+	Draws      int32   `json:"draws"`
+}
+
+// Glicko-2 outcome write. Called by the leader-elected rating updater
+// after a rated game completes. All four fields move atomically so we
+// never expose a half-updated rating to readers.
+func (q *Queries) UpdateUserRating(ctx context.Context, arg UpdateUserRatingParams) error {
+	_, err := q.db.ExecContext(ctx, updateUserRating,
+		arg.ID,
+		arg.Rating,
+		arg.Rd,
+		arg.Volatility,
+		arg.Wins,
+		arg.Losses,
+		arg.Draws,
+	)
+	return err
+}
+
 const upsertGame = `-- name: UpsertGame :exec
 INSERT INTO games (
-    id, user_id, fen, history, history_san,
+    id, user_id, white_user_id, black_user_id,
+    fen, history, history_san,
     engine_white, engine_black, white_think_time, black_think_time,
-    status, assessments, created_at, updated_at
+    time_control, rated, status, result, assessments,
+    created_at, updated_at
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 ON CONFLICT (id) DO UPDATE SET
     user_id          = EXCLUDED.user_id,
+    white_user_id    = EXCLUDED.white_user_id,
+    black_user_id    = EXCLUDED.black_user_id,
     fen              = EXCLUDED.fen,
     history          = EXCLUDED.history,
     history_san      = EXCLUDED.history_san,
@@ -288,31 +708,43 @@ ON CONFLICT (id) DO UPDATE SET
     engine_black     = EXCLUDED.engine_black,
     white_think_time = EXCLUDED.white_think_time,
     black_think_time = EXCLUDED.black_think_time,
+    time_control     = EXCLUDED.time_control,
+    rated            = EXCLUDED.rated,
     status           = EXCLUDED.status,
+    result           = EXCLUDED.result,
     assessments      = EXCLUDED.assessments,
     updated_at       = EXCLUDED.updated_at
 `
 
 type UpsertGameParams struct {
-	ID             string    `json:"id"`
-	UserID         int64     `json:"user_id"`
-	Fen            string    `json:"fen"`
-	History        string    `json:"history"`
-	HistorySan     string    `json:"history_san"`
-	EngineWhite    bool      `json:"engine_white"`
-	EngineBlack    bool      `json:"engine_black"`
-	WhiteThinkTime int32     `json:"white_think_time"`
-	BlackThinkTime int32     `json:"black_think_time"`
-	Status         string    `json:"status"`
-	Assessments    string    `json:"assessments"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ID             string        `json:"id"`
+	UserID         int64         `json:"user_id"`
+	WhiteUserID    sql.NullInt64 `json:"white_user_id"`
+	BlackUserID    sql.NullInt64 `json:"black_user_id"`
+	Fen            string        `json:"fen"`
+	History        string        `json:"history"`
+	HistorySan     string        `json:"history_san"`
+	EngineWhite    bool          `json:"engine_white"`
+	EngineBlack    bool          `json:"engine_black"`
+	WhiteThinkTime int32         `json:"white_think_time"`
+	BlackThinkTime int32         `json:"black_think_time"`
+	TimeControl    string        `json:"time_control"`
+	Rated          bool          `json:"rated"`
+	Status         string        `json:"status"`
+	Result         string        `json:"result"`
+	Assessments    string        `json:"assessments"`
+	CreatedAt      time.Time     `json:"created_at"`
+	UpdatedAt      time.Time     `json:"updated_at"`
 }
 
+// white_user_id / black_user_id supersede user_id but we keep both populated
+// during the Phase 1 transition. user_id will be dropped in a later migration.
 func (q *Queries) UpsertGame(ctx context.Context, arg UpsertGameParams) error {
 	_, err := q.db.ExecContext(ctx, upsertGame,
 		arg.ID,
 		arg.UserID,
+		arg.WhiteUserID,
+		arg.BlackUserID,
 		arg.Fen,
 		arg.History,
 		arg.HistorySan,
@@ -320,7 +752,10 @@ func (q *Queries) UpsertGame(ctx context.Context, arg UpsertGameParams) error {
 		arg.EngineBlack,
 		arg.WhiteThinkTime,
 		arg.BlackThinkTime,
+		arg.TimeControl,
+		arg.Rated,
 		arg.Status,
+		arg.Result,
 		arg.Assessments,
 		arg.CreatedAt,
 		arg.UpdatedAt,

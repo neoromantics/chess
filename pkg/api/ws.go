@@ -1,13 +1,18 @@
 package api
 
 import (
-	"encoding/json"
+	"context"
 	"log/slog"
 	"net/http"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/neoromantics/chess/pkg/auth"
+	"github.com/neoromantics/chess/pkg/bus"
+	"github.com/neoromantics/chess/pkg/db"
 )
 
 const (
@@ -25,95 +30,202 @@ var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 	CheckOrigin: func(r *http.Request) bool {
-		return true // In production, we should check origin
+		return true // TODO: production origin allowlist
 	},
 }
 
-// Client represents a single WebSocket connection.
+// channelKind tags a Client subscription so the hub knows which keyspace
+// (game vs user) the routing key lives in. Game and user IDs share no
+// keyspace today, but tagging makes the hub robust to that ever changing
+// — and makes the registry's debug output legible.
+type channelKind int
+
+const (
+	kindGame channelKind = iota
+	kindUser
+)
+
+// Client represents a single WebSocket connection. It is tied to exactly
+// one routing key (gameID or userID); a browser tab with both an open
+// game and a logged-in user header opens two separate WS connections.
 type Client struct {
 	hub  *Hub
 	conn *websocket.Conn
 	send chan []byte
 
-	gameID string
+	kind channelKind
+	key  string // gameID for kindGame, userID-as-string for kindUser
 }
 
-// Hub manages all active WebSocket connections.
+// Hub fans out cross-pod Redis pub/sub messages to locally-connected WS
+// clients. State is per-pod: every pod's hub has its own set of clients,
+// but every pod's hub also subscribes to the same Redis channels, so
+// publishing a single event reaches every client across the fleet.
+//
+// The hub does NOT hold any game state — it is purely a connection
+// registry plus a pub/sub bridge. This is what makes us multi-replica safe.
 type Hub struct {
-	// Registered clients, keyed by gameID then by client.
-	gameClients map[string]map[*Client]bool
+	bus *bus.Client
 
-	broadcast  chan broadcastMessage
+	mu       sync.RWMutex
+	gameSubs map[string]map[*Client]bool // gameID -> set of clients
+	userSubs map[string]map[*Client]bool // userID -> set of clients
+
 	register   chan *Client
 	unregister chan *Client
-
-	mu sync.RWMutex
 }
 
-type broadcastMessage struct {
-	gameID string
-	data   []byte
-}
-
-func NewHub() *Hub {
+func NewHub(b *bus.Client) *Hub {
 	return &Hub{
-		gameClients: make(map[string]map[*Client]bool),
-		broadcast:   make(chan broadcastMessage),
-		register:    make(chan *Client),
-		unregister:  make(chan *Client),
+		bus:        b,
+		gameSubs:   make(map[string]map[*Client]bool),
+		userSubs:   make(map[string]map[*Client]bool),
+		register:   make(chan *Client, 32),
+		unregister: make(chan *Client, 32),
 	}
 }
 
-func (h *Hub) Run() {
+// Run starts the registry pump and both Redis pattern subscribers.
+// Run blocks until ctx is cancelled.
+func (h *Hub) Run(ctx context.Context) {
+	// Cross-pod fan-out: every pod's hub subscribes to the same patterns,
+	// every publisher reaches every pod, each pod delivers to its own
+	// locally-attached WS clients only.
+	_ = h.bus.SubscribePattern(ctx, bus.GameEventGlob, func(channel string, payload []byte) {
+		id := strings.TrimPrefix(channel, bus.GameEventPrefix)
+		h.deliver(kindGame, id, payload)
+	})
+	_ = h.bus.SubscribePattern(ctx, bus.UserEventGlob, func(channel string, payload []byte) {
+		id := strings.TrimPrefix(channel, bus.UserEventPrefix)
+		h.deliver(kindUser, id, payload)
+	})
+
 	for {
 		select {
-		case client := <-h.register:
-			h.mu.Lock()
-			if h.gameClients[client.gameID] == nil {
-				h.gameClients[client.gameID] = make(map[*Client]bool)
-			}
-			h.gameClients[client.gameID][client] = true
-			h.mu.Unlock()
-			slog.Info("ws client registered", "game_id", client.gameID)
-
-		case client := <-h.unregister:
-			h.mu.Lock()
-			if clients, ok := h.gameClients[client.gameID]; ok {
-				if _, ok := clients[client]; ok {
-					delete(clients, client)
-					close(client.send)
-					if len(clients) == 0 {
-						delete(h.gameClients, client.gameID)
-					}
-				}
-			}
-			h.mu.Unlock()
-			slog.Info("ws client unregistered", "game_id", client.gameID)
-
-		case message := <-h.broadcast:
-			h.mu.RLock()
-			if clients, ok := h.gameClients[message.gameID]; ok {
-				for client := range clients {
-					select {
-					case client.send <- message.data:
-					default:
-						// If send buffer is full, unregister client non-blockingly
-						// Doing this inline would deadlock the Hub's Run() loop.
-						go func(c *Client) {
-							h.unregister <- c
-						}(client)
-					}
-				}
-			}
-			h.mu.RUnlock()
+		case <-ctx.Done():
+			return
+		case c := <-h.register:
+			h.add(c)
+		case c := <-h.unregister:
+			h.remove(c)
 		}
 	}
 }
 
-func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
+func (h *Hub) add(c *Client) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	bucket := h.bucketLocked(c.kind)
+	if bucket[c.key] == nil {
+		bucket[c.key] = make(map[*Client]bool)
+	}
+	bucket[c.key][c] = true
+	slog.Info("ws client registered", "kind", c.kind, "key", c.key, "subs", len(bucket[c.key]))
+}
+
+func (h *Hub) remove(c *Client) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	bucket := h.bucketLocked(c.kind)
+	if clients, ok := bucket[c.key]; ok {
+		if _, ok := clients[c]; ok {
+			delete(clients, c)
+			close(c.send)
+			if len(clients) == 0 {
+				delete(bucket, c.key)
+			}
+		}
+	}
+	slog.Info("ws client unregistered", "kind", c.kind, "key", c.key)
+}
+
+func (h *Hub) bucketLocked(k channelKind) map[string]map[*Client]bool {
+	if k == kindUser {
+		return h.userSubs
+	}
+	return h.gameSubs
+}
+
+// deliver pushes the payload to every locally-subscribed Client for the
+// given routing key. Non-blocking: if a client's send buffer is full,
+// it's evicted async — never block the bus subscriber goroutine.
+func (h *Hub) deliver(k channelKind, key string, payload []byte) {
+	h.mu.RLock()
+	bucket := h.bucketLocked(k)
+	clients := bucket[key]
+	targets := make([]*Client, 0, len(clients))
+	for c := range clients {
+		targets = append(targets, c)
+	}
+	h.mu.RUnlock()
+
+	for _, c := range targets {
+		select {
+		case c.send <- payload:
+		default:
+			// Slow client; evict so a stuck WS can't back-pressure the bus.
+			go func(c *Client) { h.unregister <- c }(c)
+		}
+	}
+}
+
+// Event is the cross-pod WS envelope. Type names are stable wire-protocol
+// names (state, hint, assess, invite, match_found, ...) — adding a new
+// type is additive; renaming breaks clients.
+type Event struct {
+	Type    string `json:"type"`
+	Payload any    `json:"payload"`
+}
+
+// PublishGame broadcasts a typed event to all clients (across all pods)
+// currently subscribed to gameID. This replaces the old in-process
+// Hub.BroadcastState which only reached this pod.
+func (h *Hub) PublishGame(ctx context.Context, gameID, eventType string, payload any) {
+	ch := bus.GameEventChannel(gameID)
+	if err := h.bus.Publish(ctx, ch, Event{Type: eventType, Payload: payload}); err != nil {
+		slog.Warn("ws publish failed", "channel", ch, "error", err)
+	}
+}
+
+// PublishUser broadcasts to all WS connections for a specific user, across
+// pods. Used for invites, match-found, friend events.
+func (h *Hub) PublishUser(ctx context.Context, userID int64, eventType string, payload any) {
+	ch := bus.UserEventChannel(userID)
+	if err := h.bus.Publish(ctx, ch, Event{Type: eventType, Payload: payload}); err != nil {
+		slog.Warn("ws publish failed", "channel", ch, "error", err)
+	}
+}
+
+// Shorthand: previous code called BroadcastState(gameID, snapshot) for
+// the dominant case of a "state" event. Keep the helper to minimise
+// handler churn during the migration.
+func (h *Hub) BroadcastState(gameID string, state any) {
+	h.PublishGame(context.Background(), gameID, "state", state)
+}
+
+func (h *Hub) BroadcastEvent(gameID, eventType string, payload any) {
+	h.PublishGame(context.Background(), gameID, eventType, payload)
+}
+
+// === HTTP entrypoints ===
+
+func (s *Server) handleWSGame(w http.ResponseWriter, r *http.Request) {
 	gameID := r.URL.Query().Get("game_id")
 	if gameID == "" {
-		http.Error(w, "missing game_id", 400)
+		http.Error(w, "missing game_id", http.StatusBadRequest)
+		return
+	}
+	// Authz: confirm the requesting user actually owns this game before
+	// subscribing them to its event stream. /api/state and friends already
+	// do this; without it here, a determined caller could watch any game.
+	rec, err := s.db.GetGame(gameID)
+	if err != nil {
+		http.Error(w, "game not found", http.StatusNotFound)
+		return
+	}
+	user, ok := auth.GetUser(r.Context())
+	if !ok || !userOwnsGame(user.UserID, rec) {
+		http.Error(w, "game not found", http.StatusNotFound)
 		return
 	}
 
@@ -122,13 +234,42 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		slog.Error("ws upgrade failed", "error", err)
 		return
 	}
+	c := &Client{hub: s.hub, conn: conn, send: make(chan []byte, 256), kind: kindGame, key: gameID}
+	s.hub.register <- c
+	go c.writePump()
+	go c.readPump()
+}
 
-	client := &Client{hub: s.hub, conn: conn, send: make(chan []byte, 256), gameID: gameID}
-	client.hub.register <- client
+func (s *Server) handleWSUser(w http.ResponseWriter, r *http.Request) {
+	user, ok := auth.GetUser(r.Context())
+	if !ok {
+		http.Error(w, "authentication required", http.StatusUnauthorized)
+		return
+	}
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		slog.Error("ws upgrade failed", "error", err)
+		return
+	}
+	c := &Client{hub: s.hub, conn: conn, send: make(chan []byte, 256), kind: kindUser, key: strconv.FormatInt(user.UserID, 10)}
+	s.hub.register <- c
+	go c.writePump()
+	go c.readPump()
+}
 
-	// Start read/write pumps
-	go client.writePump()
-	go client.readPump()
+// userOwnsGame is the unified ownership predicate. Will simplify when
+// migration 000004 drops the legacy user_id column.
+func userOwnsGame(userID int64, rec *db.GameRecord) bool {
+	if rec.UserID == userID {
+		return true
+	}
+	if rec.WhiteUserID != nil && *rec.WhiteUserID == userID {
+		return true
+	}
+	if rec.BlackUserID != nil && *rec.BlackUserID == userID {
+		return true
+	}
+	return false
 }
 
 func (c *Client) readPump() {
@@ -173,20 +314,4 @@ func (c *Client) writePump() {
 			}
 		}
 	}
-}
-
-// Event represents a structured WebSocket message.
-type Event struct {
-	Type    string `json:"type"`
-	Payload any    `json:"payload"`
-}
-
-func (h *Hub) BroadcastState(gameID string, state any) {
-	h.BroadcastEvent(gameID, "state", state)
-}
-
-func (h *Hub) BroadcastEvent(gameID string, eventType string, payload any) {
-	event := Event{Type: eventType, Payload: payload}
-	data, _ := json.Marshal(event)
-	h.broadcast <- broadcastMessage{gameID: gameID, data: data}
 }

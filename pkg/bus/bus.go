@@ -30,7 +30,28 @@ const (
 	EngineResponseChannel    = "engine.response"
 	EngineAbortChannel       = "engine.abort"
 	GameUpdatedChannel       = "game.updated"
+
+	// Channel-pattern prefixes used by the WS hub on every pod to fan out
+	// game and per-user events to locally-connected clients. The hub
+	// PSUBSCRIBE's the prefix once and demultiplexes by suffix.
+	GameEventPrefix = "game.evt."
+	UserEventPrefix = "user.evt."
+	GameEventGlob   = GameEventPrefix + "*"
+	UserEventGlob   = UserEventPrefix + "*"
 )
+
+// GameEventChannel returns the per-game pub/sub channel name.
+// Every move/state update flows through this channel so any pod with
+// WS clients for the game can fan out — solving the cross-pod-fanout
+// problem the in-process Hub had.
+func GameEventChannel(gameID string) string { return GameEventPrefix + gameID }
+
+// UserEventChannel returns the per-user pub/sub channel name. Used for
+// invites, match-found, and friend events that need to reach a specific
+// user regardless of which pod their WS lives on.
+func UserEventChannel(userID int64) string {
+	return fmt.Sprintf("%s%d", UserEventPrefix, userID)
+}
 
 // GameFinishedEvent represents the data sent when a game ends.
 type GameFinishedEvent struct {
@@ -118,6 +139,32 @@ func (c *Client) Subscribe(ctx context.Context, channel string, handler func(pay
 					return
 				}
 				handler([]byte(msg.Payload))
+			}
+		}
+	}()
+
+	return nil
+}
+
+// SubscribePattern is the PSUBSCRIBE-flavoured Subscribe. The handler is
+// invoked with both the resolved channel name (e.g. "game.evt.abc-123")
+// and the payload, so callers can demultiplex by gameID/userID without
+// re-parsing the prefix.
+func (c *Client) SubscribePattern(ctx context.Context, pattern string, handler func(channel string, payload []byte)) error {
+	pubsub := c.rdb.PSubscribe(ctx, pattern)
+
+	go func() {
+		defer pubsub.Close()
+		ch := pubsub.Channel()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case msg := <-ch:
+				if msg == nil {
+					return
+				}
+				handler(msg.Channel, []byte(msg.Payload))
 			}
 		}
 	}()

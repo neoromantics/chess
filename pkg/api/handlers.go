@@ -37,6 +37,39 @@ func (s *Server) setThinking(ctx context.Context, gameID string, val bool) {
 	}
 }
 
+// scheduleEngineTimeout is the API-side safety net for engine requests
+// whose worker died mid-search. Without it, the "thinking" flag persists
+// for its full 2-minute TTL and the user is stuck — UX bug we shipped
+// once and don't want to re-ship. After a generous budget (2× movetime
+// + 3s) we clear the flag and broadcast fresh state so clients unblock.
+//
+// This is intentionally a Phase 1 placeholder; the production answer is
+// Redis Streams + XCLAIM (Phase 5 hardening). The placeholder is good
+// enough: a worker crash takes one extra move-time to recover, not the
+// 2-minute eternity the original code shipped.
+func (s *Server) scheduleEngineTimeout(gameID string, movetime time.Duration) {
+	budget := 2*movetime + 3*time.Second
+	if budget < 5*time.Second {
+		budget = 5 * time.Second
+	}
+	time.AfterFunc(budget, func() {
+		if !s.isThinking(context.Background(), gameID) {
+			return // Worker responded; nothing to do.
+		}
+		slog.Warn("engine response timeout, clearing thinking flag", "game_id", gameID, "movetime", movetime)
+		s.setThinking(context.Background(), gameID, false)
+		s.broadcastEngineAbort(gameID)
+
+		// Re-snapshot from PG and broadcast to unstick the UI.
+		s.executeWithGameLock(context.Background(), gameID, func(entry *gameEntry) {
+			entry.mu.Lock()
+			snapshot := s.snapshotLocked(entry)
+			entry.mu.Unlock()
+			s.hub.BroadcastState(gameID, snapshot)
+		})
+	})
+}
+
 func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /health", s.handleHealth)
 
@@ -71,8 +104,13 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/replay.html", requireAuth(s.handleReplay))
 
 	// WS opens are auth-gated too; otherwise an anonymous browser could
-	// subscribe to a game's event stream.
-	s.mux.HandleFunc("GET /ws", requireAuth(s.handleWS))
+	// subscribe to a game's event stream. /ws/game/{game_id} carries game
+	// events; /ws/user carries per-user events (invites, match-found).
+	// /ws is kept as an alias for /ws/game so existing frontend clients
+	// don't break during the Phase-1 rollout.
+	s.mux.HandleFunc("GET /ws", requireAuth(s.handleWSGame))
+	s.mux.HandleFunc("GET /ws/game", requireAuth(s.handleWSGame))
+	s.mux.HandleFunc("GET /ws/user", requireAuth(s.handleWSUser))
 
 	s.mux.HandleFunc("POST /api/ping", s.handlePing)
 	s.mux.Handle("GET /assets/", http.FileServer(assetsFS))
@@ -784,7 +822,9 @@ func (s *Server) handleHint(w http.ResponseWriter, r *http.Request) {
 			s.setThinking(context.Background(), entry.id, false)
 			entry.mu.Unlock()
 			s.syncGameToDB(entry, nil)
+			return
 		}
+		s.scheduleEngineTimeout(entry.id, moveTime)
 	}()
 
 	w.WriteHeader(http.StatusAccepted)
@@ -854,7 +894,9 @@ func (s *Server) handleAssess(w http.ResponseWriter, r *http.Request) {
 			s.setThinking(context.Background(), entry.id, false)
 			entry.mu.Unlock()
 			s.syncGameToDB(entry, nil)
+			return
 		}
+		s.scheduleEngineTimeout(entry.id, moveTime)
 	}()
 
 	w.WriteHeader(http.StatusAccepted)
@@ -1085,9 +1127,10 @@ func (s *Server) maybeTriggerEngine(entry *gameEntry) {
 			s.setThinking(context.Background(), entry.id, false)
 			entry.mu.Unlock()
 			s.syncGameToDB(entry, nil)
-		} else {
-			slog.Info("engine request dispatched to worker", "game_id", entry.id, "movetime", moveTime)
+			return
 		}
+		slog.Info("engine request dispatched to worker", "game_id", entry.id, "movetime", moveTime)
+		s.scheduleEngineTimeout(entry.id, moveTime)
 	}()
 }
 
