@@ -16,6 +16,9 @@
 package metrics
 
 import (
+	"bufio"
+	"errors"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -81,6 +84,16 @@ func HTTPMiddleware(service string, next http.Handler) http.Handler {
 // statusRecorder is a minimal http.ResponseWriter wrapper so the
 // middleware can see what status code the handler chose. Avoids
 // depending on a fuller library.
+//
+// CRITICAL: a wrapper that embeds http.ResponseWriter only exposes
+// methods on the interface, NOT extra methods the concrete underlying
+// implementation has. Real Go HTTP responses also implement
+// http.Hijacker (gorilla/websocket needs it to take the underlying
+// connection) and http.Flusher (SSE / streaming need it). Forgetting
+// to forward Hijack() broke every WebSocket upgrade in the cluster
+// — symptoms: 'websocket: response does not implement http.Hijacker'
+// in logs and silent connection failures in the SPA. Don't remove
+// these forward methods.
 type statusRecorder struct {
 	http.ResponseWriter
 	status int
@@ -89,6 +102,25 @@ type statusRecorder struct {
 func (r *statusRecorder) WriteHeader(code int) {
 	r.status = code
 	r.ResponseWriter.WriteHeader(code)
+}
+
+// Hijack forwards to the underlying ResponseWriter so gorilla/websocket
+// can take over the connection during an Upgrade.
+func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	h, ok := r.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, errors.New("underlying ResponseWriter does not implement http.Hijacker")
+	}
+	return h.Hijack()
+}
+
+// Flush forwards to the underlying ResponseWriter for SSE / streaming
+// handlers. Not used today, but cheap insurance against the next
+// "middleware ate my streaming response" bug.
+func (r *statusRecorder) Flush() {
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 // templatize replaces obvious dynamic segments with :id. Best-effort
