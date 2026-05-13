@@ -127,6 +127,16 @@ func (s *GameService) handleState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Per-game authorization. Without this any signed-in user could
+	// read any game's state by guessing UUIDs. Don't leak existence
+	// to non-participants — return 404, not 403.
+	if uid, ok := authedUserID(r); ok {
+		if !userOwnsGame(uid, rec) {
+			http.Error(w, "game not found", 404)
+			return
+		}
+	}
+
 	// Rehydrate the game from the persisted FEN + move history so we
 	// can compute legal moves, last move, and check status for the
 	// snapshot. The arrays in the DB row are JSON strings; parse them
@@ -208,6 +218,12 @@ func (s *GameService) handleReplayData(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, "game not found", 404)
 		return
+	}
+	if uid, ok := authedUserID(r); ok {
+		if !userOwnsGame(uid, rec) {
+			http.Error(w, "game not found", 404)
+			return
+		}
 	}
 	var history []string
 	if rec.History != "" {
@@ -445,6 +461,24 @@ func (s *GameService) handleMakeMove(ctx context.Context, cmd eventbus.Command) 
 	if err := json.Unmarshal(cmd.Payload, &payload); err != nil {
 		return
 	}
+
+	// Serialize per-game state mutations across all replicas. Without
+	// this two pods consuming the same stream can race a single game.
+	// 10s TTL covers the slowest expected mutation (engine search +
+	// PG roundtrip); release happens on every exit path.
+	lock, lockErr := acquireGameLock(ctx, s.bus.Rdb(), cmd.GameID, 10*time.Second)
+	if lockErr != nil {
+		slog.Error("lock acquire failed", "game_id", cmd.GameID, "error", lockErr)
+		return
+	}
+	if lock == nil {
+		// Another writer has it. Re-enqueue would risk reorderings; for
+		// the consumer path we just drop and let the stream ack — the
+		// other holder is processing this very command.
+		slog.Warn("makemove: lock held by another writer", "game_id", cmd.GameID)
+		return
+	}
+	defer lock.release(context.Background())
 
 	rec, err := s.db.GetGame(cmd.GameID)
 	if err != nil {

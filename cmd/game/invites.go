@@ -53,6 +53,22 @@ func authedUserID(r *http.Request) (int64, bool) {
 	return id, true
 }
 
+// userOwnsGame returns true if userID is a participant of the game
+// record. Used at every game-keyed endpoint so a signed-in user can't
+// read or write someone else's games via guessable UUIDs.
+func userOwnsGame(userID int64, rec *db.GameRecord) bool {
+	if rec == nil || userID == 0 {
+		return false
+	}
+	if rec.WhiteUserID != nil && *rec.WhiteUserID == userID {
+		return true
+	}
+	if rec.BlackUserID != nil && *rec.BlackUserID == userID {
+		return true
+	}
+	return false
+}
+
 func (s *GameService) wireInvite(inv *db.Invite) inviteWire {
 	w := inviteWire{
 		ID:          inv.ID.String(),
