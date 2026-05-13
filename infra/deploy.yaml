@@ -1,5 +1,8 @@
 ---
-# === POSTGRES ===
+# ==============================================================================
+# 1. PERSISTENCE LAYER (Postgres & Redis)
+# ==============================================================================
+
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -68,18 +71,7 @@ spec:
   ports:
   - port: 5432
     targetPort: 5432
----
-# === REDIS ===
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: chess-redis-config
-data:
-  redis.conf: |
-    appendonly yes
-    appendfsync everysec
-    maxmemory 200mb
-    maxmemory-policy allkeys-lru
+
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -110,12 +102,10 @@ spec:
       containers:
       - name: redis
         image: redis:7-alpine
-        args: ["/etc/redis/redis.conf"]
+        args: ["--appendonly", "yes"]
         ports:
         - containerPort: 6379
         volumeMounts:
-        - name: config
-          mountPath: /etc/redis
         - name: data
           mountPath: /data
         readinessProbe:
@@ -124,9 +114,6 @@ spec:
           initialDelaySeconds: 3
           periodSeconds: 5
       volumes:
-      - name: config
-        configMap:
-          name: chess-redis-config
       - name: data
         persistentVolumeClaim:
           claimName: chess-redis-pvc
@@ -141,8 +128,12 @@ spec:
   ports:
   - port: 6379
     targetPort: 6379
+
+# ==============================================================================
+# 2. NETWORKING LAYER (Ingress & Gateway)
+# ==============================================================================
+
 ---
-# === INGRESS WITH TLS ===
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -151,12 +142,9 @@ metadata:
     cert-manager.io/cluster-issuer: letsencrypt-prod
     traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
     traefik.ingress.kubernetes.io/router.middlewares: chess-redirect-https@kubernetescrd
-    traefik.ingress.kubernetes.io/service.sticky.cookie: "true"
-    traefik.ingress.kubernetes.io/service.sticky.cookie.name: "chess_api_pod"
 spec:
   tls:
-  - hosts:
-    - vcm-50800.vm.duke.edu
+  - hosts: [vcm-50800.vm.duke.edu]
     secretName: chess-tls
   rules:
   - host: vcm-50800.vm.duke.edu
@@ -179,13 +167,7 @@ spec:
     scheme: https
     permanent: true
 
-# ==============================================================================
-# UNIFIED PLATFORM MICROSERVICES
-# All services use the same image but with different binary entrypoints.
-# ==============================================================================
-
 ---
-# === GATEWAY ===
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -200,14 +182,12 @@ spec:
       labels:
         app: chess-gateway
     spec:
-      imagePullSecrets:
-      - name: ghcr-auth
+      imagePullSecrets: [{name: ghcr-auth}]
       containers:
       - name: gateway
         image: ghcr.io/neoromantics/chess:latest
         command: ["./gateway"]
-        ports:
-        - containerPort: 8080
+        ports: [{containerPort: 8080}]
         env:
         - name: PORT
           value: "8080"
@@ -218,9 +198,7 @@ spec:
         - name: GAME_SERVICE_URL
           value: http://chess-game-service:80
         readinessProbe:
-          httpGet:
-            path: /health
-            port: 8080
+          httpGet: {path: /health, port: 8080}
           initialDelaySeconds: 5
           periodSeconds: 10
 ---
@@ -235,8 +213,12 @@ spec:
   - port: 80
     targetPort: 8080
 
+# ==============================================================================
+# 3. MICROSERVICES FLEET (Unified Platform Image)
+# ==============================================================================
+
 ---
-# === USER SERVICE ===
+# USER SERVICE
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -251,45 +233,27 @@ spec:
       labels:
         app: chess-user-service
     spec:
-      imagePullSecrets:
-      - name: ghcr-auth
+      imagePullSecrets: [{name: ghcr-auth}]
       containers:
       - name: user-service
         image: ghcr.io/neoromantics/chess:latest
         command: ["./user-service"]
-        ports:
-        - containerPort: 8081
+        ports: [{containerPort: 8081}]
         env:
         - name: PORT
           value: "8081"
         - name: POSTGRES_USER
-          valueFrom:
-            secretKeyRef:
-              name: chess-secrets
-              key: POSTGRES_USER
+          valueFrom: {secretKeyRef: {name: chess-secrets, key: POSTGRES_USER}}
         - name: POSTGRES_DB
-          valueFrom:
-            secretKeyRef:
-              name: chess-secrets
-              key: POSTGRES_DB
+          valueFrom: {secretKeyRef: {name: chess-secrets, key: POSTGRES_DB}}
         - name: POSTGRES_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: chess-secrets
-              key: POSTGRES_PASSWORD
+          valueFrom: {secretKeyRef: {name: chess-secrets, key: POSTGRES_PASSWORD}}
         - name: DATABASE_URL
           value: "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@chess-db:5432/$(POSTGRES_DB)?sslmode=disable"
         - name: JWT_SECRET
-          valueFrom:
-            secretKeyRef:
-              name: chess-secrets
-              key: JWT_SECRET
+          valueFrom: {secretKeyRef: {name: chess-secrets, key: JWT_SECRET}}
         readinessProbe:
-          httpGet:
-            path: /health
-            port: 8081
-          initialDelaySeconds: 5
-          periodSeconds: 10
+          httpGet: {path: /health, port: 8081}
 ---
 apiVersion: v1
 kind: Service
@@ -298,12 +262,10 @@ metadata:
 spec:
   selector:
     app: chess-user-service
-  ports:
-  - port: 80
-    targetPort: 8081
+  ports: [{port: 80, targetPort: 8081}]
 
 ---
-# === GAME SERVICE ===
+# GAME SERVICE
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -318,40 +280,25 @@ spec:
       labels:
         app: chess-game-service
     spec:
-      imagePullSecrets:
-      - name: ghcr-auth
+      imagePullSecrets: [{name: ghcr-auth}]
       containers:
       - name: game-service
         image: ghcr.io/neoromantics/chess:latest
         command: ["./game-service"]
-        ports:
-        - containerPort: 8080
+        ports: [{containerPort: 8080}]
         env:
         - name: REDIS_URL
           value: chess-redis:6379
         - name: POSTGRES_USER
-          valueFrom:
-            secretKeyRef:
-              name: chess-secrets
-              key: POSTGRES_USER
+          valueFrom: {secretKeyRef: {name: chess-secrets, key: POSTGRES_USER}}
         - name: POSTGRES_DB
-          valueFrom:
-            secretKeyRef:
-              name: chess-secrets
-              key: POSTGRES_DB
+          valueFrom: {secretKeyRef: {name: chess-secrets, key: POSTGRES_DB}}
         - name: POSTGRES_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: chess-secrets
-              key: POSTGRES_PASSWORD
+          valueFrom: {secretKeyRef: {name: chess-secrets, key: POSTGRES_PASSWORD}}
         - name: DATABASE_URL
           value: "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@chess-db:5432/$(POSTGRES_DB)?sslmode=disable"
         readinessProbe:
-          httpGet:
-            path: /health
-            port: 8080
-          initialDelaySeconds: 5
-          periodSeconds: 10
+          httpGet: {path: /health, port: 8080}
 ---
 apiVersion: v1
 kind: Service
@@ -360,12 +307,10 @@ metadata:
 spec:
   selector:
     app: chess-game-service
-  ports:
-  - port: 80
-    targetPort: 8080
+  ports: [{port: 80, targetPort: 8080}]
 
 ---
-# === MATCHMAKER ===
+# MATCHMAKER
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -380,23 +325,17 @@ spec:
       labels:
         app: chess-matchmaker
     spec:
-      imagePullSecrets:
-      - name: ghcr-auth
+      imagePullSecrets: [{name: ghcr-auth}]
       containers:
       - name: matchmaker
         image: ghcr.io/neoromantics/chess:latest
         command: ["./matchmaker"]
-        ports:
-        - containerPort: 8080
+        ports: [{containerPort: 8080}]
         env:
         - name: REDIS_URL
           value: chess-redis:6379
         readinessProbe:
-          httpGet:
-            path: /health
-            port: 8080
-          initialDelaySeconds: 5
-          periodSeconds: 10
+          httpGet: {path: /health, port: 8080}
 ---
 apiVersion: v1
 kind: Service
@@ -405,13 +344,10 @@ metadata:
 spec:
   selector:
     app: chess-matchmaker
-  ports:
-  - port: 80
-    targetPort: 8080
-
+  ports: [{port: 80, targetPort: 8080}]
 
 ---
-# === RATING UPDATER ===
+# RATING UPDATER
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -426,30 +362,21 @@ spec:
       labels:
         app: chess-rating-updater
     spec:
-      imagePullSecrets:
-      - name: ghcr-auth
+      imagePullSecrets: [{name: ghcr-auth}]
       containers:
       - name: rating-updater
         image: ghcr.io/neoromantics/chess:latest
         command: ["./rating-updater"]
+        ports: [{containerPort: 8080}]
         env:
         - name: REDIS_URL
           value: chess-redis:6379
         - name: POSTGRES_USER
-          valueFrom:
-            secretKeyRef:
-              name: chess-secrets
-              key: POSTGRES_USER
+          valueFrom: {secretKeyRef: {name: chess-secrets, key: POSTGRES_USER}}
         - name: POSTGRES_DB
-          valueFrom:
-            secretKeyRef:
-              name: chess-secrets
-              key: POSTGRES_DB
+          valueFrom: {secretKeyRef: {name: chess-secrets, key: POSTGRES_DB}}
         - name: POSTGRES_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: chess-secrets
-              key: POSTGRES_PASSWORD
+          valueFrom: {secretKeyRef: {name: chess-secrets, key: POSTGRES_PASSWORD}}
         - name: DATABASE_URL
           value: "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@chess-db:5432/$(POSTGRES_DB)?sslmode=disable"
 ---
@@ -460,12 +387,10 @@ metadata:
 spec:
   selector:
     app: chess-rating-updater
-  ports:
-  - port: 80
-    targetPort: 8080
+  ports: [{port: 80, targetPort: 8080}]
 
 ---
-# === ENGINE WORKER ===
+# ENGINE WORKER
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -480,8 +405,7 @@ spec:
       labels:
         app: chess-worker
     spec:
-      imagePullSecrets:
-      - name: ghcr-auth
+      imagePullSecrets: [{name: ghcr-auth}]
       containers:
       - name: worker
         image: ghcr.io/neoromantics/chess:latest
@@ -490,9 +414,5 @@ spec:
         - name: REDIS_URL
           value: chess-redis:6379
         resources:
-          requests:
-            cpu: 1000m
-            memory: 256Mi
-          limits:
-            cpu: 1000m
-            memory: 256Mi
+          requests: {cpu: 500m, memory: 256Mi}
+          limits: {cpu: 1000m, memory: 512Mi}
