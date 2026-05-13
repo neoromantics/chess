@@ -36,6 +36,23 @@ A multiplayer chess platform built in Go + Vue 3 + Postgres + Redis, deployed to
 
 Three pods scale horizontally; engine-worker has its own autoscaling profile because chess search is CPU-asymmetric. Everything else (profiles, invites, matchmaking, ratings) shares the same data and lives in the gateway or game-service binary.
 
+## What works today
+
+- Sign up / log in / log out with JWT cookies; profile + stats + password change.
+- Play against the engine — pick your think-time per game, engine plays back live (no refresh).
+- Play against another human — invite by username, or use **Find Game** matchmaking with the time-control picker. Board auto-flips for the black player.
+- Live move + last-move highlight + "engine thinking" spinner all push over WebSocket; never need to refresh during a game.
+- Resign at any time.
+- Replay any finished game frame-by-frame.
+- Server-side Glicko-2 rating computed on every rated game finish (verification against the reference paper is queued).
+
+## What's missing (see [ROADMAP.md](ROADMAP.md) for the full list)
+
+- **Game clocks.** Bullet / blitz / rapid are configured but `white_time` / `black_time` aren't yet server-authoritative — the only timer today is engine think-time. Highest-impact item.
+- Draw offers and takeback requests (SPA buttons exist; backend endpoints not yet wired).
+- Spectator mode (read-only WS subscription to public games).
+- Redis HA via Sentinel — deferred until the cluster has a second node.
+
 ## Wire-protocol contract
 
 Every HTTP endpoint, WebSocket event type, and JSON payload shape is enumerated in **`pkg/wire/CONTRACT.md`**. The convention is to edit that doc in the same commit as any new wire surface; backend constants and frontend listeners reference it.

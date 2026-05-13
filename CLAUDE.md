@@ -75,10 +75,11 @@ All Command/Event types live in `pkg/eventbus/eventbus.go`. Adding a new type is
 - **Per-game lock (Redis `game:lock:{id}`, SETNX + token + Lua release).** Every code path that reads-then-writes a game's row must hold this lock for the duration. With N replicas of game-service consuming the same Redis Stream, the round-robin delivery does NOT partition by game_id; two MakeMove commands for the same game could otherwise race. See `acquireGameLock` in cmd/game/lock.go.
 - **Gateway injects `?user_id=N` into proxied requests.** Downstream services trust this query param and do not re-validate JWTs. See `injectAuthedUser` in cmd/gateway/main.go. Letting the frontend supply `user_id` would let any caller read anyone's games.
 - **Per-game authorization at every game-keyed endpoint.** `userOwnsGame(uid, rec)` is the predicate; non-participants get 404 (not 403) so existence doesn't leak. The WS upgrade gate pre-flights /api/state with the user_id injected to enforce the same check.
-- **Only gateway and user-service get `JWT_SECRET`** (see infra/deploy.yaml). Other services don't validate tokens; they're behind the gateway.
+- **Only gateway gets `JWT_SECRET`** (see infra/deploy.yaml). Gateway is the only place JWTs are signed/verified; game-service and engine-worker trust the gateway-injected `?user_id=N` query param instead.
 - **Frontend is embedded only in the gateway binary** (`cmd/gateway/dist/` via `go:embed`). Other services that need a built asset (e.g. game-service's replay JSON) compose with the gateway, which substitutes templates.
 - **`pkg/core` is zero-dependency, pure Go.** The chess engine search is the core IP; do not introduce deps there.
-- **Postgres is durable truth; Redis is the hot cache.** (When the cache layer lands — currently in progress.) Reads go Redis-first with PG fallback; writes go write-through. Don't store game state in process memory — that breaks multi-replica.
+- **Postgres is durable truth; Redis is the hot cache.** Game rows live in `game:state:{id}` as a Redis hash, write-through to PG. Reads go Redis-first with PG fallback. Don't store game state in process memory — that breaks multi-replica. See `cmd/game/cache.go`.
+- **Any HTTP middleware that wraps `http.ResponseWriter` MUST forward `Hijack()` and `Flush()`.** `gorilla/websocket` needs `Hijack()` to take over the TCP connection during Upgrade; SSE/streaming responses need `Flush()`. Forgetting this is silent at compile time and breaks every WebSocket handler at runtime with `websocket: response does not implement http.Hijacker`. See `pkg/metrics/metrics.go:statusRecorder` for the canonical pattern.
 
 ## Common operations
 
@@ -113,7 +114,8 @@ CI does this in the backend job to avoid an npm round-trip when only Go changed.
 
 - **Secrets live in k3s**, owned by the cluster. Bootstrap a fresh cluster with `./infra/bootstrap-secrets.sh` (random openssl-generated values). Rotate via `kubectl edit secret chess-secrets -n chess` then `kubectl rollout restart …`.
 - **CI never sees prod secrets.** The deploy job is `kubectl apply -k infra/` + `kubectl rollout restart`. The self-hosted runner runs on the VM.
-- All manifests live in `infra/deploy.yaml` (a single file with all six services + ingress + PVCs + ConfigMaps). Kustomize at `infra/kustomization.yaml` sets `namespace: chess`.
+- All manifests live in `infra/deploy.yaml` (a single file with all three services + ingress + PVCs). Kustomize at `infra/kustomization.yaml` sets `namespace: chess`.
+- **Postgres `max_connections` is raised to 500** via `args: ["-c", "max_connections=500"]` on the chess-db Deployment. 6 services × 2 replicas × 25 max conns = 300 ceiling — we tried PGBouncer but burned four deploy cycles on broken Docker Hub tags; tuning PG itself is the simpler win at this scale.
 - **Rotating Postgres credentials requires also wiping `chess-db-pvc`**, since Postgres only honors `POSTGRES_USER`/`PASSWORD` on the first init of the data dir.
 
 ## Production debugging cheatsheet
@@ -136,26 +138,39 @@ kubectl get deploy chess-gateway -o jsonpath='{.spec.template.spec.containers[0]
 ```
 
 Common failure modes and where to look:
-- `502 Bad Gateway` on `/api/auth/*` — user-service crash-looping or its Service has no endpoints
+- **Every WebSocket call fails silently** ("doesn't update live", "refresh required", browser DevTools shows WS connections in red) — almost always an HTTP middleware wrapping `http.ResponseWriter` without forwarding `Hijack()`. Gateway logs show `websocket: response does not implement http.Hijacker`. Fix: every wrapper in the middleware chain must implement `http.Hijacker` (and `http.Flusher`). The metrics middleware bit us this way once; see `pkg/metrics/metrics.go:statusRecorder`.
+- `502 Bad Gateway` on `/api/auth/*` — gateway pod crash-looping (it owns auth now, not a separate user-service)
 - All Postgres-touching services crash-looping with `28P01` — credential drift; usually means the chess-db PVC was initialized with different credentials than `chess-secrets` now holds. Fix: wipe PVC + redeploy
 - Worker stuck in `Completed` — pre-fix this was `runtime.NumCPU()` oversubscribing or tty-auto-detect entering UCI mode. Both are fixed; if it returns, something in cmd/engine-worker/main.go is exiting cleanly without an error
 - 401 "unauthorized" everywhere after signup works — gateway is missing `JWT_SECRET` env, so its `loadSecret()` falls back to an ephemeral random key
+- Engine plays but its move never reaches the SPA — historically because `engine:results` was Pub/Sub (lossy under restart); now a durable Stream. If it regresses, check the consumer-group reader in `cmd/game/main.go:listenToEngineResults`
+- Image pull failures pinning a public pgbouncer / bitnami / ... tag — Docker Hub's tag publishing is unreliable. Either pin a verified digest, switch images, or in our case (low scale) skip the dependency entirely. See the in-line comment under "PGBOUNCER" in `infra/deploy.yaml`
 
 ## Things explicitly left as follow-ups
 
-Real gaps surfaced during debugging or load reasoning:
+The full status board lives in `ROADMAP.md`. The high-impact open items at a glance:
 
-**Production hardening (queued, prioritized):**
-- **PGBouncer** in front of Postgres. Current connection-pool math: 6 services × 2 replicas × 25 max conns = 300 vs PG's default 100. Sustained load → `too many connections`. Drop-in fix via `edoburu/pgbouncer` deployment + `DATABASE_URL` rewrite.
-- **Redis Sentinel** (3 sentinels + primary + replica). Single Redis today = full-platform SPOF. AOF helps durability, doesn't help failover.
-- **Redis hot cache** for game state (`game:state:{id}` hash). Eliminates the PG round-trip on `/api/state` and the GetGame inside every mutation. Drops read latency ~10×; halves PG load.
+**Product / chess features (next):**
+- **Server-authoritative clocks for PvP** — biggest missing piece. Blitz/bullet require a real clock; today only engine think-time exists.
+- **Draw offer / accept / decline** — SidePanel already emits the events; needs backend endpoints + WS round-trip.
+- **Takeback request / accept** — same shape as draw.
+
+**Production hardening:**
+- **Redis Sentinel** — Single Redis is a full-platform SPOF; AOF gives durability but not failover. Requires multi-node cluster to be meaningful.
 - **KEDA** on `engine:requests` stream length as the engine-worker HPA signal (currently CPU utilization, which is a proxy).
 - **PG read replicas** for ListGames / search / replay queries.
+- **Prometheus + Grafana** — metrics are emitted; nothing scrapes them yet.
+- **CI grep-check** for wire-contract drift against `pkg/wire/CONTRACT.md`.
 
-**Product / chess features:**
-- Server-authoritative clocks for PvP (the `Thinking` flag is now a Redis sentinel key; clocks need their own per-game keys)
-- Matchmaker uses naïve `ZRange 0 2`; needs expanding rating window over time
-- `rating-updater` has minimal Glicko-2 wiring; verify against the reference paper's worked example before trusting it
+**Verification:**
+- `rating-updater` has minimal Glicko-2 wiring; verify against the reference paper's worked example before trusting it.
+- Matchmaker uses naïve `ZRange 0 1`; needs expanding rating-window logic before serious use.
 
-**Architecture review (done):**
-- 6 → 3 pod consolidation shipped. user-service folded into gateway, matchmaker + rating-updater folded into game-service. CLAUDE.md now reflects the 3-pod reality.
+**Done this session (for context — don't repeat):**
+- Hot cache for game state (`game:state:{id}` Redis hash, write-through)
+- 6 → 3 pod consolidation (user/matchmaker/rating-updater folded in)
+- WebSocket Hijacker fix in metrics middleware (root cause of every "doesn't update live" symptom)
+- Sync HTTP for all single-game mutations; SPA wire contract aligned
+- Per-game lock + ownership authz; side-to-move authz on /api/move
+- Resign endpoint; auto-flip for black player
+- `pkg/wire/CONTRACT.md` as the canonical wire-protocol doc

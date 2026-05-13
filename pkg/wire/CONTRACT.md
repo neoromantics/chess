@@ -59,8 +59,8 @@ game row.
 ### Matchmaking & invites
 | Method | Path | Auth | Owner | Frontend caller |
 |---|---|---|---|---|
-| POST | `/api/matchmaking/join` | 🔐 | gateway → matchmaker (Cmd) | `api.joinQueue` |
-| POST | `/api/matchmaking/leave` | 🔐 | gateway → matchmaker (Cmd) | `api.leaveQueue` |
+| POST | `/api/matchmaking/join` | 🔐 | gateway → game-svc (Cmd via `game:commands`) | `api.joinQueue` |
+| POST | `/api/matchmaking/leave` | 🔐 | gateway → game-svc (Cmd via `game:commands`) | `api.leaveQueue` |
 | GET | `/api/invites/pending` | 🔐 | gateway → game-svc | `api.listPendingInvites` |
 | POST | `/api/invites/send` | 🔐 | gateway → game-svc | `api.sendInvite` |
 | POST | `/api/invites/{id}/accept` | 🔐 | gateway → game-svc | `api.acceptInvite` |
@@ -108,6 +108,15 @@ Three keyspaces with different durability semantics. Don't mix them.
 Every WS frame is `{type: string, payload: any}`. The SPA listeners
 demultiplex on `type` exact-match. **Renaming any of these is a wire-
 protocol break** — bump the SPA simultaneously.
+
+⚠️ **Middleware that wraps `http.ResponseWriter` must forward
+`http.Hijacker` (and ideally `http.Flusher`).** `gorilla/websocket`
+needs `Hijack()` to take over the TCP connection during `Upgrade`.
+A wrapper that embeds `http.ResponseWriter` only exposes interface
+methods, NOT the concrete underlying implementation's `Hijack()`.
+Forgetting this breaks every WS upgrade silently with
+`websocket: response does not implement http.Hijacker`. See
+`pkg/metrics/metrics.go:statusRecorder` for the canonical pattern.
 
 ### `/ws?game_id=X` (game.evt.{id})
 
