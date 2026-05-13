@@ -423,6 +423,14 @@ const onSquare = async (sq: Square) => {
   }
 
   if (!state.value || state.value.thinking || state.value.engine_to_move || state.value.status !== 'ongoing') return;
+  // In a PvP game, ignore clicks while it's the opponent's turn. The
+  // backend rejects mismatched moves with 409 "it is not your turn"
+  // but silent-no-op is the better UX — chess players read board
+  // non-responsiveness as "not my turn" naturally.
+  if (myColor.value !== null) {
+    const myFirst = myColor.value === 'white' ? 'w' : 'b';
+    if (state.value.turn !== myFirst) return;
+  }
 
   if (state.value.touch_move) {
     const touched = state.value.touched_square;
