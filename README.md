@@ -31,7 +31,15 @@ Six independent microservices coordinate via **Event Sourcing** and **Redis Stre
 | `just logs-game` | Watch the authoritative game logic logs |
 
 ### Production Deployment
-The platform uses **GitHub Actions** with a **Self-Hosted Runner** to deploy directly to the k3s cluster. Manifests in `infra/kustomize` are rendered and applied locally on the VM without requiring exposed inbound ports or SSH keys. Secrets are managed via a local `.env` and injected into the cluster manifests during deployment.
+The platform uses **GitHub Actions** with a **Self-Hosted Runner** to deploy directly to the k3s cluster. Manifests in `infra/` are rendered and applied locally on the VM without requiring exposed inbound ports or SSH keys.
+
+**Secrets are owned by the cluster, not by CI.** On a fresh VM, bootstrap once:
+```bash
+./infra/bootstrap-secrets.sh
+```
+This creates the `chess-secrets` Secret (Postgres creds + JWT signing key) in the `chess` namespace using `openssl`-generated random values. CI's deploy job only runs `kubectl apply -k infra/` and `kubectl rollout restart` — it never sees the secret values, and rotating a secret means editing the live Secret with `kubectl` rather than pushing a code commit.
+
+Rotating Postgres credentials additionally requires wiping the `chess-db` PVC, since Postgres only honors `POSTGRES_USER`/`POSTGRES_PASSWORD` on the first init of the data directory.
 
 ## 🗺 Roadmap
 - ✅ **6-Pod Microservices Fleet**: Successfully transitioned from legacy monolith.

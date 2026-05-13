@@ -101,26 +101,24 @@ jobs:
           cache-to: type=gha,mode=max
 
   # --- Secure Deployment (Self-Hosted Runner) ---
+  # The runner only ships manifests + restarts pods. It never sees any
+  # application secrets — chess-secrets is bootstrapped on the VM via
+  # infra/bootstrap-secrets.sh and owned by the cluster from then on.
+  # To rotate a secret: kubectl edit secret chess-secrets -n chess,
+  # then kubectl rollout restart the affected deployments.
   deploy:
     runs-on: self-hosted
     needs: [docker]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Deploy Unified Fleet
         run: |
-          # 1. Recreate .env from individual secrets
-          echo "POSTGRES_USER=${{ secrets.POSTGRES_USER }}" > .env
-          echo "POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> .env
-          echo "POSTGRES_DB=${{ secrets.POSTGRES_DB }}" >> .env
-          echo "JWT_SECRET=${{ secrets.JWT_SECRET }}" >> .env
-          
-          # 2. Render and apply manifests (Standard Rolling Update)
-          kubectl kustomize infra --load-restrictor LoadRestrictionsNone | kubectl apply -f -
-          
-          # 3. Force rollout restart to ensure latest image tags are pulled
-          kubectl rollout restart deployment chess-gateway chess-user-service chess-game-service chess-matchmaker chess-rating-updater chess-worker -n chess
+          kubectl apply -k infra/
+          kubectl -n chess rollout restart deployment \
+            chess-gateway chess-user-service chess-game-service \
+            chess-matchmaker chess-rating-updater chess-worker
 
 
 

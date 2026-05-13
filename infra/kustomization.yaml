@@ -6,7 +6,6 @@ namespace: chess
 resources:
   - deploy.yaml
 
-secretGenerator:
-  - name: chess-secrets
-    envs:
-      - ../.env
+# chess-secrets is bootstrapped on the VM via infra/bootstrap-secrets.sh
+# and then owned by the cluster, never touched by CI. To rotate, edit
+# the live Secret with kubectl + rollout restart.
