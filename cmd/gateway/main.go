@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"log"
+	"log/slog"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -17,6 +20,7 @@ import (
 
 type Gateway struct {
 	userSvcURL *url.URL
+	gameSvcURL *url.URL
 	bus        *eventbus.Client
 	hub        *Hub
 }
@@ -54,6 +58,7 @@ func main() {
 
 	gw := &Gateway{
 		userSvcURL: userSvcURL,
+		gameSvcURL: gameSvcURL,
 		bus:        bus,
 		hub:        hub,
 	}
@@ -106,6 +111,12 @@ func main() {
 	// injectAuthedUser appends ?user_id=N so game-service knows the
 	// caller without re-validating JWTs.
 	mux.Handle("/api/invites/", gw.injectAuthedUser(gameProxy))
+
+	// 5c. Replay. Gateway owns the embedded replay.html template;
+	// game-service supplies the per-ply JSON frames. We substitute the
+	// placeholder and serve a single HTML doc — same UX as the old
+	// monolith's handleReplay, just split across two services.
+	mux.HandleFunc("GET /api/replay.html", gw.handleReplay)
 
 	// 6. WebSockets
 	mux.HandleFunc("/ws", gw.handleWSGame)
@@ -198,6 +209,56 @@ func (gw *Gateway) handleJoinQueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusAccepted)
+}
+
+// handleReplay serves a self-contained replay HTML page for a given
+// game. The replay.html in cmd/gateway/dist carries the literal token
+// "REPLAY_DATA_PLACEHOLDER" inside a <script id="replay-data"> tag;
+// Replay.vue's onMounted reads from that element. We substitute the
+// token with the live ReplayFrame JSON fetched from game-service so
+// the SPA boots with the data already inline (no second roundtrip
+// after page load).
+//
+// Auth is intentionally NOT required here. The replay payload is just
+// the move history of an already-existing game; lock this down later
+// if/when we add private games or anti-scrape concerns.
+func (gw *Gateway) handleReplay(w http.ResponseWriter, r *http.Request) {
+	gameID := r.URL.Query().Get("game_id")
+	if gameID == "" {
+		http.Error(w, "missing game_id", http.StatusBadRequest)
+		return
+	}
+
+	// Pull the JSON frames from game-service.
+	dataURL := *gw.gameSvcURL
+	dataURL.Path = "/api/replay"
+	q := dataURL.Query()
+	q.Set("game_id", gameID)
+	dataURL.RawQuery = q.Encode()
+	resp, err := http.Get(dataURL.String())
+	if err != nil {
+		slog.Warn("replay: fetch frames failed", "error", err)
+		http.Error(w, "replay unavailable", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		http.Error(w, "game not found", resp.StatusCode)
+		return
+	}
+	frames, err := io.ReadAll(resp.Body)
+	if err != nil {
+		http.Error(w, "replay read failed", http.StatusBadGateway)
+		return
+	}
+
+	// Substitute the placeholder. The template is small (~hundreds of
+	// bytes after Vite's singlefile inline plugin) so a single
+	// bytes.Replace is fine; if it ever grows, switch to text/template.
+	html := bytes.Replace(replayHTML, []byte(replayDataPlaceholder), frames, 1)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write(html)
 }
 
 func (gw *Gateway) handleLeaveQueue(w http.ResponseWriter, r *http.Request) {

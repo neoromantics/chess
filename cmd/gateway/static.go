@@ -12,16 +12,29 @@ import (
 //go:embed all:dist
 var frontendDist embed.FS
 
+// replayDataPlaceholder is the literal token inside dist/replay.html
+// that handleReplay rewrites with the game's ReplayFrame JSON before
+// serving. Kept in sync with frontend/replay.html.
+const replayDataPlaceholder = "REPLAY_DATA_PLACEHOLDER"
+
 var (
-	indexHTML []byte
-	assetsFS  http.FileSystem
+	indexHTML  []byte
+	replayHTML []byte
+	assetsFS   http.FileSystem
 )
 
 func init() {
 	var err error
 	indexHTML, err = frontendDist.ReadFile("dist/index.html")
 	if err != nil {
-		indexHTML = []byte("<html><body>Frontend not built. Run 'just build'</body></html>")
+		indexHTML = []byte("<html><body>Frontend not built.</body></html>")
+	}
+
+	replayHTML, err = frontendDist.ReadFile("dist/replay.html")
+	if err != nil {
+		// Stub keeps the route alive even if the replay build step is
+		// skipped (e.g. a dummy frontend in a backend-only CI run).
+		replayHTML = []byte("<html><body>Replay not built.</body></html>")
 	}
 
 	sub, err := fs.Sub(frontendDist, "dist")

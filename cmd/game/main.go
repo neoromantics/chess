@@ -64,6 +64,7 @@ func main() {
 		})
 		mux.HandleFunc("/api/state", s.handleState)
 		mux.HandleFunc("/api/games", s.handleListGames)
+		mux.HandleFunc("/api/replay", s.handleReplayData)
 
 		mux.HandleFunc("POST /api/invites/send", s.handleSendInvite)
 		mux.HandleFunc("GET /api/invites/pending", s.handleListPendingInvites)
@@ -172,6 +173,7 @@ func (s *GameService) handleState(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// note: see handleReplayData below for the dedicated replay frames endpoint
 	writeJSON(w, stateJSON{
 		FEN:            gm.Board.FEN(),
 		Turn:           turn,
@@ -191,6 +193,29 @@ func (s *GameService) handleState(w http.ResponseWriter, r *http.Request) {
 		BlackThinkTime: rec.BlackThinkTime,
 		Assessments:    assessments,
 	})
+}
+
+// handleReplayData returns the per-ply ReplayFrame slice for a single
+// game so the gateway's replay.html template substitution has something
+// to embed. Pure JSON; gateway is responsible for wrapping it in HTML.
+func (s *GameService) handleReplayData(w http.ResponseWriter, r *http.Request) {
+	gameID := r.URL.Query().Get("game_id")
+	if gameID == "" {
+		http.Error(w, "missing game_id", 400)
+		return
+	}
+	rec, err := s.db.GetGame(gameID)
+	if err != nil {
+		http.Error(w, "game not found", 404)
+		return
+	}
+	var history []string
+	if rec.History != "" {
+		_ = json.Unmarshal([]byte(rec.History), &history)
+	}
+	gm := game.NewGame()
+	gm.Load(rec.FEN, history, rec.EngineWhite, rec.EngineBlack)
+	writeJSON(w, gm.ReplayData())
 }
 
 func (s *GameService) handleListGames(w http.ResponseWriter, r *http.Request) {
