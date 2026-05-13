@@ -326,49 +326,12 @@ spec:
   ports: [{port: 80, targetPort: 8080}]
 
 ---
-# MATCHMAKER
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: chess-matchmaker
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: chess-matchmaker
-  template:
-    metadata:
-      labels:
-        app: chess-matchmaker
-    spec:
-      imagePullSecrets: [{name: ghcr-auth}]
-      containers:
-      - name: matchmaker
-        image: ghcr.io/neoromantics/chess:latest
-        command: ["./matchmaker"]
-        ports: [{containerPort: 8080}]
-        env:
-        - name: REDIS_URL
-          value: chess-redis:6379
-        readinessProbe:
-          httpGet: {path: /health, port: 8080}
-        resources:
-          requests: {cpu: 50m, memory: 64Mi}
-          limits: {cpu: 200m, memory: 128Mi}
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: chess-matchmaker
-  annotations:
-    prometheus.io/scrape: "true"
-    prometheus.io/port: "8080"
-    prometheus.io/path: "/metrics"
-spec:
-  selector:
-    app: chess-matchmaker
-  ports: [{port: 80, targetPort: 8080}]
-
+# chess-matchmaker was retired in the 6→3 pod consolidation. The
+# pairing loop now runs as a Redis-leader-elected goroutine inside
+# game-service. Operator action after this lands:
+#   kubectl -n chess delete deploy chess-matchmaker
+#   kubectl -n chess delete svc chess-matchmaker
+#
 ---
 # RATING UPDATER
 apiVersion: apps/v1

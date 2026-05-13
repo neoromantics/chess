@@ -43,7 +43,6 @@ jobs:
         run: |
           go build -o /dev/null ./cmd/gateway
           go build -o /dev/null ./cmd/game
-          go build -o /dev/null ./cmd/matchmaker
           go build -o /dev/null ./cmd/rating-updater
           go build -o chess-worker ./cmd/engine-worker
 
@@ -117,7 +116,7 @@ jobs:
           kubectl apply -k infra/
           kubectl -n chess rollout restart deployment \
             chess-gateway chess-game-service \
-            chess-matchmaker chess-rating-updater chess-worker
+            chess-rating-updater chess-worker
 
 
 

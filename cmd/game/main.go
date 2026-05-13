@@ -97,6 +97,10 @@ func main() {
 	slog.Info("Game Service starting (Command Processor)...")
 	go s.listenToEngineResults(ctx)
 	go s.runInviteSweeper(ctx)
+	// Matchmaker absorbed from the former cmd/matchmaker pod. The
+	// pairing loop is Redis-leader-elected so multiple game-service
+	// replicas don't race the queue. See cmd/game/matchmaker.go.
+	go s.runPairingLoop(ctx)
 	s.Run(ctx)
 }
 
@@ -411,6 +415,10 @@ func (s *GameService) processCommand(ctx context.Context, msg redis.XMessage) {
 		s.handleHint(ctx, cmd)
 	case eventbus.CmdAssess:
 		s.handleAssess(ctx, cmd)
+	case eventbus.CmdJoinQueue:
+		s.handleJoinQueue(ctx, cmd)
+	case eventbus.CmdLeaveQueue:
+		s.handleLeaveQueue(ctx, cmd)
 	default:
 		slog.Warn("unknown command type", "type", cmd.Type)
 	}
