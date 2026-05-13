@@ -98,6 +98,7 @@ func main() {
 	// service holds the per-game lock and owns the snapshot synthesis.
 	// See CLAUDE.md ("Streams vs HTTP") for why these aren't Commands.
 	mux.Handle("POST /api/move", gw.injectAuthedUser(gameProxy))
+	mux.Handle("POST /api/resign", gw.injectAuthedUser(gameProxy))
 	mux.Handle("POST /api/new", gw.injectAuthedUser(gameProxy))
 	mux.Handle("POST /api/set_players", gw.injectAuthedUser(gameProxy))
 	mux.Handle("POST /api/undo", gw.injectAuthedUser(gameProxy))

@@ -207,6 +207,7 @@ func (s *GameService) triggerEngineForMove(rec *db.GameRecord, gm *game.Game) {
 // ===== MOVE =====
 
 func (s *GameService) handleHTTPMove(w http.ResponseWriter, r *http.Request) {
+	uid, _ := authedUserID(r) // requireGameAccess upstream guarantees this exists
 	s.withLockedMutation(w, r, func(gm *game.Game, rec *db.GameRecord) error {
 		var req struct {
 			Move string `json:"move"`
@@ -220,6 +221,20 @@ func (s *GameService) handleHTTPMove(w http.ResponseWriter, r *http.Request) {
 		if gm.EngineToMove() {
 			return userErr(http.StatusConflict, "it is the engine's turn")
 		}
+		// Side-to-move authz. requireGameAccess proves the caller is
+		// SOME participant; this proves they're the side currently
+		// allowed to move. Without it, the white player could send
+		// a black move on the black player's turn and the server
+		// would happily apply it.
+		if gm.Board.SideToMove == core.White {
+			if rec.WhiteUserID == nil || *rec.WhiteUserID != uid {
+				return userErr(http.StatusConflict, "it is not your turn")
+			}
+		} else {
+			if rec.BlackUserID == nil || *rec.BlackUserID != uid {
+				return userErr(http.StatusConflict, "it is not your turn")
+			}
+		}
 		m, err := gm.Board.ParseUCIMove(req.Move)
 		if err != nil {
 			return userErr(http.StatusBadRequest, "invalid move format")
@@ -231,6 +246,70 @@ func (s *GameService) handleHTTPMove(w http.ResponseWriter, r *http.Request) {
 		gm.PlayMove(matched)
 		return nil
 	})
+}
+
+// ===== RESIGN =====
+//
+// Resign is a terminal mutation that doesn't change the *position* —
+// only the row's status/result fields. withLockedMutation derives
+// status from gm.Status() (still "ongoing" — pieces haven't moved),
+// so resign needs its own path that bypasses the gm-derived save.
+// We still take the per-game lock + ownership check, then flip the
+// row directly and broadcast a terminal snapshot.
+
+func (s *GameService) handleHTTPResign(w http.ResponseWriter, r *http.Request) {
+	rec, uid, ok := s.requireGameAccess(w, r)
+	if !ok {
+		return
+	}
+	lock, err := acquireGameLock(r.Context(), s.bus.Rdb(), rec.ID, gameLockTTL)
+	if err != nil {
+		http.Error(w, "lock acquire failed", http.StatusInternalServerError)
+		return
+	}
+	if lock == nil {
+		http.Error(w, "another writer is mutating this game; retry", http.StatusConflict)
+		return
+	}
+	defer lock.release(context.Background())
+
+	rec, err = s.getGameCached(r.Context(), rec.ID)
+	if err != nil {
+		http.Error(w, "game not found", http.StatusNotFound)
+		return
+	}
+	if rec.Status != "ongoing" {
+		http.Error(w, "game is already finished", http.StatusConflict)
+		return
+	}
+	switch {
+	case rec.WhiteUserID != nil && *rec.WhiteUserID == uid:
+		rec.Result = "0-1"
+	case rec.BlackUserID != nil && *rec.BlackUserID == uid:
+		rec.Result = "1-0"
+	default:
+		http.Error(w, "resign requires a human-vs-human game", http.StatusBadRequest)
+		return
+	}
+	rec.Status = "resign"
+	rec.UpdatedAt = time.Now()
+	if err := s.saveGameCached(r.Context(), rec); err != nil {
+		slog.Error("resign save failed", "game_id", rec.ID, "error", err)
+		http.Error(w, "save failed", http.StatusInternalServerError)
+		return
+	}
+
+	snapshot := s.snapshotFromRecord(r.Context(), rec)
+	snapPayload, _ := json.Marshal(snapshot)
+	// Two events: StateUpdated for the SPA to repaint, GameFinished for
+	// the durable stream so rating-updater fires.
+	_, _ = s.bus.EmitEvent(r.Context(), eventbus.Event{
+		Type: eventbus.EvtStateUpdated, GameID: rec.ID, Payload: snapPayload,
+	})
+	_, _ = s.bus.EmitEvent(r.Context(), eventbus.Event{
+		Type: eventbus.EvtGameFinished, GameID: rec.ID, Payload: snapPayload,
+	})
+	writeJSON(w, snapshot)
 }
 
 // ===== NEW (reset same row) =====

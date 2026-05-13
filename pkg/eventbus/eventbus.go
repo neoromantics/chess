@@ -111,16 +111,41 @@ type CancelInviteCmd struct {
 	InviteID string `json:"invite_id"`
 }
 
-// Event types
+// Event types.
+//
+// Naming convention: events published on the per-user pub/sub channels
+// (user.evt.{id}) use snake_case so the SPA's Pinia stores can listen
+// for them directly. Events on per-game channels (game.evt.{id}) and
+// durable streams (game:events) use CamelCase historically; the SPA's
+// GameView accepts both forms for those.
 const (
-	EvtMovePlayed      = "MovePlayed"
-	EvtGameFinished    = "GameFinished"
-	EvtMatchFound      = "MatchFound"
-	EvtInviteSent      = "InviteSent"
-	EvtInviteAccepted  = "InviteAccepted"
-	EvtInviteDeclined  = "InviteDeclined"
-	EvtInviteCancelled = "InviteCancelled"
+	// Game-channel events (game.evt.{id} + game:events stream)
+	EvtMovePlayed   = "MovePlayed"
+	EvtGameFinished = "GameFinished"
+	EvtGameStarted  = "GameStarted"
+	EvtStateUpdated = "StateUpdated"
+
+	// User-channel events (user.evt.{id}). snake_case matches what
+	// every Pinia store .on()s for. Renaming any of these is a
+	// wire-protocol break across backend services and the SPA stores.
+	EvtMatchFound      = "match_found"
+	EvtInviteCreated   = "invite_created"
+	EvtInviteSent      = "invite_sent"
+	EvtInviteAccepted  = "invite_accepted"
+	EvtInviteDeclined  = "invite_declined"
+	EvtInviteCancelled = "invite_cancelled"
+	EvtInviteExpired   = "invite_expired"
 )
+
+// MatchFoundEvt is the payload published on each paired user's
+// user.evt.{id} channel. color is the recipient's color in the new
+// game so the SPA can flip the board orientation immediately.
+type MatchFoundEvt struct {
+	GameID      string `json:"game_id"`
+	WhiteUserID int64  `json:"white_user_id"`
+	BlackUserID int64  `json:"black_user_id"`
+	Color       string `json:"color"` // "white" or "black", from the recipient's POV
+}
 
 // Event payloads
 type MovePlayedEvt struct {
@@ -136,12 +161,6 @@ type MovePlayedEvt struct {
 type GameFinishedEvt struct {
 	Status string `json:"status"`
 	Result string `json:"result"`
-}
-
-type MatchFoundEvt struct {
-	GameID      string `json:"game_id"`
-	WhiteUserID int64  `json:"white_user_id"`
-	BlackUserID int64  `json:"black_user_id"`
 }
 
 type InviteSentEvt struct {

@@ -71,6 +71,7 @@ func main() {
 		// shared lock + ownership pattern. These are the contract the
 		// monolith exposed; the SPA was written for them.
 		mux.HandleFunc("POST /api/move", s.handleHTTPMove)
+		mux.HandleFunc("POST /api/resign", s.handleHTTPResign)
 		mux.HandleFunc("POST /api/new", s.handleHTTPNew)
 		mux.HandleFunc("POST /api/set_players", s.handleHTTPSetPlayers)
 		mux.HandleFunc("POST /api/undo", s.handleHTTPUndo)
@@ -114,6 +115,7 @@ type stateJSON struct {
 	EngineBlack    bool      `json:"engine_black"`
 	EngineToMove   bool      `json:"engine_to_move"`
 	Status         string    `json:"status"`
+	Result         string    `json:"result"`
 	InCheck        bool      `json:"in_check"`
 	LegalMoves     []string  `json:"legal_moves"`
 	History        []string  `json:"history"`
@@ -125,6 +127,14 @@ type stateJSON struct {
 	WhiteThinkTime int       `json:"white_think_time"`
 	BlackThinkTime int       `json:"black_think_time"`
 	Assessments    []any     `json:"assessments"`
+
+	// Player metadata so the SPA can decide which color the caller is,
+	// flip the board for the black player, and show "you vs opponent".
+	// nil pointers mean that side is an engine, not a human.
+	WhiteUserID *int64 `json:"white_user_id"`
+	BlackUserID *int64 `json:"black_user_id"`
+	TimeControl string `json:"time_control"`
+	Rated       bool   `json:"rated"`
 }
 
 type moveJSON struct {
@@ -219,6 +229,7 @@ func (s *GameService) snapshotFromRecord(ctx context.Context, rec *db.GameRecord
 		EngineBlack:    gm.EngineBlack,
 		EngineToMove:   gm.EngineToMove(),
 		Status:         string(gm.Status()),
+		Result:         rec.Result,
 		InCheck:        gm.Board.InCheck(gm.Board.SideToMove),
 		LegalMoves:     legalStrs,
 		History:        history,
@@ -230,6 +241,10 @@ func (s *GameService) snapshotFromRecord(ctx context.Context, rec *db.GameRecord
 		WhiteThinkTime: rec.WhiteThinkTime,
 		BlackThinkTime: rec.BlackThinkTime,
 		Assessments:    assessments,
+		WhiteUserID:    rec.WhiteUserID,
+		BlackUserID:    rec.BlackUserID,
+		TimeControl:    rec.TimeControl,
+		Rated:          rec.Rated,
 	}
 }
 

@@ -78,6 +78,9 @@ export const api = {
     method: 'POST',
     body: JSON.stringify({ move })
   }),
+  resign: (gameId: string) => request<StateJSON>(`/api/resign?game_id=${gameId}`, {
+    method: 'POST',
+  }),
   
   newGame: (gameId: string, engine_white: boolean, engine_black: boolean) => request<StateJSON>(`/api/new?game_id=${gameId}`, {
     method: 'POST',

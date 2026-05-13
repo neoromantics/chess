@@ -159,14 +159,8 @@ func (s *Matchmaker) tryPair(ctx context.Context, tc string) {
 	gameID := uuid.New().String()
 	slog.Info("match found", "u1", u1, "u2", u2, "game_id", gameID)
 
-	// Emit MatchFound event
-	evtPayload, _ := json.Marshal(eventbus.MatchFoundEvt{
-		GameID:      gameID,
-		WhiteUserID: u1,
-		BlackUserID: u2,
-	})
-
-	// Dispatch game creation to Game Service
+	// Dispatch game creation to Game Service first so the row exists by
+	// the time clients navigate to /game/{id}.
 	createPayload, _ := json.Marshal(eventbus.CreatePvPGameCmd{
 		WhiteUserID: u1,
 		BlackUserID: u2,
@@ -179,13 +173,30 @@ func (s *Matchmaker) tryPair(ctx context.Context, tc string) {
 		Payload: createPayload,
 	})
 
-	s.bus.EmitEvent(ctx, eventbus.Event{
-		Type:    eventbus.EvtMatchFound,
-		GameID:  gameID,
-		Payload: evtPayload,
+	// Per-user push for SPA redirection. Each recipient gets a payload
+	// with THEIR color so the frontend can flip the board immediately
+	// instead of waiting for /api/state. The payload-per-recipient
+	// pattern means we marshal twice.
+	whitePayload, _ := json.Marshal(eventbus.MatchFoundEvt{
+		GameID: gameID, WhiteUserID: u1, BlackUserID: u2, Color: "white",
+	})
+	blackPayload, _ := json.Marshal(eventbus.MatchFoundEvt{
+		GameID: gameID, WhiteUserID: u1, BlackUserID: u2, Color: "black",
+	})
+	s.bus.PublishUserEvent(ctx, u1, eventbus.Event{
+		Type: eventbus.EvtMatchFound, GameID: gameID, Payload: whitePayload,
+	})
+	s.bus.PublishUserEvent(ctx, u2, eventbus.Event{
+		Type: eventbus.EvtMatchFound, GameID: gameID, Payload: blackPayload,
 	})
 
-	// Also push targeted events to users for frontend redirection
-	s.bus.PublishUserEvent(ctx, u1, eventbus.Event{Type: eventbus.EvtMatchFound, GameID: gameID})
-	s.bus.PublishUserEvent(ctx, u2, eventbus.Event{Type: eventbus.EvtMatchFound, GameID: gameID})
+	// Audit-trail emission to game.evt + the durable stream. Frontend
+	// doesn't consume game-channel MatchFound today; this is purely for
+	// the rating-updater and future audit consumers.
+	auditPayload, _ := json.Marshal(eventbus.MatchFoundEvt{
+		GameID: gameID, WhiteUserID: u1, BlackUserID: u2,
+	})
+	s.bus.EmitEvent(ctx, eventbus.Event{
+		Type: eventbus.EvtMatchFound, GameID: gameID, Payload: auditPayload,
+	})
 }

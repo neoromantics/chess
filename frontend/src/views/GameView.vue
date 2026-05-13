@@ -100,6 +100,7 @@ import PromoModal from '../components/PromoModal.vue';
 import { PIECE, ASSESS_COLORS, ASSESS_SYMBOL, parseBoard } from '../constants';
 import { api } from '../api';
 import { useToastStore } from '../stores/toast';
+import { useAuthStore } from '../stores/auth';
 import { StateJSON, Square } from '../types';
 
 const props = defineProps<{
@@ -107,6 +108,16 @@ const props = defineProps<{
 }>();
 
 const toastStore = useToastStore();
+const authStore = useAuthStore();
+
+// True once we've auto-oriented the board for the current user. Without
+// this guard the orientation would re-flip on every state update,
+// fighting the user if they manually toggle Flip.
+let didAutoOrient = false;
+
+// User's color in this game, or null in engine-only / spectator views.
+// Computed once we've seen the first StateJSON.
+const myColor = ref<'white' | 'black' | null>(null);
 const state = ref<StateJSON | null>(null);
 const error = ref<string | null>(null);
 const selected = ref<string | null>(null);
@@ -224,6 +235,18 @@ const updateState = (s: StateJSON) => {
   whiteThinkTime.value = s.white_think_time;
   blackThinkTime.value = s.black_think_time;
 
+  // First payload after mount: figure out which color the current user
+  // is playing (if any) and flip the board so their pieces are on the
+  // near side. After this we leave 'flipped' alone — the manual Flip
+  // button keeps working.
+  if (!didAutoOrient && authStore.user) {
+    const me = authStore.user.id;
+    if (s.white_user_id === me) myColor.value = 'white';
+    else if (s.black_user_id === me) myColor.value = 'black';
+    if (myColor.value === 'black') flipped.value = true;
+    didAutoOrient = true;
+  }
+
   if (s.assessments) {
     s.assessments.forEach((a: any) => {
       assessments[a.index] = a;
@@ -254,8 +277,20 @@ const connectWS = () => {
   ws.onmessage = (event) => {
     try {
       const data = JSON.parse(event.data);
-      if (data.type === 'state') {
+      // Backend emits a few different event types over game.evt.{id}:
+      //   - 'state' / 'StateUpdated'  full StateJSON snapshot (every HTTP
+      //                                mutation in cmd/game/handlers.go)
+      //   - 'MovePlayed'              delta event from the engine-result
+      //                                consumer path; payload is partial
+      //   - 'GameStarted'             new game row was written; no state
+      //                                snapshot in the payload
+      // For the delta/no-payload variants we just re-fetch /api/state,
+      // which gives us the canonical full snapshot at a small latency
+      // cost. The 'state' variants apply directly.
+      if (data.type === 'state' || data.type === 'StateUpdated') {
         updateState(data.payload);
+      } else if (data.type === 'MovePlayed' || data.type === 'GameStarted') {
+        api.getState(props.id).then(updateState).catch(() => {});
       } else if (data.type === 'hint') {
         onHintReceived(data.payload);
       } else if (data.type === 'assess') {

@@ -146,12 +146,12 @@ func (s *GameService) handleSendInvite(w http.ResponseWriter, r *http.Request) {
 	pubPayload, _ := json.Marshal(wire)
 	// Recipient sees the durable PG row + a live push.
 	s.bus.PublishUserEvent(r.Context(), recipient.ID, eventbus.Event{
-		Type:    "InviteCreated",
+		Type:    eventbus.EvtInviteCreated,
 		Payload: pubPayload,
 	})
 	// Sender gets a confirmation echo for their own outgoing list.
 	s.bus.PublishUserEvent(r.Context(), from, eventbus.Event{
-		Type:    "InviteSent",
+		Type:    eventbus.EvtInviteSent,
 		Payload: pubPayload,
 	})
 	writeJSON(w, wire)
@@ -214,8 +214,8 @@ func (s *GameService) handleAcceptInvite(w http.ResponseWriter, r *http.Request)
 	}
 	wire := s.wireInvite(updated)
 	pubPayload, _ := json.Marshal(wire)
-	s.bus.PublishUserEvent(r.Context(), inv.FromUserID, eventbus.Event{Type: "InviteAccepted", Payload: pubPayload})
-	s.bus.PublishUserEvent(r.Context(), inv.ToUserID, eventbus.Event{Type: "InviteAccepted", Payload: pubPayload})
+	s.bus.PublishUserEvent(r.Context(), inv.FromUserID, eventbus.Event{Type: eventbus.EvtInviteAccepted, Payload: pubPayload})
+	s.bus.PublishUserEvent(r.Context(), inv.ToUserID, eventbus.Event{Type: eventbus.EvtInviteAccepted, Payload: pubPayload})
 	slog.Info("invite accepted", "id", id, "game_id", gameID, "white", inv.FromUserID, "black", inv.ToUserID)
 	writeJSON(w, wire)
 }
@@ -278,8 +278,8 @@ func (s *GameService) handleDeclineInvite(w http.ResponseWriter, r *http.Request
 	if inv, err := s.db.GetInvite(id); err == nil && inv != nil {
 		wire := s.wireInvite(inv)
 		payload, _ := json.Marshal(wire)
-		s.bus.PublishUserEvent(r.Context(), inv.FromUserID, eventbus.Event{Type: "InviteDeclined", Payload: payload})
-		s.bus.PublishUserEvent(r.Context(), inv.ToUserID, eventbus.Event{Type: "InviteDeclined", Payload: payload})
+		s.bus.PublishUserEvent(r.Context(), inv.FromUserID, eventbus.Event{Type: eventbus.EvtInviteDeclined, Payload: payload})
+		s.bus.PublishUserEvent(r.Context(), inv.ToUserID, eventbus.Event{Type: eventbus.EvtInviteDeclined, Payload: payload})
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -308,8 +308,8 @@ func (s *GameService) handleCancelInvite(w http.ResponseWriter, r *http.Request)
 	if inv, err := s.db.GetInvite(id); err == nil && inv != nil {
 		wire := s.wireInvite(inv)
 		payload, _ := json.Marshal(wire)
-		s.bus.PublishUserEvent(r.Context(), inv.FromUserID, eventbus.Event{Type: "InviteCancelled", Payload: payload})
-		s.bus.PublishUserEvent(r.Context(), inv.ToUserID, eventbus.Event{Type: "InviteCancelled", Payload: payload})
+		s.bus.PublishUserEvent(r.Context(), inv.FromUserID, eventbus.Event{Type: eventbus.EvtInviteCancelled, Payload: payload})
+		s.bus.PublishUserEvent(r.Context(), inv.ToUserID, eventbus.Event{Type: eventbus.EvtInviteCancelled, Payload: payload})
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -381,8 +381,8 @@ func (s *GameService) runInviteSweeper(ctx context.Context) {
 				inv := &expired[i]
 				wire := s.wireInvite(inv)
 				payload, _ := json.Marshal(wire)
-				s.bus.PublishUserEvent(ctx, inv.FromUserID, eventbus.Event{Type: "InviteExpired", Payload: payload})
-				s.bus.PublishUserEvent(ctx, inv.ToUserID, eventbus.Event{Type: "InviteExpired", Payload: payload})
+				s.bus.PublishUserEvent(ctx, inv.FromUserID, eventbus.Event{Type: eventbus.EvtInviteExpired, Payload: payload})
+				s.bus.PublishUserEvent(ctx, inv.ToUserID, eventbus.Event{Type: eventbus.EvtInviteExpired, Payload: payload})
 			}
 		}
 	}
