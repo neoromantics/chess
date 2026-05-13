@@ -108,12 +108,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Nuclear Cleanup (Namespace Reset)
-        run: |
-          # Forcefully remove all resources to prevent split-brain with old pods
-          kubectl delete all --all -n chess || true
-          kubectl delete ingress --all -n chess || true
-
       - name: Deploy Unified Fleet
         run: |
           # 1. Recreate .env for Kustomize
@@ -121,6 +115,10 @@ jobs:
 
           # 2. Render and apply manifests
           kubectl kustomize infra --load-restrictor LoadRestrictionsNone | kubectl apply -f -
+          
+          # 3. Force rollout restart to pick up latest image tags immediately
+          kubectl rollout restart deployment chess-gateway chess-user-service chess-game-service chess-matchmaker chess-rating-updater chess-worker -n chess
+
 
 
 
