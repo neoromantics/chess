@@ -162,30 +162,22 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # --- Remote Deployment ---
+  # --- Secure Deployment (Self-Hosted Runner) ---
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: [docker]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v4
-      - name: Deploy to k3s via SSH (Push Manifests)
+      
+      - name: Deploy to Local k3s
         run: |
           # 1. Recreate .env for Kustomize
           echo "${{ secrets.PROD_ENV_FILE }}" > .env
           
-          # 2. Render manifests locally
-          kubectl kustomize infra/kustomize/overlays/prod > manifest.yaml
+          # 2. Render and apply manifests using the runner's local kubectl
+          kubectl kustomize infra/kustomize/overlays/prod --load-restrictor LoadRestrictionsNone | kubectl apply -f -
           
-          # 3. Setup SSH
-          mkdir -p ~/.ssh
-          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -H ${{ secrets.DEPLOY_SSH_HOST }} >> ~/.ssh/known_hosts
-          
-          # 4. Pipe manifest to remote kubectl
-          ssh ${{ secrets.DEPLOY_SSH_USER }}@${{ secrets.DEPLOY_SSH_HOST }} "kubectl apply -f -" < manifest.yaml
-          
-          # 5. Force rollout restart
-          ssh ${{ secrets.DEPLOY_SSH_USER }}@${{ secrets.DEPLOY_SSH_HOST }} "kubectl rollout restart deployment chess-gateway chess-user-service chess-game-service chess-matchmaker chess-rating-updater chess-worker -n chess"
+          # 3. Force rollout restart
+          kubectl rollout restart deployment chess-gateway chess-user-service chess-game-service chess-matchmaker chess-rating-updater chess-worker -n chess
 

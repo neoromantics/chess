@@ -31,7 +31,7 @@ Six independent microservices coordinate via **Event Sourcing** and **Redis Stre
 | `just logs-game` | Watch the authoritative game logic logs |
 
 ### Production Deployment
-The platform uses **GitHub Actions** to deploy to a remote k3s cluster. Manifests in `infra/kustomize` are rendered locally and piped to the cluster via SSH. Secrets are managed via a local `.env` and injected into the cluster manifests during deployment.
+The platform uses **GitHub Actions** with a **Self-Hosted Runner** to deploy directly to the k3s cluster. Manifests in `infra/kustomize` are rendered and applied locally on the VM without requiring exposed inbound ports or SSH keys. Secrets are managed via a local `.env` and injected into the cluster manifests during deployment.
 
 ## 🗺 Roadmap
 - ✅ **6-Pod Microservices Fleet**: Successfully transitioned from legacy monolith.
