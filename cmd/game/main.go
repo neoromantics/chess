@@ -66,6 +66,21 @@ func main() {
 		mux.HandleFunc("/api/games", s.handleListGames)
 		mux.HandleFunc("/api/replay", s.handleReplayData)
 
+		// Sync game-mutation HTTP. See cmd/game/handlers.go for the
+		// shared lock + ownership pattern. These are the contract the
+		// monolith exposed; the SPA was written for them.
+		mux.HandleFunc("POST /api/move", s.handleHTTPMove)
+		mux.HandleFunc("POST /api/new", s.handleHTTPNew)
+		mux.HandleFunc("POST /api/set_players", s.handleHTTPSetPlayers)
+		mux.HandleFunc("POST /api/undo", s.handleHTTPUndo)
+		mux.HandleFunc("POST /api/touch", s.handleHTTPTouch)
+		mux.HandleFunc("POST /api/touch_move", s.handleHTTPTouchMove)
+		mux.HandleFunc("POST /api/load", s.handleHTTPLoad)
+		mux.HandleFunc("DELETE /api/games/delete", s.handleHTTPDelete)
+		mux.HandleFunc("GET /api/save", s.handleHTTPSave)
+		mux.HandleFunc("POST /api/hint", s.handleHTTPHint)
+		mux.HandleFunc("POST /api/assess", s.handleHTTPAssess)
+
 		mux.HandleFunc("POST /api/invites/send", s.handleSendInvite)
 		mux.HandleFunc("GET /api/invites/pending", s.handleListPendingInvites)
 		mux.HandleFunc("POST /api/invites/{id}/accept", s.handleAcceptInvite)
@@ -120,13 +135,11 @@ func (s *GameService) handleState(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing game_id", 400)
 		return
 	}
-
 	rec, err := s.db.GetGame(gameID)
 	if err != nil {
 		http.Error(w, "game not found", 404)
 		return
 	}
-
 	// Per-game authorization. Without this any signed-in user could
 	// read any game's state by guessing UUIDs. Don't leak existence
 	// to non-participants — return 404, not 403.
@@ -136,11 +149,19 @@ func (s *GameService) handleState(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	writeJSON(w, s.snapshotFromRecord(r.Context(), rec))
+}
 
-	// Rehydrate the game from the persisted FEN + move history so we
-	// can compute legal moves, last move, and check status for the
-	// snapshot. The arrays in the DB row are JSON strings; parse them
-	// before handing to game.Load.
+// snapshotFromRecord builds the wire-protocol StateJSON the SPA
+// expects from a persisted GameRecord. The DB row's history /
+// history_san / assessments columns hold JSON-encoded strings (one
+// PG column per JSON array); we parse them, then rehydrate the game
+// via game.Load so we can compute derived fields (turn, legal moves,
+// last move, check status).
+//
+// thinking flag is sourced from a Redis sentinel key set by the engine
+// trigger path; absent → false.
+func (s *GameService) snapshotFromRecord(ctx context.Context, rec *db.GameRecord) stateJSON {
 	var history, historySAN []string
 	if rec.History != "" {
 		_ = json.Unmarshal([]byte(rec.History), &history)
@@ -183,8 +204,12 @@ func (s *GameService) handleState(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// note: see handleReplayData below for the dedicated replay frames endpoint
-	writeJSON(w, stateJSON{
+	thinking := false
+	if v, err := s.bus.Rdb().Get(ctx, "game:thinking:"+rec.ID).Result(); err == nil && v == "1" {
+		thinking = true
+	}
+
+	return stateJSON{
 		FEN:            gm.Board.FEN(),
 		Turn:           turn,
 		EngineWhite:    gm.EngineWhite,
@@ -196,13 +221,13 @@ func (s *GameService) handleState(w http.ResponseWriter, r *http.Request) {
 		History:        history,
 		HistorySAN:     historySAN,
 		LastMove:       last,
-		Thinking:       false, // wired in Phase 4 when worker dispatch tracks per-game inflight
+		Thinking:       thinking,
 		TouchMove:      gm.TouchMove,
 		TouchedSquare:  core.SquareName(gm.TouchedSq),
 		WhiteThinkTime: rec.WhiteThinkTime,
 		BlackThinkTime: rec.BlackThinkTime,
 		Assessments:    assessments,
-	})
+	}
 }
 
 // handleReplayData returns the per-ply ReplayFrame slice for a single

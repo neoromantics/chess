@@ -92,6 +92,22 @@ func main() {
 	mux.Handle("/api/state", gw.injectAuthedUser(gameProxy))
 	mux.Handle("/api/games", gw.injectAuthedUser(gameProxy))
 
+	// All single-game mutations now route through game-service over
+	// sync HTTP. Gateway only authenticates + injects user_id; game-
+	// service holds the per-game lock and owns the snapshot synthesis.
+	// See CLAUDE.md ("Streams vs HTTP") for why these aren't Commands.
+	mux.Handle("POST /api/move", gw.injectAuthedUser(gameProxy))
+	mux.Handle("POST /api/new", gw.injectAuthedUser(gameProxy))
+	mux.Handle("POST /api/set_players", gw.injectAuthedUser(gameProxy))
+	mux.Handle("POST /api/undo", gw.injectAuthedUser(gameProxy))
+	mux.Handle("POST /api/touch", gw.injectAuthedUser(gameProxy))
+	mux.Handle("POST /api/touch_move", gw.injectAuthedUser(gameProxy))
+	mux.Handle("POST /api/load", gw.injectAuthedUser(gameProxy))
+	mux.Handle("DELETE /api/games/delete", gw.injectAuthedUser(gameProxy))
+	mux.Handle("GET /api/save", gw.injectAuthedUser(gameProxy))
+	mux.Handle("POST /api/hint", gw.injectAuthedUser(gameProxy))
+	mux.Handle("POST /api/assess", gw.injectAuthedUser(gameProxy))
+
 	// 4. New game (intent dispatch). Async: gateway publishes a Command
 	// onto the game:commands stream and returns the assigned game_id
 	// immediately — game-service consumes the stream and writes the
@@ -209,6 +225,27 @@ func (gw *Gateway) handleJoinQueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusAccepted)
+}
+
+// userMayWatchGame is the WS upgrade pre-flight that asks game-service
+// "is userID a participant on gameID?". We piggy-back on /api/state's
+// existing ownership check (which returns 404 for non-participants) so
+// we don't need a new dedicated authz endpoint.
+func (gw *Gateway) userMayWatchGame(ctx context.Context, userID int64, gameID string) bool {
+	u := *gw.gameSvcURL
+	u.Path = "/api/state"
+	q := u.Query()
+	q.Set("game_id", gameID)
+	q.Set("user_id", strconv.FormatInt(userID, 10))
+	u.RawQuery = q.Encode()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		slog.Warn("ws authz preflight failed", "error", err)
+		return false
+	}
+	_ = resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
 }
 
 // handleReplay serves a self-contained replay HTML page for a given

@@ -40,6 +40,16 @@ func (gw *Gateway) handleWSGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Per-game authorization at upgrade time. Without this any signed-in
+	// user could subscribe to anyone's game.evt.{id} stream by guessing
+	// UUIDs. Pre-flight: hit game-service /api/state with the user_id
+	// injected; 200 = participant, 404 = not (or game doesn't exist).
+	// One ~1ms internal RTT per upgrade, negligible.
+	if !gw.userMayWatchGame(r.Context(), user.UserID, gameID) {
+		http.Error(w, "game not found", http.StatusNotFound)
+		return
+	}
+
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		slog.Error("ws upgrade failed", "error", err)
