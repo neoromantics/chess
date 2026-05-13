@@ -53,7 +53,7 @@ func (s *GameService) requireGameAccess(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "missing game_id", http.StatusBadRequest)
 		return nil, 0, false
 	}
-	rec, err := s.db.GetGame(gameID)
+	rec, err := s.getGameCached(r.Context(), gameID)
 	if err != nil {
 		http.Error(w, "game not found", http.StatusNotFound)
 		return nil, 0, false
@@ -89,7 +89,7 @@ func (s *GameService) withLockedMutation(
 	defer lock.release(context.Background())
 
 	// Refetch INSIDE the lock so we see writes from the previous holder.
-	rec, err = s.db.GetGame(rec.ID)
+	rec, err = s.getGameCached(r.Context(), rec.ID)
 	if err != nil {
 		http.Error(w, "game not found", http.StatusNotFound)
 		return
@@ -127,7 +127,7 @@ func (s *GameService) withLockedMutation(
 	rec.EngineBlack = gm.EngineBlack
 	rec.Status = string(gm.Status())
 	rec.UpdatedAt = time.Now()
-	if err := s.db.SaveGame(rec); err != nil {
+	if err := s.saveGameCached(r.Context(), rec); err != nil {
 		slog.Error("save game failed", "game_id", rec.ID, "error", err)
 		http.Error(w, "save failed", http.StatusInternalServerError)
 		return
@@ -347,6 +347,10 @@ func (s *GameService) handleHTTPDelete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "delete failed", http.StatusInternalServerError)
 		return
 	}
+	// Drop the cache entry whether or not rows>0; if the row was already
+	// gone the cache is also stale, and either way we want a fresh PG
+	// fallback on the next read.
+	s.invalidateGameCache(r.Context(), rec.ID)
 	if rows == 0 {
 		http.Error(w, "game not found", http.StatusNotFound)
 		return

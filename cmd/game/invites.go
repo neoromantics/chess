@@ -196,6 +196,7 @@ func (s *GameService) handleAcceptInvite(w http.ResponseWriter, r *http.Request)
 	rows, err := s.db.AcceptInvite(inv.ID, to, gameID)
 	if err != nil || rows == 0 {
 		_, _ = s.db.DeleteGame(gameID)
+		s.invalidateGameCache(r.Context(), gameID)
 		if err != nil {
 			slog.Error("accept invite failed", "id", id, "error", err)
 		}
@@ -246,7 +247,9 @@ func (s *GameService) createPvPGameFromInvite(inv *db.Invite) (string, error) {
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),
 	}
-	return id, s.db.SaveGame(rec)
+	// Use the cached save so a brand-new PvP game is hot in Redis
+	// before either client's first /api/state poll lands.
+	return id, s.saveGameCached(context.Background(), rec)
 }
 
 // ===== DECLINE / CANCEL =====

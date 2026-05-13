@@ -135,7 +135,7 @@ func (s *GameService) handleState(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing game_id", 400)
 		return
 	}
-	rec, err := s.db.GetGame(gameID)
+	rec, err := s.getGameCached(r.Context(), gameID)
 	if err != nil {
 		http.Error(w, "game not found", 404)
 		return
@@ -239,7 +239,7 @@ func (s *GameService) handleReplayData(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing game_id", 400)
 		return
 	}
-	rec, err := s.db.GetGame(gameID)
+	rec, err := s.getGameCached(r.Context(), gameID)
 	if err != nil {
 		http.Error(w, "game not found", 404)
 		return
@@ -426,7 +426,7 @@ func (s *GameService) handleNewGame(ctx context.Context, cmd eventbus.Command) {
 		UpdatedAt:      time.Now(),
 	}
 
-	if err := s.db.SaveGame(rec); err != nil {
+	if err := s.saveGameCached(ctx, rec); err != nil {
 		slog.Error("failed to create game", "error", err)
 		return
 	}
@@ -471,7 +471,7 @@ func (s *GameService) handleCreatePvPGame(ctx context.Context, cmd eventbus.Comm
 		UpdatedAt:      time.Now(),
 	}
 
-	if err := s.db.SaveGame(rec); err != nil {
+	if err := s.saveGameCached(ctx, rec); err != nil {
 		slog.Error("failed to create pvp game", "error", err)
 		return
 	}
@@ -485,7 +485,7 @@ func (s *GameService) handleCreatePvPGame(ctx context.Context, cmd eventbus.Comm
 }
 
 func (s *GameService) handleHint(ctx context.Context, cmd eventbus.Command) {
-	rec, err := s.db.GetGame(cmd.GameID)
+	rec, err := s.getGameCached(ctx, cmd.GameID)
 	if err != nil {
 		return
 	}
@@ -532,7 +532,7 @@ func (s *GameService) handleMakeMove(ctx context.Context, cmd eventbus.Command) 
 	}
 	defer lock.release(context.Background())
 
-	rec, err := s.db.GetGame(cmd.GameID)
+	rec, err := s.getGameCached(ctx, cmd.GameID)
 	if err != nil {
 		slog.Error("game not found", "game_id", cmd.GameID)
 		return
@@ -577,7 +577,7 @@ func (s *GameService) handleMakeMove(ctx context.Context, cmd eventbus.Command) 
 	rec.Status = string(gm.Status())
 	rec.UpdatedAt = time.Now()
 
-	if err := s.db.SaveGame(rec); err != nil {
+	if err := s.saveGameCached(ctx, rec); err != nil {
 		slog.Error("failed to save game", "error", err)
 		return
 	}
@@ -622,7 +622,7 @@ func (s *GameService) triggerEngine(ctx context.Context, gameID string, gm *game
 }
 
 func (s *GameService) handleResign(ctx context.Context, cmd eventbus.Command) {
-	rec, err := s.db.GetGame(cmd.GameID)
+	rec, err := s.getGameCached(ctx, cmd.GameID)
 	if err != nil {
 		return
 	}
@@ -639,7 +639,7 @@ func (s *GameService) handleResign(ctx context.Context, cmd eventbus.Command) {
 	rec.Status = "resign"
 	rec.Result = res
 	rec.UpdatedAt = time.Now()
-	s.db.SaveGame(rec)
+	_ = s.saveGameCached(ctx, rec)
 
 	s.emitGameFinished(ctx, cmd.GameID, nil)
 }
