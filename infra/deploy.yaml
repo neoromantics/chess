@@ -285,6 +285,13 @@ spec:
           httpGet: {path: /health, port: 8080}
           initialDelaySeconds: 5
           periodSeconds: 10
+        # Resource requests gate HPA — without them HPA can't compute
+        # utilization %. Memory is the binding constraint on gateway
+        # pods because of long-lived WS connections (~4KB goroutine
+        # stack each).
+        resources:
+          requests: {cpu: 100m, memory: 128Mi}
+          limits: {cpu: 500m, memory: 512Mi}
 ---
 apiVersion: v1
 kind: Service
@@ -338,6 +345,9 @@ spec:
           valueFrom: {secretKeyRef: {name: chess-secrets, key: JWT_SECRET}}
         readinessProbe:
           httpGet: {path: /health, port: 8081}
+        resources:
+          requests: {cpu: 50m, memory: 64Mi}
+          limits: {cpu: 300m, memory: 256Mi}
 ---
 apiVersion: v1
 kind: Service
@@ -383,6 +393,9 @@ spec:
           value: "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@chess-pgbouncer:5432/$(POSTGRES_DB)?sslmode=disable"
         readinessProbe:
           httpGet: {path: /health, port: 8080}
+        resources:
+          requests: {cpu: 100m, memory: 128Mi}
+          limits: {cpu: 500m, memory: 512Mi}
 ---
 apiVersion: v1
 kind: Service
@@ -420,6 +433,9 @@ spec:
           value: chess-redis:6379
         readinessProbe:
           httpGet: {path: /health, port: 8080}
+        resources:
+          requests: {cpu: 50m, memory: 64Mi}
+          limits: {cpu: 200m, memory: 128Mi}
 ---
 apiVersion: v1
 kind: Service
@@ -463,6 +479,9 @@ spec:
           valueFrom: {secretKeyRef: {name: chess-secrets, key: POSTGRES_PASSWORD}}
         - name: DATABASE_URL
           value: "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@chess-pgbouncer:5432/$(POSTGRES_DB)?sslmode=disable"
+        resources:
+          requests: {cpu: 50m, memory: 64Mi}
+          limits: {cpu: 200m, memory: 128Mi}
 ---
 apiVersion: v1
 kind: Service
@@ -500,3 +519,135 @@ spec:
         resources:
           requests: {cpu: 500m, memory: 256Mi}
           limits: {cpu: 1000m, memory: 512Mi}
+
+# ==============================================================================
+# 4. AUTOSCALING & DISRUPTION
+#
+# HPAs scale on CPU + memory. The "right" signals for chess workloads are:
+#   - chess-gateway:        WebSocket connection count (custom metric)
+#   - chess-engine-worker:  engine:requests stream length (KEDA ScaledObject)
+# Neither is wired today — getting custom metrics requires the
+# Prometheus Adapter; KEDA stream-length scaling requires installing
+# KEDA on the cluster. CPU + memory is a fair proxy until those land.
+#
+# Note on Redis HA: Sentinel-based failover requires multiple nodes.
+# This cluster is single-node today (Duke VCM), so all Redis/Sentinel
+# pods would share the same fate on node restart. Adding a second node
+# is the prerequisite; until then, AOF (already enabled) gives
+# durability and that's the meaningful guarantee at this scale.
+# ==============================================================================
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: chess-gateway-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: chess-gateway
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target: {type: Utilization, averageUtilization: 70}
+  - type: Resource
+    resource:
+      name: memory
+      target: {type: Utilization, averageUtilization: 75}
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies: [{type: Percent, value: 100, periodSeconds: 30}]
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies: [{type: Pods, value: 1, periodSeconds: 60}]
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: chess-game-service-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: chess-game-service
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target: {type: Utilization, averageUtilization: 70}
+  - type: Resource
+    resource:
+      name: memory
+      target: {type: Utilization, averageUtilization: 75}
+
+---
+# Engine worker scales on CPU because each search pegs its core; high
+# average CPU means the queue is being chased and we need more pods.
+# Once KEDA is installed, switch this to a ScaledObject with
+# trigger.type=redis-streams + streamName=engine:requests for direct
+# queue-depth scaling.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: chess-worker-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: chess-worker
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target: {type: Utilization, averageUtilization: 70}
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 15  # tournament starts surge fast
+      policies: [{type: Percent, value: 100, periodSeconds: 15}]
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies: [{type: Pods, value: 1, periodSeconds: 60}]
+
+---
+# PodDisruptionBudgets prevent kubectl drain (or HPA scale-down) from
+# emptying a deployment all at once. minAvailable: 1 keeps at least
+# one pod up through any voluntary disruption.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: chess-gateway-pdb
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: chess-gateway
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: chess-game-service-pdb
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: chess-game-service
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: chess-worker-pdb
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: chess-worker
