@@ -30,6 +30,15 @@ spec:
       containers:
       - name: postgres
         image: postgres:16-alpine
+        # max_connections raised from PG default 100 to 500 so 6
+        # services × 2 replicas × MaxOpenConns=25 = 300 client conns
+        # fits comfortably. ~10MB RAM per connection, so 500 caps at
+        # ~5GB — well within the chess-db pod's working set on a
+        # modestly-sized node. If we ever need real connection
+        # pooling, the right next move is to build our own pgbouncer
+        # image (the dependency on external pgbouncer images was a
+        # repeated tag-not-found footgun).
+        args: ["-c", "max_connections=500"]
         ports:
         - containerPort: 5432
         env:
@@ -73,91 +82,14 @@ spec:
     targetPort: 5432
 
 ---
-# === PGBOUNCER (connection multiplexing) ===
-# Without this, every service pod's sql.DB pool (MaxOpenConns=25)
-# multiplied by replicas (6 services × ~2 replicas) creates ~300
-# possible client connections against a Postgres whose default
-# max_connections is 100. Under sustained load, services start getting
-# "too many connections" and crash-loop.
-#
-# pgbouncer in transaction-pool mode multiplexes thousands of client
-# connections into a handful of real Postgres backends. lib/pq + sqlc
-# (emit_prepared_queries=false) are compatible with transaction pooling.
-# Configuration is supplied via env vars (the edoburu image generates
-# pgbouncer.ini + userlist.txt at boot from these), so there's no
-# ConfigMap with the PG password sitting at rest unencrypted.
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: chess-pgbouncer
-spec:
-  replicas: 1
-  strategy:
-    type: Recreate
-  selector:
-    matchLabels:
-      app: chess-pgbouncer
-  template:
-    metadata:
-      labels:
-        app: chess-pgbouncer
-    spec:
-      containers:
-      - name: pgbouncer
-        # Tag-pinning has been a footgun: edoburu 1.23.1, edoburu
-        # 1.23.0, and bitnami 1.23.1 all returned manifest-not-found
-        # against Docker Hub. Using `latest` to break the loop. Once
-        # this pod is Ready, read the resolved digest via:
-        #   kubectl -n chess describe pod -l app=chess-pgbouncer \
-        #     | grep -E 'Image:|Image ID'
-        # and pin the imageDigest above to whatever it shows.
-        image: bitnami/pgbouncer:latest
-        imagePullPolicy: Always  # so we always re-fetch the tag's digest until pinned
-        ports: [{containerPort: 5432}]
-        env:
-        - name: POSTGRESQL_HOST
-          value: chess-db
-        - name: POSTGRESQL_PORT
-          value: "5432"
-        - name: POSTGRESQL_USERNAME
-          valueFrom: {secretKeyRef: {name: chess-secrets, key: POSTGRES_USER}}
-        - name: POSTGRESQL_PASSWORD
-          valueFrom: {secretKeyRef: {name: chess-secrets, key: POSTGRES_PASSWORD}}
-        - name: POSTGRESQL_DATABASE
-          valueFrom: {secretKeyRef: {name: chess-secrets, key: POSTGRES_DB}}
-        - name: PGBOUNCER_PORT
-          value: "5432"
-        - name: PGBOUNCER_AUTH_TYPE
-          value: md5
-        - name: PGBOUNCER_POOL_MODE
-          value: transaction
-        - name: PGBOUNCER_MAX_CLIENT_CONN
-          value: "1000"
-        - name: PGBOUNCER_DEFAULT_POOL_SIZE
-          value: "25"
-        - name: PGBOUNCER_IGNORE_STARTUP_PARAMETERS
-          value: extra_float_digits
-        - name: PGBOUNCER_DATABASE
-          valueFrom: {secretKeyRef: {name: chess-secrets, key: POSTGRES_DB}}
-        readinessProbe:
-          tcpSocket: {port: 5432}
-          initialDelaySeconds: 5
-          periodSeconds: 5
-        resources:
-          requests: {cpu: 50m, memory: 64Mi}
-          limits: {cpu: 200m, memory: 128Mi}
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: chess-pgbouncer
-spec:
-  selector:
-    app: chess-pgbouncer
-  ports:
-  - port: 5432
-    targetPort: 5432
-
+# pgbouncer was removed after four failed deploy cycles chasing the
+# right published Docker Hub tag (edoburu 1.23.0/1.23.1, bitnami 1.23.1,
+# bitnami:latest — all returned manifest-not-found). At our actual
+# scale (single VM, 6 services × 2 replicas × MaxOpenConns=25 = 300
+# possible client conns), the simpler fix is the chess-db
+# max_connections=500 setting above. When we cross 500 real conns
+# (genuine multi-node, thousands of pods), the right move is to
+# build our own pgbouncer image rather than depend on a published one.
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -355,7 +287,7 @@ spec:
         - name: POSTGRES_PASSWORD
           valueFrom: {secretKeyRef: {name: chess-secrets, key: POSTGRES_PASSWORD}}
         - name: DATABASE_URL
-          value: "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@chess-pgbouncer:5432/$(POSTGRES_DB)?sslmode=disable"
+          value: "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@chess-db:5432/$(POSTGRES_DB)?sslmode=disable"
         - name: JWT_SECRET
           valueFrom: {secretKeyRef: {name: chess-secrets, key: JWT_SECRET}}
         readinessProbe:
@@ -409,7 +341,7 @@ spec:
         - name: POSTGRES_PASSWORD
           valueFrom: {secretKeyRef: {name: chess-secrets, key: POSTGRES_PASSWORD}}
         - name: DATABASE_URL
-          value: "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@chess-pgbouncer:5432/$(POSTGRES_DB)?sslmode=disable"
+          value: "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@chess-db:5432/$(POSTGRES_DB)?sslmode=disable"
         readinessProbe:
           httpGet: {path: /health, port: 8080}
         resources:
@@ -505,7 +437,7 @@ spec:
         - name: POSTGRES_PASSWORD
           valueFrom: {secretKeyRef: {name: chess-secrets, key: POSTGRES_PASSWORD}}
         - name: DATABASE_URL
-          value: "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@chess-pgbouncer:5432/$(POSTGRES_DB)?sslmode=disable"
+          value: "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@chess-db:5432/$(POSTGRES_DB)?sslmode=disable"
         resources:
           requests: {cpu: 50m, memory: 64Mi}
           limits: {cpu: 200m, memory: 128Mi}
