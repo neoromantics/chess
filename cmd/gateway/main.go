@@ -15,14 +15,15 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/neoromantics/chess/pkg/auth"
+	"github.com/neoromantics/chess/pkg/db"
 	"github.com/neoromantics/chess/pkg/eventbus"
 	"github.com/neoromantics/chess/pkg/metrics"
 )
 
 type Gateway struct {
-	userSvcURL *url.URL
 	gameSvcURL *url.URL
 	bus        *eventbus.Client
+	db         db.Store
 	hub        *Hub
 }
 
@@ -30,15 +31,6 @@ func main() {
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
-	}
-
-	userSvcURLStr := os.Getenv("USER_SERVICE_URL")
-	if userSvcURLStr == "" {
-		userSvcURLStr = "http://user-service:8081"
-	}
-	userSvcURL, err := url.Parse(userSvcURLStr)
-	if err != nil {
-		log.Fatalf("invalid user service URL: %v", err)
 	}
 
 	gameSvcURLStr := os.Getenv("GAME_SERVICE_URL")
@@ -57,10 +49,22 @@ func main() {
 	bus := eventbus.NewClient(redisAddr)
 	hub := NewHub(bus)
 
+	// Gateway absorbed user-service in the 6→3 pod consolidation. It
+	// opens its own pool against Postgres for auth + profile reads.
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		log.Fatal("DATABASE_URL is required (gateway now owns the auth/user surface)")
+	}
+	store, err := db.OpenPostgres(dsn)
+	if err != nil {
+		log.Fatalf("failed to connect to postgres: %v", err)
+	}
+	defer store.Close()
+
 	gw := &Gateway{
-		userSvcURL: userSvcURL,
 		gameSvcURL: gameSvcURL,
 		bus:        bus,
+		db:         store,
 		hub:        hub,
 	}
 
@@ -75,13 +79,18 @@ func main() {
 		w.Write([]byte("Gateway OK"))
 	})
 
-	// 2. Reverse proxy to User Service. /api/users/ (plural) is the
-	// search endpoint used by the invite autocomplete; the singular
-	// /api/user/ is self-service (me/profile/password/stats).
-	userProxy := httputil.NewSingleHostReverseProxy(userSvcURL)
-	mux.HandleFunc("/api/auth/", userProxy.ServeHTTP)
-	mux.HandleFunc("/api/user/", userProxy.ServeHTTP)
-	mux.HandleFunc("/api/users/", userProxy.ServeHTTP)
+	// 2. Auth + profile + user-search handled directly. Used to live in
+	// the chess-user-service pod; absorbed here to eliminate one
+	// cross-service network hop and one wire-protocol surface.
+	mux.HandleFunc("POST /api/auth/signup", gw.handleSignup)
+	mux.HandleFunc("POST /api/auth/login", gw.handleLogin)
+	mux.HandleFunc("POST /api/auth/logout", gw.handleLogout)
+	mux.HandleFunc("GET /api/user/me", gw.handleMe)
+	mux.HandleFunc("GET /api/user/profile", gw.handleGetProfile)
+	mux.HandleFunc("PUT /api/user/profile", gw.handleUpdateProfile)
+	mux.HandleFunc("POST /api/user/password", gw.handleChangePassword)
+	mux.HandleFunc("GET /api/user/stats", gw.handleUserStats)
+	mux.HandleFunc("GET /api/users/search", gw.handleUserSearch)
 
 	// 3. Reverse proxy to Game Service. Wrapped in injectAuthedUser so
 	// downstream services don't have to re-validate the JWT — they

@@ -211,14 +211,19 @@ spec:
           value: "8080"
         - name: REDIS_URL
           value: chess-redis:6379
-        - name: USER_SERVICE_URL
-          value: http://chess-user-service:80
         - name: GAME_SERVICE_URL
           value: http://chess-game-service:80
-        # Gateway runs auth.Middleware, so it MUST verify JWTs with the
-        # same key user-service signs with. Without this env, loadSecret()
-        # falls back to a random ephemeral key on each boot and every
-        # auth-gated request 401s the moment a fresh user signs up.
+        # Gateway absorbed the user-service handlers, so it now needs
+        # DATABASE_URL for auth + profile reads in addition to
+        # JWT_SECRET for signing/verifying tokens.
+        - name: POSTGRES_USER
+          valueFrom: {secretKeyRef: {name: chess-secrets, key: POSTGRES_USER}}
+        - name: POSTGRES_DB
+          valueFrom: {secretKeyRef: {name: chess-secrets, key: POSTGRES_DB}}
+        - name: POSTGRES_PASSWORD
+          valueFrom: {secretKeyRef: {name: chess-secrets, key: POSTGRES_PASSWORD}}
+        - name: DATABASE_URL
+          value: "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@chess-db:5432/$(POSTGRES_DB)?sslmode=disable"
         - name: JWT_SECRET
           valueFrom: {secretKeyRef: {name: chess-secrets, key: JWT_SECRET}}
         readinessProbe:
@@ -256,58 +261,17 @@ spec:
 # ==============================================================================
 
 ---
-# USER SERVICE
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: chess-user-service
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: chess-user-service
-  template:
-    metadata:
-      labels:
-        app: chess-user-service
-    spec:
-      imagePullSecrets: [{name: ghcr-auth}]
-      containers:
-      - name: user-service
-        image: ghcr.io/neoromantics/chess:latest
-        command: ["./user-service"]
-        ports: [{containerPort: 8081}]
-        env:
-        - name: PORT
-          value: "8081"
-        - name: POSTGRES_USER
-          valueFrom: {secretKeyRef: {name: chess-secrets, key: POSTGRES_USER}}
-        - name: POSTGRES_DB
-          valueFrom: {secretKeyRef: {name: chess-secrets, key: POSTGRES_DB}}
-        - name: POSTGRES_PASSWORD
-          valueFrom: {secretKeyRef: {name: chess-secrets, key: POSTGRES_PASSWORD}}
-        - name: DATABASE_URL
-          value: "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@chess-db:5432/$(POSTGRES_DB)?sslmode=disable"
-        - name: JWT_SECRET
-          valueFrom: {secretKeyRef: {name: chess-secrets, key: JWT_SECRET}}
-        readinessProbe:
-          httpGet: {path: /health, port: 8081}
-        resources:
-          requests: {cpu: 50m, memory: 64Mi}
-          limits: {cpu: 300m, memory: 256Mi}
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: chess-user-service
-  annotations:
-    prometheus.io/scrape: "true"
-    prometheus.io/port: "8081"
-    prometheus.io/path: "/metrics"
-spec:
-  selector:
-    app: chess-user-service
-  ports: [{port: 80, targetPort: 8081}]
+# chess-user-service was retired in the 6→3 pod consolidation.
+# Its handlers now live in the gateway binary (see
+# cmd/gateway/user_handlers.go). Anything pointing at /api/auth/*
+# or /api/user/* now lands on the gateway directly.
+#
+# NOTE: kubectl apply does not prune resources removed from a
+# manifest. After this commit lands, manually delete the old
+# Deployment + Service + HPA:
+#   kubectl -n chess delete deploy chess-user-service
+#   kubectl -n chess delete svc chess-user-service
+#   kubectl -n chess delete hpa chess-user-service-hpa 2>/dev/null
 
 ---
 # GAME SERVICE
