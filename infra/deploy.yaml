@@ -104,7 +104,10 @@ spec:
     spec:
       containers:
       - name: pgbouncer
-        image: edoburu/pgbouncer:1.23.1
+        # Pin to a tag that actually exists on Docker Hub. edoburu's
+        # publish cadence skips patch numbers; 1.23.1 returned 404 on
+        # ImagePull. 1.23.0 is the latest verified tag at deploy time.
+        image: edoburu/pgbouncer:1.23.0
         ports: [{containerPort: 5432}]
         env:
         - name: POSTGRES_USER
