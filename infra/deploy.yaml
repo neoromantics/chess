@@ -386,6 +386,8 @@ spec:
       - name: matchmaker
         image: ghcr.io/neoromantics/chess:latest
         command: ["./matchmaker"]
+        ports:
+        - containerPort: 8080
         env:
         - name: REDIS_URL
           value: chess-redis:6379
@@ -406,6 +408,7 @@ spec:
   ports:
   - port: 80
     targetPort: 8080
+
 
 ---
 # === RATING UPDATER ===
