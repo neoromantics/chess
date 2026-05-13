@@ -1,4 +1,9 @@
-CREATE TABLE users (
+-- Idempotent schema. Embedded into the binary and applied on every
+-- service boot via OpenPostgres() under a Postgres advisory lock so
+-- multiple replicas can race the apply safely. Edits should prefer
+-- additive ADD COLUMN IF NOT EXISTS over table rewrites; column drops
+-- need a separate, deliberate one-off migration.
+CREATE TABLE IF NOT EXISTS users (
     id              BIGSERIAL PRIMARY KEY,
     username        TEXT      UNIQUE NOT NULL,
     password_hash   TEXT      NOT NULL,
@@ -19,7 +24,7 @@ CREATE TABLE users (
     draws           INTEGER NOT NULL DEFAULT 0
 );
 
-CREATE TABLE games (
+CREATE TABLE IF NOT EXISTS games (
     id                TEXT      PRIMARY KEY,
     session_id        TEXT      NOT NULL DEFAULT '',
     fen               TEXT      NOT NULL,
@@ -40,7 +45,7 @@ CREATE TABLE games (
     result            TEXT    NOT NULL DEFAULT '*'
 );
 
-CREATE TABLE invites (
+CREATE TABLE IF NOT EXISTS invites (
   id           UUID PRIMARY KEY,
   from_user_id BIGINT      NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   to_user_id   BIGINT      NOT NULL REFERENCES users(id) ON DELETE CASCADE,

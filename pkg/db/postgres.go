@@ -3,7 +3,9 @@ package db
 import (
 	"context"
 	"database/sql"
+	_ "embed"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -11,6 +13,21 @@ import (
 
 	"github.com/neoromantics/chess/pkg/db/gen"
 )
+
+// schemaSQL is the canonical schema, embedded into the binary at build
+// time. Applied on every OpenPostgres() call under a Postgres advisory
+// lock so multiple replicas can race the apply safely. Idempotent —
+// every CREATE uses IF NOT EXISTS.
+//
+//go:embed schema.sql
+var schemaSQL string
+
+// schemaLockID is an arbitrary 64-bit constant used with
+// pg_advisory_lock() to serialize schema application across racing
+// replicas. The number itself is meaningless; only its uniqueness
+// within the lock keyspace matters. (This service uses no other
+// advisory locks today, so collision risk is zero.)
+const schemaLockID int64 = 0x4348455353534348 // "CHESSSCH" in ASCII
 
 // PostgresStore is the sqlc-backed implementation of Store.
 // All queries are generated from pkg/db/queries/*.sql into pkg/db/gen.
@@ -44,7 +61,43 @@ func OpenPostgres(dsn string) (Store, error) {
 		return nil, fmt.Errorf("failed to ping postgres: %w", err)
 	}
 
+	if err := applySchema(sqlDB); err != nil {
+		_ = sqlDB.Close()
+		return nil, fmt.Errorf("failed to apply schema: %w", err)
+	}
+
 	return &PostgresStore{db: sqlDB, q: gen.New(sqlDB)}, nil
+}
+
+// applySchema runs the embedded schema.sql against the connected DB.
+// Wrapped in a session-scoped advisory lock so racing replicas (e.g.
+// two user-service pods coming up after a redeploy) serialize the
+// apply. The schema itself uses CREATE TABLE IF NOT EXISTS so the
+// non-leader pod's apply is a no-op rather than an error.
+func applySchema(sqlDB *sql.DB) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	conn, err := sqlDB.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("acquire conn: %w", err)
+	}
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, "SELECT pg_advisory_lock($1)", schemaLockID); err != nil {
+		return fmt.Errorf("acquire advisory lock: %w", err)
+	}
+	defer func() {
+		// Best-effort release; conn.Close() will free the lock anyway
+		// via session end if this fails.
+		_, _ = conn.ExecContext(context.Background(), "SELECT pg_advisory_unlock($1)", schemaLockID)
+	}()
+
+	if _, err := conn.ExecContext(ctx, schemaSQL); err != nil {
+		return fmt.Errorf("execute schema: %w", err)
+	}
+	slog.Info("schema applied", "bytes", len(schemaSQL))
+	return nil
 }
 
 func (s *PostgresStore) Close() error { return s.db.Close() }
