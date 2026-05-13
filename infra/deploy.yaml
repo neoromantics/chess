@@ -104,36 +104,41 @@ spec:
     spec:
       containers:
       - name: pgbouncer
-        # Pin to a tag that actually exists on Docker Hub. edoburu's
-        # publish cadence skips patch numbers; 1.23.1 returned 404 on
-        # ImagePull. 1.23.0 is the latest verified tag at deploy time.
-        image: edoburu/pgbouncer:1.23.0
+        # Switched to bitnami/pgbouncer after edoburu/pgbouncer:1.23.x
+        # tags didn't resolve on Docker Hub. Bitnami publishes
+        # consistently and tracks pgbouncer upstream tightly.
+        #
+        # Env var schema differs from edoburu (POSTGRESQL_* prefix,
+        # PGBOUNCER_* for tuning). PGBOUNCER_PORT=5432 overrides the
+        # bitnami default of 6432 so the Service doesn't need a
+        # targetPort change.
+        image: bitnami/pgbouncer:1.23.1
         ports: [{containerPort: 5432}]
         env:
-        - name: POSTGRES_USER
-          valueFrom: {secretKeyRef: {name: chess-secrets, key: POSTGRES_USER}}
-        - name: POSTGRES_PASSWORD
-          valueFrom: {secretKeyRef: {name: chess-secrets, key: POSTGRES_PASSWORD}}
-        - name: DB_HOST
+        - name: POSTGRESQL_HOST
           value: chess-db
-        - name: DB_PORT
+        - name: POSTGRESQL_PORT
           value: "5432"
-        - name: DB_USER
+        - name: POSTGRESQL_USERNAME
           valueFrom: {secretKeyRef: {name: chess-secrets, key: POSTGRES_USER}}
-        - name: DB_PASSWORD
+        - name: POSTGRESQL_PASSWORD
           valueFrom: {secretKeyRef: {name: chess-secrets, key: POSTGRES_PASSWORD}}
-        - name: AUTH_TYPE
+        - name: POSTGRESQL_DATABASE
+          valueFrom: {secretKeyRef: {name: chess-secrets, key: POSTGRES_DB}}
+        - name: PGBOUNCER_PORT
+          value: "5432"
+        - name: PGBOUNCER_AUTH_TYPE
           value: md5
-        - name: POOL_MODE
+        - name: PGBOUNCER_POOL_MODE
           value: transaction
-        - name: MAX_CLIENT_CONN
+        - name: PGBOUNCER_MAX_CLIENT_CONN
           value: "1000"
-        - name: DEFAULT_POOL_SIZE
+        - name: PGBOUNCER_DEFAULT_POOL_SIZE
           value: "25"
-        - name: SERVER_RESET_QUERY
-          value: DISCARD ALL
-        - name: IGNORE_STARTUP_PARAMETERS
+        - name: PGBOUNCER_IGNORE_STARTUP_PARAMETERS
           value: extra_float_digits
+        - name: PGBOUNCER_DATABASE
+          valueFrom: {secretKeyRef: {name: chess-secrets, key: POSTGRES_DB}}
         readinessProbe:
           tcpSocket: {port: 5432}
           initialDelaySeconds: 5
