@@ -70,9 +70,6 @@ spec:
     targetPort: 5432
 ---
 # === REDIS ===
-# Single primary today. AOF persistence is enabled so a Redis restart
-# loses ~1s of pub/sub events at worst, not minutes of queued engine
-# requests. Sentinel/HA is a Phase 5 hardening task.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -81,8 +78,6 @@ data:
   redis.conf: |
     appendonly yes
     appendfsync everysec
-    # Cap memory to avoid OOMKill on tournament-day surges; eviction
-    # policy keeps the pub/sub keyspace warm and drops least-used state.
     maxmemory 200mb
     maxmemory-policy allkeys-lru
 ---
@@ -103,7 +98,7 @@ metadata:
 spec:
   replicas: 1
   strategy:
-    type: Recreate  # PVC is RWO; rolling update would deadlock.
+    type: Recreate
   selector:
     matchLabels:
       app: chess-redis
@@ -128,13 +123,6 @@ spec:
             command: ["redis-cli", "ping"]
           initialDelaySeconds: 3
           periodSeconds: 5
-        resources:
-          requests:
-            cpu: 50m
-            memory: 128Mi
-          limits:
-            cpu: 500m
-            memory: 256Mi
       volumes:
       - name: config
         configMap:
@@ -182,7 +170,6 @@ spec:
             port:
               number: 80
 ---
-# === HTTPS REDIRECT MIDDLEWARE ===
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:
@@ -191,6 +178,12 @@ spec:
   redirectScheme:
     scheme: https
     permanent: true
+
+# ==============================================================================
+# UNIFIED PLATFORM MICROSERVICES
+# All services use the same image but with different binary entrypoints.
+# ==============================================================================
+
 ---
 # === GATEWAY ===
 apiVersion: apps/v1
@@ -209,7 +202,8 @@ spec:
     spec:
       containers:
       - name: gateway
-        image: ghcr.io/neoromantics/chess/gateway:latest
+        image: ghcr.io/neoromantics/chess/platform:latest
+        command: ["./gateway"]
         ports:
         - containerPort: 8080
         env:
@@ -257,7 +251,8 @@ spec:
     spec:
       containers:
       - name: user-service
-        image: ghcr.io/neoromantics/chess/user-service:latest
+        image: ghcr.io/neoromantics/chess/platform:latest
+        command: ["./user-service"]
         ports:
         - containerPort: 8081
         env:
@@ -321,7 +316,8 @@ spec:
     spec:
       containers:
       - name: game-service
-        image: ghcr.io/neoromantics/chess/game-service:latest
+        image: ghcr.io/neoromantics/chess/platform:latest
+        command: ["./game-service"]
         ports:
         - containerPort: 8080
         env:
@@ -380,7 +376,8 @@ spec:
     spec:
       containers:
       - name: matchmaker
-        image: ghcr.io/neoromantics/chess/matchmaker:latest
+        image: ghcr.io/neoromantics/chess/platform:latest
+        command: ["./matchmaker"]
         env:
         - name: REDIS_URL
           value: chess-redis:6379
@@ -420,7 +417,8 @@ spec:
     spec:
       containers:
       - name: rating-updater
-        image: ghcr.io/neoromantics/chess/rating-updater:latest
+        image: ghcr.io/neoromantics/chess/platform:latest
+        command: ["./rating-updater"]
         env:
         - name: REDIS_URL
           value: chess-redis:6379
@@ -471,7 +469,8 @@ spec:
     spec:
       containers:
       - name: worker
-        image: ghcr.io/neoromantics/chess/worker:latest
+        image: ghcr.io/neoromantics/chess/platform:latest
+        command: ["./worker"]
         env:
         - name: REDIS_URL
           value: chess-redis:6379

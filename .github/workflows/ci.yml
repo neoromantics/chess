@@ -71,11 +71,10 @@ jobs:
       - name: Type check
         run: cd frontend && npm run build:main && npm run build:replay
 
-  # --- Container Build & Push ---
+  # --- Unified Container Build & Push ---
   docker:
     runs-on: ubuntu-latest
     needs: [backend, frontend]
-    # Only push images on main branch (not PRs)
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v4
@@ -90,79 +89,19 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build and push Gateway image
+      - name: Build and push Unified Platform image
         uses: docker/build-push-action@v5
         with:
           context: .
-          target: gateway-runtime
           push: true
           tags: |
-            ghcr.io/neoromantics/chess/gateway:latest
-            ghcr.io/neoromantics/chess/gateway:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Build and push User Service image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          target: user-runtime
-          push: true
-          tags: |
-            ghcr.io/neoromantics/chess/user-service:latest
-            ghcr.io/neoromantics/chess/user-service:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Build and push Game Service image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          target: game-runtime
-          push: true
-          tags: |
-            ghcr.io/neoromantics/chess/game-service:latest
-            ghcr.io/neoromantics/chess/game-service:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Build and push Matchmaker image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          target: matchmaker-runtime
-          push: true
-          tags: |
-            ghcr.io/neoromantics/chess/matchmaker:latest
-            ghcr.io/neoromantics/chess/matchmaker:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Build and push Rating Updater image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          target: rating-updater-runtime
-          push: true
-          tags: |
-            ghcr.io/neoromantics/chess/rating-updater:latest
-            ghcr.io/neoromantics/chess/rating-updater:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Build and push Worker image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          target: worker-runtime
-          push: true
-          tags: |
-            ghcr.io/neoromantics/chess/worker:latest
-            ghcr.io/neoromantics/chess/worker:${{ github.sha }}
+            ghcr.io/neoromantics/chess/platform:latest
+            ghcr.io/neoromantics/chess/platform:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
   # --- Secure Deployment (Self-Hosted Runner) ---
+
   deploy:
     runs-on: self-hosted
     needs: [docker]
