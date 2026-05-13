@@ -1,0 +1,229 @@
+# Wire Contract
+
+The single source of truth for **every** interface the SPA and backend
+agree on. Every event type, every HTTP route, every payload shape lives
+here. When you add or rename one of these, edit this file in the same
+commit — drift between this doc and the code is the bug pattern that
+ate most of session-N.
+
+CI does a grep-check (see `scripts/check-wire-contract.sh`) that fails
+the build if a constant declared here isn't referenced from both
+backend and frontend.
+
+---
+
+## Section 1 — HTTP endpoints
+
+Every route the SPA hits. Auth column: **🔓** = no JWT required,
+**🔐** = JWT cookie required, **🔐+game** = JWT + caller must own the
+game row.
+
+### Auth & user
+| Method | Path | Auth | Owner | Frontend caller |
+|---|---|---|---|---|
+| POST | `/api/auth/signup` | 🔓 | gateway → user-svc | `api.signup` |
+| POST | `/api/auth/login` | 🔓 | gateway → user-svc | `api.login` |
+| POST | `/api/auth/logout` | 🔓 | gateway → user-svc | `api.logout` |
+| GET | `/api/user/me` | 🔐 | gateway → user-svc | `api.getMe` |
+| GET | `/api/user/profile` | 🔐 | gateway → user-svc | `api.getProfile` |
+| PUT | `/api/user/profile` | 🔐 | gateway → user-svc | `api.updateProfile` |
+| POST | `/api/user/password` | 🔐 | gateway → user-svc | `api.changePassword` |
+| GET | `/api/user/stats` | 🔐 | gateway → user-svc | `api.getUserStats` |
+| GET | `/api/users/search?q=…` | 🔐 | gateway → user-svc | `api.searchUsers` |
+
+### Games (lifecycle)
+| Method | Path | Auth | Owner | Frontend caller |
+|---|---|---|---|---|
+| POST | `/api/games/new` | 🔐 | gateway | `api.createGame` |
+| GET | `/api/games` | 🔐 | gateway → game-svc | `api.listGames` |
+| DELETE | `/api/games/delete?game_id=X` | 🔐+game | gateway → game-svc | `api.deleteGame` |
+| GET | `/api/save?game_id=X` | 🔐+game | gateway → game-svc | `api.getSaveUrl` |
+
+### Games (state)
+| Method | Path | Auth | Owner | Frontend caller |
+|---|---|---|---|---|
+| GET | `/api/state?game_id=X` | 🔐+game | gateway → game-svc | `api.getState` |
+| POST | `/api/move?game_id=X` | 🔐+game | gateway → game-svc | `api.move` |
+| POST | `/api/resign?game_id=X` | 🔐+game | gateway → game-svc | `api.resign` |
+| POST | `/api/new?game_id=X` | 🔐+game | gateway → game-svc | `api.newGame` |
+| POST | `/api/undo?game_id=X` | 🔐+game | gateway → game-svc | `api.undo` |
+| POST | `/api/touch?game_id=X` | 🔐+game | gateway → game-svc | `api.touch` |
+| POST | `/api/touch_move?game_id=X` | 🔐+game | gateway → game-svc | `api.setTouchMove` |
+| POST | `/api/set_players?game_id=X` | 🔐+game | gateway → game-svc | `api.setPlayers` |
+| POST | `/api/load?game_id=X` | 🔐+game | gateway → game-svc | `api.loadGame` |
+| POST | `/api/hint?game_id=X` | 🔐+game | gateway → game-svc | `api.getHint` |
+| POST | `/api/assess?game_id=X` | 🔐+game | gateway → game-svc | `api.assess` |
+| GET | `/api/replay?game_id=X` | 🔐+game | gateway → game-svc | (data fetched by gateway) |
+| GET | `/api/replay.html?game_id=X` | 🔐+game | gateway (template) | `Replay` button |
+
+### Matchmaking & invites
+| Method | Path | Auth | Owner | Frontend caller |
+|---|---|---|---|---|
+| POST | `/api/matchmaking/join` | 🔐 | gateway → matchmaker (Cmd) | `api.joinQueue` |
+| POST | `/api/matchmaking/leave` | 🔐 | gateway → matchmaker (Cmd) | `api.leaveQueue` |
+| GET | `/api/invites/pending` | 🔐 | gateway → game-svc | `api.listPendingInvites` |
+| POST | `/api/invites/send` | 🔐 | gateway → game-svc | `api.sendInvite` |
+| POST | `/api/invites/{id}/accept` | 🔐 | gateway → game-svc | `api.acceptInvite` |
+| POST | `/api/invites/{id}/decline` | 🔐 | gateway → game-svc | `api.declineInvite` |
+| POST | `/api/invites/{id}/cancel` | 🔐 | gateway → game-svc | `api.cancelInvite` |
+
+### Infra
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/health` | every service |
+| GET | `/metrics` | Prometheus scrape, every service |
+| GET | `/ws?game_id=X` | per-game WebSocket. JWT cookie + game ownership pre-flight |
+| GET | `/ws/user` | per-user WebSocket. JWT cookie |
+| GET | `/`, `/assets/*` | gateway-embedded SPA |
+
+---
+
+## Section 2 — Redis pub/sub & streams
+
+Three keyspaces with different durability semantics. Don't mix them.
+
+| Channel | Type | Durability | Direction |
+|---|---|---|---|
+| `game:commands` | Stream + consumer group | Durable, at-least-once | gateway/matchmaker → game-svc |
+| `game:events` | Stream + consumer group | Durable, replayable | game-svc → rating-updater + audit |
+| `engine:requests` | Stream + consumer group | Durable | game-svc → engine-worker pool |
+| `engine:results` | Stream + consumer group | Durable | engine-worker → game-svc |
+| `game.evt.{id}` | Pub/Sub | Ephemeral | game-svc → gateway hub → per-game WS clients |
+| `user.evt.{id}` | Pub/Sub | Ephemeral | any service → gateway hub → per-user WS clients |
+
+### Redis state keys
+
+| Key | Type | TTL | Purpose |
+|---|---|---|---|
+| `game:lock:{id}` | string (SET NX) | 10s | Per-game mutation serialization |
+| `game:state:{id}` | hash | 1h | Hot cache for game rows |
+| `game:thinking:{id}` | string | 2×movetime + 2s | UI spinner sentinel |
+| `mm:queue:{tc}` | sorted set (rating) | none | Matchmaking queue per time control |
+| `leader:{name}` | string (SET NX) | varies | Future leader-elected sweepers |
+
+---
+
+## Section 3 — WebSocket envelope events
+
+Every WS frame is `{type: string, payload: any}`. The SPA listeners
+demultiplex on `type` exact-match. **Renaming any of these is a wire-
+protocol break** — bump the SPA simultaneously.
+
+### `/ws?game_id=X` (game.evt.{id})
+
+| `type` | When | Payload shape | Backend constant | Frontend handler |
+|---|---|---|---|---|
+| `StateUpdated` | every HTTP mutation in cmd/game/handlers.go | full `stateJSON` | `eventbus.EvtStateUpdated` | `GameView.connectWS` → `updateState` |
+| `state` | (legacy alias for StateUpdated) | full `stateJSON` | — | `GameView.connectWS` → `updateState` |
+| `MovePlayed` | engine-result Command consumer | `MovePlayedEvt` (partial — SPA refetches) | `eventbus.EvtMovePlayed` | `GameView.connectWS` → `api.getState` |
+| `GameStarted` | new row written | empty | `eventbus.EvtGameStarted` | `GameView.connectWS` → `api.getState` |
+| `GameFinished` | game terminal | `stateJSON` | `eventbus.EvtGameFinished` | (rating-updater consumes; SPA reads via StateUpdated companion) |
+| `hint` | engine response, hint context | `{move, from, to, score, depth}` | (literal) | `GameView.onHintReceived` |
+| `assess` | engine response, assess context | assessment payload | (literal) | `GameView.onAssessReceived` |
+| `draw_offered` | _not implemented yet_ | — | — | `GameView.connectWS` |
+| `takeback_offered` | _not implemented yet_ | — | — | `GameView.connectWS` |
+
+### `/ws/user` (user.evt.{user_id})
+
+All snake_case. SPA's `userEventsStore.on(type, fn)` listeners are the
+contract — backend emissions must match these strings exactly.
+
+| `type` | When | Payload shape | Backend constant | Frontend handler |
+|---|---|---|---|---|
+| `match_found` | matchmaker pairs two users | `MatchFoundEvt {game_id, white_user_id, black_user_id, color}` | `eventbus.EvtMatchFound` | `Dashboard.onMounted` |
+| `invite_created` | recipient receives a new invite | `inviteWire` | `eventbus.EvtInviteCreated` | `useInviteStore` |
+| `invite_sent` | sender's confirmation echo | `inviteWire` | `eventbus.EvtInviteSent` | `useInviteStore` |
+| `invite_accepted` | invite matured into a game | `inviteWire` (includes game_id) | `eventbus.EvtInviteAccepted` | `useInviteStore` + redirect |
+| `invite_declined` | recipient said no | `inviteWire` | `eventbus.EvtInviteDeclined` | `useInviteStore` |
+| `invite_cancelled` | sender withdrew | `inviteWire` | `eventbus.EvtInviteCancelled` | `useInviteStore` |
+| `invite_expired` | TTL ran out (sweeper) | `inviteWire` | `eventbus.EvtInviteExpired` | `useInviteStore` |
+
+---
+
+## Section 4 — JSON payload shapes
+
+### `stateJSON` — returned by every game-mutation HTTP endpoint and broadcast on `StateUpdated`
+
+```ts
+interface StateJSON {
+  fen: string;
+  turn: 'w' | 'b';
+  engine_white: boolean;
+  engine_black: boolean;
+  engine_to_move: boolean;
+  status: string;                          // ongoing | checkmate | stalemate | draw_* | resign
+  result: string;                          // '*' | '1-0' | '0-1' | '1/2-1/2'
+  in_check: boolean;
+  legal_moves: string[];
+  history: string[];                       // UCI
+  history_san: string[];
+  last_move: { from, to } | null;
+  thinking: boolean;
+  touch_move: boolean;
+  touched_square: string;
+  white_think_time: number;
+  black_think_time: number;
+  assessments: Assessment[];
+  white_user_id: number | null;            // null = engine
+  black_user_id: number | null;
+  time_control: string;
+  rated: boolean;
+}
+```
+
+### `MatchFoundEvt`
+```go
+type MatchFoundEvt struct {
+    GameID      string `json:"game_id"`
+    WhiteUserID int64  `json:"white_user_id"`
+    BlackUserID int64  `json:"black_user_id"`
+    Color       string `json:"color"`      // recipient's color: "white" | "black"
+}
+```
+
+### `inviteWire` (cmd/game/invites.go)
+```go
+type inviteWire struct {
+    ID           string  `json:"id"`
+    FromUserID   int64   `json:"from_user_id"`
+    FromUsername string  `json:"from_username,omitempty"`
+    ToUserID     int64   `json:"to_user_id"`
+    ToUsername   string  `json:"to_username,omitempty"`
+    TimeControl  string  `json:"time_control"`
+    Rated        bool    `json:"rated"`
+    Status       string  `json:"status"`
+    GameID       *string `json:"game_id,omitempty"`
+    CreatedAt    string  `json:"created_at"`   // RFC3339
+    ExpiresAt    string  `json:"expires_at"`   // RFC3339
+}
+```
+
+---
+
+## Section 5 — Known gaps (not yet implemented, but the SPA may stub)
+
+| Feature | SPA stubs visible | Backend status |
+|---|---|---|
+| Clocks (server-authoritative) | shows `white_think_time`/`black_think_time` (engine budget, NOT a game clock) | **Not implemented.** Highest-impact missing PvP feature. |
+| Draw offer / accept / decline | `SidePanel` emits `offer-draw` / `accept-draw` / `decline-draw`; GameView handles `draw_offered` WS event | **Not implemented.** |
+| Takeback request | similar to draw | **Not implemented.** |
+| Abort on disconnect | — | **Not implemented.** |
+| Spectator (read-only) | — | **Not implemented.** |
+| Rating updates on game-finish | `rating-updater` consumes `game:events`, runs Glicko-2 | **Implemented but unverified** — numerical correctness vs the standard paper not tested. |
+
+---
+
+## Section 6 — How to add a new wire surface
+
+1. Edit this doc first. Pick names, document the payload shape.
+2. Add a constant in `pkg/eventbus/eventbus.go` (or the HTTP route in
+   the appropriate gateway/service mux). Don't use string literals.
+3. Add the matching TypeScript type / store handler / api function.
+4. Reference the same constant from BOTH sides — backend emit site
+   AND frontend listener — so renames are single-grep operations.
+5. If you're adding a JSON payload, put the Go struct in `pkg/eventbus`
+   and the TS interface in `frontend/src/types.ts`. Keep field names
+   identical (snake_case) so they line up under JSON serialization.
+
+The pattern that has burned us: defining the wire type in one place
+and the listener in another. Don't do that.
