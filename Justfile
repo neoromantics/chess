@@ -101,7 +101,7 @@ secrets-init:
 
 # Deploy to K8s using standard Kustomize
 deploy-prod:
-    kubectl apply -k infra/kustomize/overlays/prod --load-restrictor LoadRestrictionsNone
+    kubectl apply -k infra --load-restrictor LoadRestrictionsNone
 
 # Rotate all secrets and rolling-restart pods in production
 secrets-rotate:

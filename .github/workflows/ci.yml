@@ -176,7 +176,7 @@ jobs:
           echo "${{ secrets.PROD_ENV_FILE }}" > .env
           
           # 2. Render and apply manifests using the runner's local kubectl
-          kubectl kustomize infra/kustomize/overlays/prod --load-restrictor LoadRestrictionsNone | kubectl apply -f -
+          kubectl kustomize infra --load-restrictor LoadRestrictionsNone | kubectl apply -f -
           
           # 3. Force rollout restart
           kubectl rollout restart deployment chess-gateway chess-user-service chess-game-service chess-matchmaker chess-rating-updater chess-worker -n chess

@@ -1,4 +1,197 @@
 ---
+# === POSTGRES ===
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: chess-db-pvc
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chess-db
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: chess-db
+  template:
+    metadata:
+      labels:
+        app: chess-db
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:16-alpine
+        ports:
+        - containerPort: 5432
+        env:
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: chess-secrets
+              key: POSTGRES_USER
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: chess-secrets
+              key: POSTGRES_DB
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: chess-secrets
+              key: POSTGRES_PASSWORD
+        volumeMounts:
+        - name: pgdata
+          mountPath: /var/lib/postgresql/data
+        readinessProbe:
+          exec:
+            command: ["pg_isready", "-U", "$(POSTGRES_USER)", "-d", "$(POSTGRES_DB)"]
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: pgdata
+        persistentVolumeClaim:
+          claimName: chess-db-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chess-db
+spec:
+  selector:
+    app: chess-db
+  ports:
+  - port: 5432
+    targetPort: 5432
+---
+# === REDIS ===
+# Single primary today. AOF persistence is enabled so a Redis restart
+# loses ~1s of pub/sub events at worst, not minutes of queued engine
+# requests. Sentinel/HA is a Phase 5 hardening task.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: chess-redis-config
+data:
+  redis.conf: |
+    appendonly yes
+    appendfsync everysec
+    # Cap memory to avoid OOMKill on tournament-day surges; eviction
+    # policy keeps the pub/sub keyspace warm and drops least-used state.
+    maxmemory 200mb
+    maxmemory-policy allkeys-lru
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: chess-redis-pvc
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chess-redis
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate  # PVC is RWO; rolling update would deadlock.
+  selector:
+    matchLabels:
+      app: chess-redis
+  template:
+    metadata:
+      labels:
+        app: chess-redis
+    spec:
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        args: ["/etc/redis/redis.conf"]
+        ports:
+        - containerPort: 6379
+        volumeMounts:
+        - name: config
+          mountPath: /etc/redis
+        - name: data
+          mountPath: /data
+        readinessProbe:
+          exec:
+            command: ["redis-cli", "ping"]
+          initialDelaySeconds: 3
+          periodSeconds: 5
+        resources:
+          requests:
+            cpu: 50m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+      volumes:
+      - name: config
+        configMap:
+          name: chess-redis-config
+      - name: data
+        persistentVolumeClaim:
+          claimName: chess-redis-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chess-redis
+spec:
+  selector:
+    app: chess-redis
+  ports:
+  - port: 6379
+    targetPort: 6379
+---
+# === INGRESS WITH TLS ===
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: chess-ingress
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+    traefik.ingress.kubernetes.io/router.middlewares: chess-redirect-https@kubernetescrd
+    traefik.ingress.kubernetes.io/service.sticky.cookie: "true"
+    traefik.ingress.kubernetes.io/service.sticky.cookie.name: "chess_api_pod"
+spec:
+  tls:
+  - hosts:
+    - vcm-50800.vm.duke.edu
+    secretName: chess-tls
+  rules:
+  - host: vcm-50800.vm.duke.edu
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: chess-gateway
+            port:
+              number: 80
+---
+# === HTTPS REDIRECT MIDDLEWARE ===
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: redirect-https
+spec:
+  redirectScheme:
+    scheme: https
+    permanent: true
+---
 # === GATEWAY ===
 apiVersion: apps/v1
 kind: Deployment

@@ -4,6 +4,9 @@ kind: Kustomization
 namespace: chess
 
 resources:
-  - resources.yaml
-  - microservices.yaml
+  - deploy.yaml
 
+secretGenerator:
+  - name: chess-secrets
+    envs:
+      - ../.env
