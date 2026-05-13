@@ -9,6 +9,7 @@ import (
 
 	"github.com/neoromantics/chess/pkg/auth"
 	"github.com/neoromantics/chess/pkg/db"
+	"github.com/neoromantics/chess/pkg/metrics"
 )
 
 type UserServer struct {
@@ -49,9 +50,10 @@ func main() {
 		w.WriteHeader(200)
 		w.Write([]byte("OK"))
 	})
+	mux.Handle("/metrics", metrics.Handler())
 
 	log.Printf("User Service starting on port %s...", port)
-	log.Fatal(http.ListenAndServe(":"+port, mux))
+	log.Fatal(http.ListenAndServe(":"+port, metrics.HTTPMiddleware("user-service", mux)))
 }
 
 func (s *UserServer) handleSignup(w http.ResponseWriter, r *http.Request) {

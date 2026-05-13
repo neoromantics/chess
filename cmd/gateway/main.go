@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/neoromantics/chess/pkg/auth"
 	"github.com/neoromantics/chess/pkg/eventbus"
+	"github.com/neoromantics/chess/pkg/metrics"
 )
 
 type Gateway struct {
@@ -141,8 +142,16 @@ func main() {
 	// 7. Static Assets & SPA Routing
 	mux.HandleFunc("/", gw.handleIndex)
 
+	// 8. Prometheus scrape endpoint. Lives outside auth.Middleware so
+	// the in-cluster Prometheus can scrape without a JWT.
+	mux.Handle("/metrics", metrics.Handler())
+
 	log.Printf("Gateway Service starting on port %s...", port)
-	log.Fatal(http.ListenAndServe(":"+port, auth.Middleware(mux)))
+	// metrics.HTTPMiddleware wraps the auth layer so we record every
+	// request including the unauthenticated ones (signup, login, /metrics
+	// itself, the SPA index). auth.Middleware is the inner wrap because
+	// the metrics labels don't care about who the user is.
+	log.Fatal(http.ListenAndServe(":"+port, metrics.HTTPMiddleware("gateway", auth.Middleware(mux))))
 }
 
 func (gw *Gateway) handleCreateGame(w http.ResponseWriter, r *http.Request) {

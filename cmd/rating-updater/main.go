@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/neoromantics/chess/pkg/db"
 	"github.com/neoromantics/chess/pkg/eventbus"
+	"github.com/neoromantics/chess/pkg/metrics"
 	"github.com/neoromantics/chess/pkg/rating"
 )
 
@@ -47,6 +49,19 @@ func main() {
 	go func() {
 		<-sigChan
 		cancel()
+	}()
+
+	// Small HTTP server that exists only to expose /metrics + /health
+	// for k8s probes and Prometheus scrape. Rating updater is otherwise
+	// a pure stream consumer.
+	go func() {
+		mux := http.NewServeMux()
+		mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(200)
+			w.Write([]byte("OK"))
+		})
+		mux.Handle("/metrics", metrics.Handler())
+		_ = http.ListenAndServe(":8080", metrics.HTTPMiddleware("rating-updater", mux))
 	}()
 
 	slog.Info("Rating Updater starting...")

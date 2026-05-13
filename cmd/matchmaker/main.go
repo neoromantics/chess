@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/neoromantics/chess/pkg/eventbus"
+	"github.com/neoromantics/chess/pkg/metrics"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -47,7 +48,8 @@ func main() {
 			w.WriteHeader(200)
 			w.Write([]byte("OK"))
 		})
-		http.ListenAndServe(":8080", mux)
+		mux.Handle("/metrics", metrics.Handler())
+		http.ListenAndServe(":8080", metrics.HTTPMiddleware("matchmaker", mux))
 	}()
 
 	slog.Info("Matchmaker Service starting...")

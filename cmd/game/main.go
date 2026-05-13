@@ -16,6 +16,7 @@ import (
 	"github.com/neoromantics/chess/pkg/db"
 	"github.com/neoromantics/chess/pkg/eventbus"
 	"github.com/neoromantics/chess/pkg/game"
+	"github.com/neoromantics/chess/pkg/metrics"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -87,7 +88,9 @@ func main() {
 		mux.HandleFunc("POST /api/invites/{id}/decline", s.handleDeclineInvite)
 		mux.HandleFunc("POST /api/invites/{id}/cancel", s.handleCancelInvite)
 
-		http.ListenAndServe(":8080", mux)
+		mux.Handle("/metrics", metrics.Handler())
+
+		http.ListenAndServe(":8080", metrics.HTTPMiddleware("game-service", mux))
 	}()
 
 	slog.Info("Game Service starting (Command Processor)...")

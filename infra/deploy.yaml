@@ -300,6 +300,13 @@ apiVersion: v1
 kind: Service
 metadata:
   name: chess-gateway
+  annotations:
+    # Prometheus discovers any Service with these annotations and scrapes
+    # /metrics on the listed port. Wired in cmd/gateway/main.go via the
+    # metrics.HTTPMiddleware + metrics.Handler() at /metrics.
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8080"
+    prometheus.io/path: "/metrics"
 spec:
   selector:
     app: chess-gateway
@@ -356,6 +363,10 @@ apiVersion: v1
 kind: Service
 metadata:
   name: chess-user-service
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8081"
+    prometheus.io/path: "/metrics"
 spec:
   selector:
     app: chess-user-service
@@ -404,6 +415,10 @@ apiVersion: v1
 kind: Service
 metadata:
   name: chess-game-service
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8080"
+    prometheus.io/path: "/metrics"
 spec:
   selector:
     app: chess-game-service
@@ -444,6 +459,10 @@ apiVersion: v1
 kind: Service
 metadata:
   name: chess-matchmaker
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8080"
+    prometheus.io/path: "/metrics"
 spec:
   selector:
     app: chess-matchmaker
@@ -490,6 +509,10 @@ apiVersion: v1
 kind: Service
 metadata:
   name: chess-rating-updater
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8080"
+    prometheus.io/path: "/metrics"
 spec:
   selector:
     app: chess-rating-updater
@@ -516,12 +539,34 @@ spec:
       - name: worker
         image: ghcr.io/neoromantics/chess:latest
         command: ["./worker"]
+        ports: [{containerPort: 8080}]
         env:
         - name: REDIS_URL
           value: chess-redis:6379
+        readinessProbe:
+          httpGet: {path: /health, port: 8080}
+          initialDelaySeconds: 3
+          periodSeconds: 10
         resources:
           requests: {cpu: 500m, memory: 256Mi}
           limits: {cpu: 1000m, memory: 512Mi}
+---
+# Worker is a pure stream consumer with no inbound traffic, but it now
+# exposes a tiny /health + /metrics HTTP listener for k8s probes and
+# Prometheus scrape. Service exists only so the scrape annotations work
+# under Prometheus's standard service-discovery rules.
+apiVersion: v1
+kind: Service
+metadata:
+  name: chess-worker
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8080"
+    prometheus.io/path: "/metrics"
+spec:
+  selector:
+    app: chess-worker
+  ports: [{port: 80, targetPort: 8080}]
 
 # ==============================================================================
 # 4. AUTOSCALING & DISRUPTION

@@ -9,6 +9,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/neoromantics/chess/pkg/eventbus"
+	"github.com/neoromantics/chess/pkg/metrics"
 )
 
 type Hub struct {
@@ -94,6 +95,7 @@ func (h *Hub) add(c *Client) {
 			h.gameSubs[c.gameID] = make(map[*Client]bool)
 		}
 		h.gameSubs[c.gameID][c] = true
+		metrics.WSConnectionsActive.WithLabelValues("gateway", "game").Inc()
 	}
 	if c.userID != 0 {
 		uidStr := strconv.FormatInt(c.userID, 10)
@@ -101,6 +103,7 @@ func (h *Hub) add(c *Client) {
 			h.userSubs[uidStr] = make(map[*Client]bool)
 		}
 		h.userSubs[uidStr][c] = true
+		metrics.WSConnectionsActive.WithLabelValues("gateway", "user").Inc()
 	}
 	slog.Info("ws client registered", "game_id", c.gameID, "user_id", c.userID)
 }
@@ -110,7 +113,10 @@ func (h *Hub) remove(c *Client) {
 	defer h.mu.Unlock()
 	if c.gameID != "" {
 		if clients, ok := h.gameSubs[c.gameID]; ok {
-			delete(clients, c)
+			if _, present := clients[c]; present {
+				delete(clients, c)
+				metrics.WSConnectionsActive.WithLabelValues("gateway", "game").Dec()
+			}
 			if len(clients) == 0 {
 				delete(h.gameSubs, c.gameID)
 			}
@@ -119,7 +125,10 @@ func (h *Hub) remove(c *Client) {
 	if c.userID != 0 {
 		uidStr := strconv.FormatInt(c.userID, 10)
 		if clients, ok := h.userSubs[uidStr]; ok {
-			delete(clients, c)
+			if _, present := clients[c]; present {
+				delete(clients, c)
+				metrics.WSConnectionsActive.WithLabelValues("gateway", "user").Dec()
+			}
 			if len(clients) == 0 {
 				delete(h.userSubs, uidStr)
 			}

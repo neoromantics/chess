@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"runtime"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/neoromantics/chess/pkg/core"
 	"github.com/neoromantics/chess/pkg/eventbus"
+	"github.com/neoromantics/chess/pkg/metrics"
 	"github.com/neoromantics/chess/pkg/uci"
 )
 
@@ -67,6 +69,18 @@ func main() {
 	}
 	sem := make(chan struct{}, maxConcurrent)
 	log.Printf("Worker [ENGINE]: Bounded concurrency to %d parallel searches", maxConcurrent)
+
+	// Tiny HTTP server for /metrics + /health probes. Worker is otherwise
+	// a pure stream consumer with no inbound traffic.
+	go func() {
+		mux := http.NewServeMux()
+		mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(200)
+			w.Write([]byte("OK"))
+		})
+		mux.Handle("/metrics", metrics.Handler())
+		_ = http.ListenAndServe(":8080", metrics.HTTPMiddleware("engine-worker", mux))
+	}()
 
 	go func() {
 		<-sigChan
