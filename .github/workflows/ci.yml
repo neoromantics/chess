@@ -95,33 +95,31 @@ jobs:
           context: .
           push: true
           tags: |
-            ghcr.io/neoromantics/chess/platform:latest
-            ghcr.io/neoromantics/chess/platform:${{ github.sha }}
+            ghcr.io/neoromantics/chess:latest
+            ghcr.io/neoromantics/chess:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # --- Secure Deployment (Self-Hosted Runner) ---
-
-  deploy:
-    runs-on: self-hosted
-    needs: [docker]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    steps:
+      # --- Secure Deployment (Self-Hosted Runner) ---
+      deploy:
+      runs-on: self-hosted
+      needs: [docker]
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      steps:
       - uses: actions/checkout@v4
-      
-      - name: Deploy to Local k3s
+
+      - name: Nuclear Cleanup (Namespace Reset)
         run: |
-          # 1. Clean slate: Delete old deployments to avoid label/pod drift
-          kubectl delete deployment --all -n chess || true
-          
-          # 2. Recreate .env for Kustomize
+          # Forcefully remove all resources to prevent split-brain with old pods
+          kubectl delete all --all -n chess || true
+          kubectl delete ingress --all -n chess || true
+
+      - name: Deploy Unified Fleet
+        run: |
+          # 1. Recreate .env for Kustomize
           echo "${{ secrets.PROD_ENV_FILE }}" > .env
-          if [ ! -s .env ]; then echo "Error: PROD_ENV_FILE secret is empty"; exit 1; fi
-          
-          # 3. Render and apply manifests using the runner's local kubectl
+
+          # 2. Render and apply manifests
           kubectl kustomize infra --load-restrictor LoadRestrictionsNone | kubectl apply -f -
 
-          
-          # 3. Force rollout restart
-          kubectl rollout restart deployment chess-gateway chess-user-service chess-game-service chess-matchmaker chess-rating-updater chess-worker -n chess
 

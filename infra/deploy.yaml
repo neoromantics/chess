@@ -202,7 +202,7 @@ spec:
     spec:
       containers:
       - name: gateway
-        image: ghcr.io/neoromantics/chess/platform:latest
+        image: ghcr.io/neoromantics/chess:latest
         command: ["./gateway"]
         ports:
         - containerPort: 8080
@@ -251,7 +251,7 @@ spec:
     spec:
       containers:
       - name: user-service
-        image: ghcr.io/neoromantics/chess/platform:latest
+        image: ghcr.io/neoromantics/chess:latest
         command: ["./user-service"]
         ports:
         - containerPort: 8081
@@ -316,7 +316,7 @@ spec:
     spec:
       containers:
       - name: game-service
-        image: ghcr.io/neoromantics/chess/platform:latest
+        image: ghcr.io/neoromantics/chess:latest
         command: ["./game-service"]
         ports:
         - containerPort: 8080
@@ -376,7 +376,7 @@ spec:
     spec:
       containers:
       - name: matchmaker
-        image: ghcr.io/neoromantics/chess/platform:latest
+        image: ghcr.io/neoromantics/chess:latest
         command: ["./matchmaker"]
         env:
         - name: REDIS_URL
@@ -417,7 +417,7 @@ spec:
     spec:
       containers:
       - name: rating-updater
-        image: ghcr.io/neoromantics/chess/platform:latest
+        image: ghcr.io/neoromantics/chess:latest
         command: ["./rating-updater"]
         env:
         - name: REDIS_URL
@@ -469,7 +469,7 @@ spec:
     spec:
       containers:
       - name: worker
-        image: ghcr.io/neoromantics/chess/platform:latest
+        image: ghcr.io/neoromantics/chess:latest
         command: ["./worker"]
         env:
         - name: REDIS_URL
