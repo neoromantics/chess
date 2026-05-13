@@ -104,15 +104,15 @@ spec:
     spec:
       containers:
       - name: pgbouncer
-        # Switched to bitnami/pgbouncer after edoburu/pgbouncer:1.23.x
-        # tags didn't resolve on Docker Hub. Bitnami publishes
-        # consistently and tracks pgbouncer upstream tightly.
-        #
-        # Env var schema differs from edoburu (POSTGRESQL_* prefix,
-        # PGBOUNCER_* for tuning). PGBOUNCER_PORT=5432 overrides the
-        # bitnami default of 6432 so the Service doesn't need a
-        # targetPort change.
-        image: bitnami/pgbouncer:1.23.1
+        # Tag-pinning has been a footgun: edoburu 1.23.1, edoburu
+        # 1.23.0, and bitnami 1.23.1 all returned manifest-not-found
+        # against Docker Hub. Using `latest` to break the loop. Once
+        # this pod is Ready, read the resolved digest via:
+        #   kubectl -n chess describe pod -l app=chess-pgbouncer \
+        #     | grep -E 'Image:|Image ID'
+        # and pin the imageDigest above to whatever it shows.
+        image: bitnami/pgbouncer:latest
+        imagePullPolicy: Always  # so we always re-fetch the tag's digest until pinned
         ports: [{containerPort: 5432}]
         env:
         - name: POSTGRESQL_HOST
