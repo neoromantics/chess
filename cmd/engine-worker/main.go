@@ -18,7 +18,6 @@ import (
 	"github.com/neoromantics/chess/pkg/core"
 	"github.com/neoromantics/chess/pkg/eventbus"
 	"github.com/neoromantics/chess/pkg/uci"
-	"golang.org/x/term"
 )
 
 var (
@@ -29,8 +28,12 @@ var (
 func main() {
 	flag.Parse()
 
-	// 1. Check for UCI mode (explicit flag or piped input)
-	if *uciMode || !term.IsTerminal(int(os.Stdin.Fd())) {
+	// UCI mode is opt-in via -uci. Auto-detecting via tty heuristic
+	// (term.IsTerminal(stdin)) was a footgun in containers — k8s pods
+	// have no tty, so the worker would silently enter UCI mode on
+	// startup, read stdin, hit EOF, exit clean. K8s saw Completed,
+	// restarted, repeat forever.
+	if *uciMode {
 		u := uci.NewUCI(os.Stdout)
 		u.Run(os.Stdin)
 		return
