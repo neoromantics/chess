@@ -8,40 +8,49 @@ A production multiplayer chess platform deployed to `https://vcm-50800.vm.duke.e
 
 ## High-level architecture
 
-Six Go services, one Postgres, one Redis. All cross-service comms via Redis. All six services build from a single multi-stage Dockerfile into one image; the binary to run is selected by the deployment's `command:`.
+**Three Go services**, one Postgres, one Redis. All cross-service comms via Redis. All three services build from a single multi-stage Dockerfile into one image; the binary to run is selected by the deployment's `command:`.
+
+We were briefly six pods (gateway, user-service, game-service, matchmaker, rating-updater, engine-worker). The split was over-engineered for this scale and most of our bugs were wire-protocol drift across the extra boundaries. Consolidated 6→3 in commits c413513…43d5f8b: user-service folded into gateway, matchmaker + rating-updater folded into game-service. **engine-worker stays separate** because CPU-bound search has a genuinely different scaling profile (HPA on queue depth, can scale out wide).
 
 **This is not a fully event-sourced platform** despite some early docs framing it that way. The Streams layer is intentionally narrow — see the **Streams-vs-HTTP rule** below.
 
 ```
-                       Browser (Vue 3 SPA, embedded into the gateway binary)
-                                       │
-                                       ▼  HTTPS + WSS
-              ┌──────────────────── gateway ────────────────────┐
-              │ JWT auth, HTTP routing, WebSocket fan-out,      │
-              │ reverse-proxy to user/game services, intent     │
-              │ dispatch (Commands) to matchmaker/game.         │
-              └──┬─────────────┬─────────────┬───────────────┬──┘
-                 ▼             ▼             ▼               ▼
-            user-service  game-service  matchmaker      engine-worker
-            (auth, PG)    (auth game    (queue +        (CPU search,
-                          state, PG)     pairing)        Redis Streams
-                                                         consumer group)
-                 │             │             │               │
-                 └──── PG ─────┘             └───── Redis ───┘
-                       │
-                  rating-updater (Glicko-2 on game finish, leaderless ticker)
+                  Browser (Vue 3 SPA, embedded into the gateway binary)
+                                  │
+                                  ▼  HTTPS + WSS
+        ┌────────────────────── gateway ──────────────────────┐
+        │ JWT auth, signup/login/profile/search,              │
+        │ HTTP routing, WebSocket fan-out (PSUBSCRIBE), intent│
+        │ dispatch (Commands) to game-service, replay HTML.   │
+        └──────┬──────────────────────────────┬───────────────┘
+               │                              │
+               ▼                              ▼
+         game-service (HPA 2-6)         engine-worker (HPA 2-8)
+         · sync HTTP: /api/move,        · CPU-bound search
+           /api/state, /api/games,      · engine:requests stream
+           /api/invites/*, /api/resign  · engine:results stream
+         · stream consumers: game       · concurrency = GOMAXPROCS(0)
+           commands, engine results       (one search per pod)
+         · goroutines (singletons via
+           leader election): matchmaker
+           pairing, invite expiry sweep,
+           rating-updater (Glicko-2)
+                │                                ▲
+                ▼                                │
+              Postgres  ◀──── shared cache + bus ──── Redis
+              (durable truth)                   (hot cache, streams,
+                                                 pub/sub, locks)
 ```
 
 ### Service responsibilities
 
-- **`gateway` (cmd/gateway)** — Stateless HTTP/WS entry. Validates JWT via `auth.Middleware`, reverse-proxies `/api/auth/`, `/api/user/`, `/api/users/`, `/api/state`, `/api/games`, `/api/invites/` to the right service; handles intent dispatch (`POST /api/games/new`, `POST /api/matchmaking/{join,leave}`) by appending Commands to the `game:commands` stream. **Frontend SPA is embedded only here** via `go:embed all:dist`. The hub runs Redis `PSUBSCRIBE game.evt.*` and `user.evt.*` to fan messages out to locally-attached WebSocket clients. Two WS endpoints: `/ws?game_id=X` (per-game stream) and `/ws/user` (per-user, for invites/match-found).
-- **`user-service` (cmd/user)** — Owns identities. Routes: signup/login/logout/me/profile/password/stats and `/api/users/search`. Reads/writes `users` table. Validates JWTs.
-- **`game-service` (cmd/game)** — Authoritative game state machine. Consumes the `game:commands` stream (consumer group `game-service-group`), validates moves, mutates the `games` row, emits typed events to `game:events` stream **and** publishes to `game.evt.{id}` Pub/Sub for realtime push. Also serves synchronous HTTP for `/api/state`, `/api/games`, `/api/invites/*`, `/api/replay`. Hosts the invite expiry sweeper goroutine.
-- **`matchmaker` (cmd/matchmaker)** — Consumes the same `game:commands` stream (its own group). Maintains per-time-control sorted sets `mm:queue:{tc}`; pairs adjacent entries on a 2s ticker; dispatches a `CreatePvPGame` Command to game-service and publishes `MatchFound` on both users' `user.evt.{id}` channels.
-- **`rating-updater` (cmd/rating-updater)** — Reads `game:events` stream (own consumer group). On `GameFinished`, applies Glicko-2 (`pkg/rating`) to both sides and writes back via `db.UpdateUserRating`.
-- **`engine-worker` (cmd/engine-worker)** — CPU-bound search. Reads the `engine:requests` stream (`engine-worker-group`), publishes results to the `engine:results` Pub/Sub channel. Runs **exactly one search per pod**: concurrency caps at `runtime.GOMAXPROCS(0)` (cgroup-aware, **not** `runtime.NumCPU()`). To handle more concurrent searches, scale OUT (more pods), don't pack threads. Same binary can run as a UCI CLI via `-uci`; opt-in only, never auto-detected (that bug bit us — every k8s pod tty-check failed and silently EOF'd).
+- **`gateway` (cmd/gateway)** — Stateless HTTP/WS entry. Validates JWT via `auth.Middleware`, serves the auth + profile surface directly (signup, login, /api/user/*, /api/users/search), reverse-proxies game endpoints to game-service with `?user_id=N` injection. Handles intent dispatch (`POST /api/games/new`, `POST /api/matchmaking/{join,leave}`) by appending Commands to the `game:commands` stream. **Frontend SPA is embedded only here** via `go:embed all:dist`. The hub runs Redis `PSUBSCRIBE game.evt.*` and `user.evt.*` to fan messages out to locally-attached WebSocket clients. Two WS endpoints: `/ws?game_id=X` (per-game stream) and `/ws/user` (per-user, for invites/match-found). Opens its own PG pool for the auth + profile reads.
+- **`game-service` (cmd/game)** — Authoritative game state machine + everything else that touches game state. Sync HTTP for the SPA contract: `/api/state`, `/api/games`, `/api/move`, `/api/resign`, `/api/new`, `/api/undo`, `/api/hint`, `/api/assess`, `/api/touch`, `/api/touch_move`, `/api/load`, `/api/save`, `/api/replay`, `/api/invites/*`. Stream consumers: `game:commands` (game-service-group) for engine-translated MakeMove + JoinQueue/LeaveQueue, `engine:results` for engine-worker outputs, `game:events` (rating-updater-group) for Glicko-2 updates. Goroutines started at boot: invite expiry sweeper (30s ticker), matchmaker pairing loop (2s ticker, Redis-leader-elected via `mm:leader` so only one replica pairs), rating updater (consumer group reader). Every read-modify-write on `games` rows goes through the per-game Redis lock and the hot cache.
+- **`engine-worker` (cmd/engine-worker)** — CPU-bound search. Reads the `engine:requests` stream (`engine-worker-group`), publishes results to the `engine:results` stream. Runs **exactly one search per pod**: concurrency caps at `runtime.GOMAXPROCS(0)` (cgroup-aware, **not** `runtime.NumCPU()`). To handle more concurrent searches, scale OUT (more pods), don't pack threads. Same binary can run as a UCI CLI via `-uci`; opt-in only, never auto-detected (that bug bit us — every k8s pod tty-check failed and silently EOF'd).
 
 ## Wire-protocol contracts (read before adding new events)
+
+**See `pkg/wire/CONTRACT.md` for the canonical source of truth** — every endpoint, every event type, every payload shape, with both the backend constant and the frontend listener. The doc is normative; this section is the high-level summary.
 
 Three Redis "channels" with different durability semantics. Don't conflate them.
 
@@ -50,7 +59,7 @@ Three Redis "channels" with different durability semantics. Don't conflate them.
 | `game:commands` | Stream + consumer group | Durable, at-least-once via XCLAIM | Intent dispatch from gateway/matchmaker → game-service |
 | `game:events` | Stream + consumer group | Durable, replayable | Facts emitted by game-service → rating-updater, audit |
 | `engine:requests` | Stream + consumer group | Durable | Search work → engine-worker pool |
-| `engine:results` | Pub/Sub channel | Ephemeral | Worker → game-service result fan-in |
+| `engine:results` | Stream + consumer group | Durable, at-least-once | Worker → game-service result fan-in (was Pub/Sub; promoted in fa76c2f after a production loss-of-result incident) |
 | `game.evt.{id}` | Pub/Sub channel | Ephemeral | game-service → gateway hub → per-game WS clients |
 | `user.evt.{id}` | Pub/Sub channel | Ephemeral | any service → gateway hub → per-user WS clients |
 
@@ -148,5 +157,5 @@ Real gaps surfaced during debugging or load reasoning:
 - Matchmaker uses naïve `ZRange 0 2`; needs expanding rating window over time
 - `rating-updater` has minimal Glicko-2 wiring; verify against the reference paper's worked example before trusting it
 
-**Architecture review (queued for discussion):**
-- The 6-pod split may be over-engineered for current scale. user-service is largely a thin auth wrapper that could fold into the gateway. matchmaker + rating-updater are < 200 lines of consumer-loop code each. Worth revisiting whether 3 pods (gateway+user merged, game, engine-worker) plus matchmaker/rating as goroutines would be more honest. Defer until the hardening items above land.
+**Architecture review (done):**
+- 6 → 3 pod consolidation shipped. user-service folded into gateway, matchmaker + rating-updater folded into game-service. CLAUDE.md now reflects the 3-pod reality.

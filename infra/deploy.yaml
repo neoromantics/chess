@@ -333,55 +333,12 @@ spec:
 #   kubectl -n chess delete svc chess-matchmaker
 #
 ---
-# RATING UPDATER
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: chess-rating-updater
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: chess-rating-updater
-  template:
-    metadata:
-      labels:
-        app: chess-rating-updater
-    spec:
-      imagePullSecrets: [{name: ghcr-auth}]
-      containers:
-      - name: rating-updater
-        image: ghcr.io/neoromantics/chess:latest
-        command: ["./rating-updater"]
-        ports: [{containerPort: 8080}]
-        env:
-        - name: REDIS_URL
-          value: chess-redis:6379
-        - name: POSTGRES_USER
-          valueFrom: {secretKeyRef: {name: chess-secrets, key: POSTGRES_USER}}
-        - name: POSTGRES_DB
-          valueFrom: {secretKeyRef: {name: chess-secrets, key: POSTGRES_DB}}
-        - name: POSTGRES_PASSWORD
-          valueFrom: {secretKeyRef: {name: chess-secrets, key: POSTGRES_PASSWORD}}
-        - name: DATABASE_URL
-          value: "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@chess-db:5432/$(POSTGRES_DB)?sslmode=disable"
-        resources:
-          requests: {cpu: 50m, memory: 64Mi}
-          limits: {cpu: 200m, memory: 128Mi}
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: chess-rating-updater
-  annotations:
-    prometheus.io/scrape: "true"
-    prometheus.io/port: "8080"
-    prometheus.io/path: "/metrics"
-spec:
-  selector:
-    app: chess-rating-updater
-  ports: [{port: 80, targetPort: 8080}]
-
+# chess-rating-updater was retired in the 6→3 pod consolidation. The
+# Glicko-2 consumer now runs as a goroutine inside game-service.
+# Operator action after this lands:
+#   kubectl -n chess delete deploy chess-rating-updater
+#   kubectl -n chess delete svc chess-rating-updater
+#
 ---
 # ENGINE WORKER
 apiVersion: apps/v1

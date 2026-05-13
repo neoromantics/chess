@@ -101,6 +101,10 @@ func main() {
 	// pairing loop is Redis-leader-elected so multiple game-service
 	// replicas don't race the queue. See cmd/game/matchmaker.go.
 	go s.runPairingLoop(ctx)
+	// Rating updater absorbed from the former cmd/rating-updater pod.
+	// Consumer-group reader on game:events; processes GameFinished
+	// events and writes Glicko-2 deltas to PG. See cmd/game/rating.go.
+	go s.runRatingUpdater(ctx)
 	s.Run(ctx)
 }
 

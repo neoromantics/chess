@@ -26,8 +26,7 @@ COPY --from=frontend-builder /app/frontend/dist/ cmd/gateway/dist/
 RUN mkdir -p /build && \
     CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags='-s -w' -o /build/worker ./cmd/engine-worker && \
     CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags='-s -w' -o /build/gateway ./cmd/gateway && \
-    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags='-s -w' -o /build/game-service ./cmd/game && \
-    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags='-s -w' -o /build/rating-updater ./cmd/rating-updater
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags='-s -w' -o /build/game-service ./cmd/game
 
 # --- Stage 3: Unified Platform Runtime ---
 FROM alpine:latest

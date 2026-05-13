@@ -43,7 +43,6 @@ jobs:
         run: |
           go build -o /dev/null ./cmd/gateway
           go build -o /dev/null ./cmd/game
-          go build -o /dev/null ./cmd/rating-updater
           go build -o chess-worker ./cmd/engine-worker
 
       - name: Smoke Test (UCI Worker)
@@ -116,7 +115,7 @@ jobs:
           kubectl apply -k infra/
           kubectl -n chess rollout restart deployment \
             chess-gateway chess-game-service \
-            chess-rating-updater chess-worker
+            chess-worker
 
 
 
