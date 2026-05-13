@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/neoromantics/chess/pkg/core"
 	"github.com/neoromantics/chess/pkg/db"
 	"github.com/neoromantics/chess/pkg/eventbus"
 	"github.com/neoromantics/chess/pkg/game"
@@ -69,6 +70,39 @@ func main() {
 	s.Run(ctx)
 }
 
+// stateJSON is the contract the SPA expects from /api/state. The DB
+// row stores history / history_san / assessments as JSON-encoded
+// strings (so a single Postgres column can hold a JSON array); the
+// frontend expects parsed arrays plus derived fields (turn, legal
+// moves, in_check, last_move). We synthesize the full snapshot here.
+//
+// Keep this in sync with frontend/src/types.ts:StateJSON. Renaming a
+// field is a wire-protocol break; adding a field is safe.
+type stateJSON struct {
+	FEN            string    `json:"fen"`
+	Turn           string    `json:"turn"`
+	EngineWhite    bool      `json:"engine_white"`
+	EngineBlack    bool      `json:"engine_black"`
+	EngineToMove   bool      `json:"engine_to_move"`
+	Status         string    `json:"status"`
+	InCheck        bool      `json:"in_check"`
+	LegalMoves     []string  `json:"legal_moves"`
+	History        []string  `json:"history"`
+	HistorySAN     []string  `json:"history_san"`
+	LastMove       *moveJSON `json:"last_move"`
+	Thinking       bool      `json:"thinking"`
+	TouchMove      bool      `json:"touch_move"`
+	TouchedSquare  string    `json:"touched_square"`
+	WhiteThinkTime int       `json:"white_think_time"`
+	BlackThinkTime int       `json:"black_think_time"`
+	Assessments    []any     `json:"assessments"`
+}
+
+type moveJSON struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
 func (s *GameService) handleState(w http.ResponseWriter, r *http.Request) {
 	gameID := r.URL.Query().Get("game_id")
 	if gameID == "" {
@@ -82,7 +116,71 @@ func (s *GameService) handleState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, rec)
+	// Rehydrate the game from the persisted FEN + move history so we
+	// can compute legal moves, last move, and check status for the
+	// snapshot. The arrays in the DB row are JSON strings; parse them
+	// before handing to game.Load.
+	var history, historySAN []string
+	if rec.History != "" {
+		_ = json.Unmarshal([]byte(rec.History), &history)
+	}
+	if rec.HistorySAN != "" {
+		_ = json.Unmarshal([]byte(rec.HistorySAN), &historySAN)
+	}
+	var assessments []any
+	if rec.Assessments != "" {
+		_ = json.Unmarshal([]byte(rec.Assessments), &assessments)
+	}
+	if history == nil {
+		history = []string{}
+	}
+	if historySAN == nil {
+		historySAN = []string{}
+	}
+	if assessments == nil {
+		assessments = []any{}
+	}
+
+	gm := game.NewGame()
+	gm.Load(rec.FEN, history, rec.EngineWhite, rec.EngineBlack)
+	gm.HistorySAN = historySAN
+
+	turn := "w"
+	if gm.Board.SideToMove == core.Black {
+		turn = "b"
+	}
+	legal := gm.Board.GenerateLegalMoves()
+	legalStrs := make([]string, len(legal))
+	for i, m := range legal {
+		legalStrs[i] = m.String()
+	}
+	var last *moveJSON
+	if gm.LastMove != nil {
+		last = &moveJSON{
+			From: core.SquareName(gm.LastMove.From),
+			To:   core.SquareName(gm.LastMove.To),
+		}
+	}
+
+	writeJSON(w, stateJSON{
+		FEN:            gm.Board.FEN(),
+		Turn:           turn,
+		EngineWhite:    gm.EngineWhite,
+		EngineBlack:    gm.EngineBlack,
+		EngineToMove:   gm.EngineToMove(),
+		Status:         string(gm.Status()),
+		InCheck:        gm.Board.InCheck(gm.Board.SideToMove),
+		LegalMoves:     legalStrs,
+		History:        history,
+		HistorySAN:     historySAN,
+		LastMove:       last,
+		Thinking:       false, // wired in Phase 4 when worker dispatch tracks per-game inflight
+		TouchMove:      gm.TouchMove,
+		TouchedSquare:  core.SquareName(gm.TouchedSq),
+		WhiteThinkTime: rec.WhiteThinkTime,
+		BlackThinkTime: rec.BlackThinkTime,
+		Assessments:    assessments,
+	})
 }
 
 func (s *GameService) handleListGames(w http.ResponseWriter, r *http.Request) {
