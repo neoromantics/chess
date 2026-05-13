@@ -33,9 +33,9 @@ func loadSecret() []byte {
 			return
 		}
 		jwtSecret = []byte(uuid.New().String())
-		fmt.Fprintln(os.Stderr, "⚠️  WARNING: JWT_SECRET not set. Using ephemeral random secret.")
+		fmt.Fprintln(os.Stderr, "WARNING: JWT_SECRET not set. Using ephemeral random secret.")
 		fmt.Fprintln(os.Stderr, "   All user sessions will be invalidated on restart.")
-		fmt.Fprintln(os.Stderr, "   Set JWT_SECRET via 'just secrets-init' or K8s Secrets for production.")
+		fmt.Fprintln(os.Stderr, "   Set JWT_SECRET in the chess-secrets k8s Secret (see infra/bootstrap-secrets.sh).")
 	})
 	return jwtSecret
 }

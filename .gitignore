@@ -27,16 +27,11 @@ default.pgo
 # Frontend
 /frontend/dist/
 /frontend/node_modules/
-/pkg/api/dist/
 
-# Database
-*.db
-*.db-shm
-*.db-wal
-/data/
-
-# Postgres data
+# Postgres data (local-only, never deployed)
 /postgres-data/
 
-# Environment secrets (use .env.example as template)
+# Stray env files. Production secrets live in k3s; nothing in this repo
+# should ever rely on a local .env existing.
 .env
+.env.*

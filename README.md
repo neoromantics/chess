@@ -22,13 +22,18 @@ Six independent microservices coordinate via **Event Sourcing** and **Redis Stre
 - **Optimistic Concurrency**: Database consistency is managed via Postgres MVCC.
 
 ## 🛠 Operations
+Direct commands (no task runner — there is no Justfile):
+
 | Command | Description |
 |---------|-------------|
-| `just up` | Start the entire microservices stack locally (Docker Compose) |
-| `just build` | Build all production binaries and the Vue frontend |
-| `just deploy-prod` | Deploy the 6-pod fleet to k3s using Kustomize |
-| `just logs-gateway` | Watch the primary entrance logs |
-| `just logs-game` | Watch the authoritative game logic logs |
+| `go test ./pkg/...` | Run the Go test suite (CI gates on this) |
+| `go build ./...` | Build every service binary into the default Go cache |
+| `gofmt -l .` | Format check (CI fails if non-empty) |
+| `kubectl apply -k infra/` | Apply the cluster manifests (run on the VM) |
+| `kubectl -n chess logs -l app=chess-gateway --tail=80` | Watch the primary entrance logs |
+| `kubectl -n chess logs -l app=chess-game-service --tail=80` | Watch the authoritative game logic logs |
+| `cd frontend && npm run build` | Build the Vue SPA (auto-embedded into the gateway image by Dockerfile) |
+| `sqlc generate -f infra/sqlc.yaml` | Regenerate `pkg/db/gen/*` after editing SQL |
 
 ### Production Deployment
 The platform uses **GitHub Actions** with a **Self-Hosted Runner** to deploy directly to the k3s cluster. Manifests in `infra/` are rendered and applied locally on the VM without requiring exposed inbound ports or SSH keys.

@@ -1,6 +1,0 @@
-# Exclude legacy files and data
-gui_backup.go
-postgres-data/
-pkg/api/dist/
-frontend/dist/
-frontend/node_modules/

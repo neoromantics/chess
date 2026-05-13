@@ -23,7 +23,7 @@ jobs:
       - name: Gofmt check
         run: |
           if [ -n "$(gofmt -l .)" ]; then
-            echo "Go code is not formatted. Run 'just fmt' locally."
+            echo "Go code is not formatted. Run 'gofmt -w .' locally."
             gofmt -d .
             exit 1
           fi
