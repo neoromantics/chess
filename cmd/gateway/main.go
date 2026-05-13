@@ -69,10 +69,13 @@ func main() {
 		w.Write([]byte("Gateway OK"))
 	})
 
-	// 2. Reverse proxy to User Service
+	// 2. Reverse proxy to User Service. /api/users/ (plural) is the
+	// search endpoint used by the invite autocomplete; the singular
+	// /api/user/ is self-service (me/profile/password/stats).
 	userProxy := httputil.NewSingleHostReverseProxy(userSvcURL)
 	mux.HandleFunc("/api/auth/", userProxy.ServeHTTP)
 	mux.HandleFunc("/api/user/", userProxy.ServeHTTP)
+	mux.HandleFunc("/api/users/", userProxy.ServeHTTP)
 
 	// 3. Reverse proxy to Game Service. Wrapped in injectAuthedUser so
 	// downstream services don't have to re-validate the JWT — they
@@ -97,6 +100,12 @@ func main() {
 	// service consumes, MatchFound event fans out via user.evt.
 	mux.HandleFunc("POST /api/matchmaking/join", gw.handleJoinQueue)
 	mux.HandleFunc("POST /api/matchmaking/leave", gw.handleLeaveQueue)
+
+	// 5b. Invites (synchronous CRUD, not Command-based). Game-service
+	// owns the durable PG row and the realtime user.evt fan-out.
+	// injectAuthedUser appends ?user_id=N so game-service knows the
+	// caller without re-validating JWTs.
+	mux.Handle("/api/invites/", gw.injectAuthedUser(gameProxy))
 
 	// 6. WebSockets
 	mux.HandleFunc("/ws", gw.handleWSGame)

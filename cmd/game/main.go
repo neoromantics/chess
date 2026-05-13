@@ -53,7 +53,9 @@ func main() {
 		cancel()
 	}()
 
-	// Health check and API server
+	// Health check and API server. All /api/invites/* routes assume the
+	// gateway has already JWT-validated the caller and injected
+	// ?user_id=N — no service downstream re-checks the token.
 	go func() {
 		mux := http.NewServeMux()
 		mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -62,11 +64,19 @@ func main() {
 		})
 		mux.HandleFunc("/api/state", s.handleState)
 		mux.HandleFunc("/api/games", s.handleListGames)
+
+		mux.HandleFunc("POST /api/invites/send", s.handleSendInvite)
+		mux.HandleFunc("GET /api/invites/pending", s.handleListPendingInvites)
+		mux.HandleFunc("POST /api/invites/{id}/accept", s.handleAcceptInvite)
+		mux.HandleFunc("POST /api/invites/{id}/decline", s.handleDeclineInvite)
+		mux.HandleFunc("POST /api/invites/{id}/cancel", s.handleCancelInvite)
+
 		http.ListenAndServe(":8080", mux)
 	}()
 
 	slog.Info("Game Service starting (Command Processor)...")
 	go s.listenToEngineResults(ctx)
+	go s.runInviteSweeper(ctx)
 	s.Run(ctx)
 }
 
