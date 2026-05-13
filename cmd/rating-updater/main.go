@@ -15,6 +15,7 @@ import (
 	"github.com/neoromantics/chess/pkg/eventbus"
 	"github.com/neoromantics/chess/pkg/metrics"
 	"github.com/neoromantics/chess/pkg/rating"
+	"github.com/redis/go-redis/v9"
 )
 
 type RatingUpdater struct {
@@ -92,22 +93,20 @@ func (s *RatingUpdater) Run(ctx context.Context) {
 	}
 }
 
-func (s *RatingUpdater) processEvent(ctx context.Context, msg any) {
-	// Re-typed for convenience
-	m := msg.(struct {
-		ID     string
-		Values map[string]any
-	})
-
-	var evt eventbus.Event
-	data, ok := m.Values["data"].(string)
+// processEvent takes the message in its real type. The previous form
+// used `msg any` + a type assertion to an anonymous struct that was
+// structurally identical to redis.XMessage but a distinct type from
+// Go's perspective — every call panicked at runtime ("interface
+// conversion: interface{} is redis.XMessage, not struct{...}").
+func (s *RatingUpdater) processEvent(ctx context.Context, msg redis.XMessage) {
+	data, ok := msg.Values["data"].(string)
 	if !ok {
 		return
 	}
+	var evt eventbus.Event
 	if err := json.Unmarshal([]byte(data), &evt); err != nil {
 		return
 	}
-
 	if evt.Type == eventbus.EvtGameFinished {
 		s.handleGameFinished(ctx, evt)
 	}
