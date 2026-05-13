@@ -24,6 +24,8 @@ spec:
       labels:
         app: chess-db
     spec:
+      imagePullSecrets:
+      - name: ghcr-auth
       containers:
       - name: postgres
         image: postgres:16-alpine
@@ -107,6 +109,8 @@ spec:
       labels:
         app: chess-redis
     spec:
+      imagePullSecrets:
+      - name: ghcr-auth
       containers:
       - name: redis
         image: redis:7-alpine
@@ -200,6 +204,8 @@ spec:
       labels:
         app: chess-gateway
     spec:
+      imagePullSecrets:
+      - name: ghcr-auth
       containers:
       - name: gateway
         image: ghcr.io/neoromantics/chess:latest
@@ -249,6 +255,8 @@ spec:
       labels:
         app: chess-user-service
     spec:
+      imagePullSecrets:
+      - name: ghcr-auth
       containers:
       - name: user-service
         image: ghcr.io/neoromantics/chess:latest
@@ -314,6 +322,8 @@ spec:
       labels:
         app: chess-game-service
     spec:
+      imagePullSecrets:
+      - name: ghcr-auth
       containers:
       - name: game-service
         image: ghcr.io/neoromantics/chess:latest
@@ -374,6 +384,8 @@ spec:
       labels:
         app: chess-matchmaker
     spec:
+      imagePullSecrets:
+      - name: ghcr-auth
       containers:
       - name: matchmaker
         image: ghcr.io/neoromantics/chess:latest
@@ -415,6 +427,8 @@ spec:
       labels:
         app: chess-rating-updater
     spec:
+      imagePullSecrets:
+      - name: ghcr-auth
       containers:
       - name: rating-updater
         image: ghcr.io/neoromantics/chess:latest
@@ -467,6 +481,8 @@ spec:
       labels:
         app: chess-worker
     spec:
+      imagePullSecrets:
+      - name: ghcr-auth
       containers:
       - name: worker
         image: ghcr.io/neoromantics/chess:latest
