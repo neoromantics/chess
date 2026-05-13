@@ -8,7 +8,9 @@ A production multiplayer chess platform deployed to `https://vcm-50800.vm.duke.e
 
 ## High-level architecture
 
-Six Go services, one Postgres, one Redis. All cross-service comms via Redis (Streams for durable commands/events, Pub/Sub for realtime fan-out). All six services build from a single multi-stage Dockerfile into one image; the binary to run is selected by the deployment's `command:`.
+Six Go services, one Postgres, one Redis. All cross-service comms via Redis. All six services build from a single multi-stage Dockerfile into one image; the binary to run is selected by the deployment's `command:`.
+
+**This is not a fully event-sourced platform** despite some early docs framing it that way. The Streams layer is intentionally narrow — see the **Streams-vs-HTTP rule** below.
 
 ```
                        Browser (Vue 3 SPA, embedded into the gateway binary)
@@ -60,12 +62,14 @@ All Command/Event types live in `pkg/eventbus/eventbus.go`. Adding a new type is
 
 ## Key invariants
 
+- **Streams vs HTTP rule.** Redis Streams are used for **(1) CPU-asymmetric workloads** (engine search dispatch + result delivery on `engine:requests` / `engine:results`) and **(2) cross-service intent** (matchmaker pairing on `game:commands`). Everything else — single-game mutations, invites, profile changes — uses synchronous HTTP through the gateway. **Do not put a user-initiated chess action behind a Stream**; the SPA expects each button to round-trip a new `StateJSON`. See cmd/game/handlers.go for the pattern.
+- **Per-game lock (Redis `game:lock:{id}`, SETNX + token + Lua release).** Every code path that reads-then-writes a game's row must hold this lock for the duration. With N replicas of game-service consuming the same Redis Stream, the round-robin delivery does NOT partition by game_id; two MakeMove commands for the same game could otherwise race. See `acquireGameLock` in cmd/game/lock.go.
 - **Gateway injects `?user_id=N` into proxied requests.** Downstream services trust this query param and do not re-validate JWTs. See `injectAuthedUser` in cmd/gateway/main.go. Letting the frontend supply `user_id` would let any caller read anyone's games.
+- **Per-game authorization at every game-keyed endpoint.** `userOwnsGame(uid, rec)` is the predicate; non-participants get 404 (not 403) so existence doesn't leak. The WS upgrade gate pre-flights /api/state with the user_id injected to enforce the same check.
 - **Only gateway and user-service get `JWT_SECRET`** (see infra/deploy.yaml). Other services don't validate tokens; they're behind the gateway.
 - **Frontend is embedded only in the gateway binary** (`cmd/gateway/dist/` via `go:embed`). Other services that need a built asset (e.g. game-service's replay JSON) compose with the gateway, which substitutes templates.
 - **`pkg/core` is zero-dependency, pure Go.** The chess engine search is the core IP; do not introduce deps there.
-- **No distributed locks.** The event-sourced design uses Redis Streams + consumer groups for ordering, Postgres MVCC for consistency. Resist re-introducing `SETNX` locks.
-- **In-memory game state in any service is a bug.** Every request is hydrated from Postgres. The previous monolith taught us this the hard way.
+- **Postgres is durable truth; Redis is the hot cache.** (When the cache layer lands — currently in progress.) Reads go Redis-first with PG fallback; writes go write-through. Don't store game state in process memory — that breaks multi-replica.
 
 ## Common operations
 
@@ -130,9 +134,19 @@ Common failure modes and where to look:
 
 ## Things explicitly left as follow-ups
 
-These are real gaps surfaced during recent debugging. Pick them up rather than re-discovering:
+Real gaps surfaced during debugging or load reasoning:
 
-- Server-authoritative clocks for PvP (currently `Thinking: false` is hardcoded in `stateJSON` since no central inflight tracking exists yet)
-- Matchmaker uses a naïve `ZRange 0 2` pair; should grow the rating window over time
+**Production hardening (queued, prioritized):**
+- **PGBouncer** in front of Postgres. Current connection-pool math: 6 services × 2 replicas × 25 max conns = 300 vs PG's default 100. Sustained load → `too many connections`. Drop-in fix via `edoburu/pgbouncer` deployment + `DATABASE_URL` rewrite.
+- **Redis Sentinel** (3 sentinels + primary + replica). Single Redis today = full-platform SPOF. AOF helps durability, doesn't help failover.
+- **Redis hot cache** for game state (`game:state:{id}` hash). Eliminates the PG round-trip on `/api/state` and the GetGame inside every mutation. Drops read latency ~10×; halves PG load.
+- **KEDA** on `engine:requests` stream length as the engine-worker HPA signal (currently CPU utilization, which is a proxy).
+- **PG read replicas** for ListGames / search / replay queries.
+
+**Product / chess features:**
+- Server-authoritative clocks for PvP (the `Thinking` flag is now a Redis sentinel key; clocks need their own per-game keys)
+- Matchmaker uses naïve `ZRange 0 2`; needs expanding rating window over time
 - `rating-updater` has minimal Glicko-2 wiring; verify against the reference paper's worked example before trusting it
-- KEDA on Redis stream length would be a better engine-worker HPA signal than CPU utilization
+
+**Architecture review (queued for discussion):**
+- The 6-pod split may be over-engineered for current scale. user-service is largely a thin auth wrapper that could fold into the gateway. matchmaker + rating-updater are < 200 lines of consumer-loop code each. Worth revisiting whether 3 pods (gateway+user merged, game, engine-worker) plus matchmaker/rating as goroutines would be more honest. Defer until the hardening items above land.

@@ -144,6 +144,12 @@ func (s *GameService) withLockedMutation(
 		Payload: snapPayload,
 	})
 
+	// Any state change invalidates a previously-set "thinking" sentinel
+	// — if a human just moved or reset the game, the old engine search
+	// is no longer relevant. triggerEngineForMove below will re-set it
+	// (with the right TTL) when applicable.
+	_ = s.bus.Rdb().Del(context.Background(), "game:thinking:"+rec.ID).Err()
+
 	// If it's now an engine's turn and the game isn't over, kick off
 	// the search. Async on a background context so the HTTP response
 	// returns immediately; the engine result arrives later via the

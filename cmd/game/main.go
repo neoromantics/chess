@@ -327,7 +327,10 @@ func (s *GameService) processEngineResult(ctx context.Context, msg redis.XMessag
 	}
 
 	// Translate the engine's chosen move into a MakeMove Command so
-	// the same code path (with its per-game lock) applies it.
+	// the same code path (with its per-game lock) applies it. Clearing
+	// the thinking sentinel happens inside handleMakeMove after the
+	// save succeeds, so the SPA's spinner falls only when the move is
+	// actually on the board.
 	cmdPayload, _ := json.Marshal(eventbus.MakeMoveCmd{Move: resp.BestMove})
 	cmd := eventbus.Command{
 		Type:    eventbus.CmdMakeMove,
@@ -578,6 +581,10 @@ func (s *GameService) handleMakeMove(ctx context.Context, cmd eventbus.Command) 
 		slog.Error("failed to save game", "error", err)
 		return
 	}
+	// Engine response landed and the move is on the board — drop the
+	// thinking sentinel so the SPA's spinner clears immediately rather
+	// than waiting for the TTL.
+	_ = s.bus.Rdb().Del(ctx, "game:thinking:"+rec.ID).Err()
 
 	evtPayload := eventbus.MovePlayedEvt{
 		Move:       matched.String(),
