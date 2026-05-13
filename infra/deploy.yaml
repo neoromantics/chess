@@ -73,6 +73,84 @@ spec:
     targetPort: 5432
 
 ---
+# === PGBOUNCER (connection multiplexing) ===
+# Without this, every service pod's sql.DB pool (MaxOpenConns=25)
+# multiplied by replicas (6 services × ~2 replicas) creates ~300
+# possible client connections against a Postgres whose default
+# max_connections is 100. Under sustained load, services start getting
+# "too many connections" and crash-loop.
+#
+# pgbouncer in transaction-pool mode multiplexes thousands of client
+# connections into a handful of real Postgres backends. lib/pq + sqlc
+# (emit_prepared_queries=false) are compatible with transaction pooling.
+# Configuration is supplied via env vars (the edoburu image generates
+# pgbouncer.ini + userlist.txt at boot from these), so there's no
+# ConfigMap with the PG password sitting at rest unencrypted.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chess-pgbouncer
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: chess-pgbouncer
+  template:
+    metadata:
+      labels:
+        app: chess-pgbouncer
+    spec:
+      containers:
+      - name: pgbouncer
+        image: edoburu/pgbouncer:1.23.1
+        ports: [{containerPort: 5432}]
+        env:
+        - name: POSTGRES_USER
+          valueFrom: {secretKeyRef: {name: chess-secrets, key: POSTGRES_USER}}
+        - name: POSTGRES_PASSWORD
+          valueFrom: {secretKeyRef: {name: chess-secrets, key: POSTGRES_PASSWORD}}
+        - name: DB_HOST
+          value: chess-db
+        - name: DB_PORT
+          value: "5432"
+        - name: DB_USER
+          valueFrom: {secretKeyRef: {name: chess-secrets, key: POSTGRES_USER}}
+        - name: DB_PASSWORD
+          valueFrom: {secretKeyRef: {name: chess-secrets, key: POSTGRES_PASSWORD}}
+        - name: AUTH_TYPE
+          value: md5
+        - name: POOL_MODE
+          value: transaction
+        - name: MAX_CLIENT_CONN
+          value: "1000"
+        - name: DEFAULT_POOL_SIZE
+          value: "25"
+        - name: SERVER_RESET_QUERY
+          value: DISCARD ALL
+        - name: IGNORE_STARTUP_PARAMETERS
+          value: extra_float_digits
+        readinessProbe:
+          tcpSocket: {port: 5432}
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        resources:
+          requests: {cpu: 50m, memory: 64Mi}
+          limits: {cpu: 200m, memory: 128Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chess-pgbouncer
+spec:
+  selector:
+    app: chess-pgbouncer
+  ports:
+  - port: 5432
+    targetPort: 5432
+
+---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -255,7 +333,7 @@ spec:
         - name: POSTGRES_PASSWORD
           valueFrom: {secretKeyRef: {name: chess-secrets, key: POSTGRES_PASSWORD}}
         - name: DATABASE_URL
-          value: "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@chess-db:5432/$(POSTGRES_DB)?sslmode=disable"
+          value: "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@chess-pgbouncer:5432/$(POSTGRES_DB)?sslmode=disable"
         - name: JWT_SECRET
           valueFrom: {secretKeyRef: {name: chess-secrets, key: JWT_SECRET}}
         readinessProbe:
@@ -302,7 +380,7 @@ spec:
         - name: POSTGRES_PASSWORD
           valueFrom: {secretKeyRef: {name: chess-secrets, key: POSTGRES_PASSWORD}}
         - name: DATABASE_URL
-          value: "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@chess-db:5432/$(POSTGRES_DB)?sslmode=disable"
+          value: "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@chess-pgbouncer:5432/$(POSTGRES_DB)?sslmode=disable"
         readinessProbe:
           httpGet: {path: /health, port: 8080}
 ---
@@ -384,7 +462,7 @@ spec:
         - name: POSTGRES_PASSWORD
           valueFrom: {secretKeyRef: {name: chess-secrets, key: POSTGRES_PASSWORD}}
         - name: DATABASE_URL
-          value: "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@chess-db:5432/$(POSTGRES_DB)?sslmode=disable"
+          value: "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@chess-pgbouncer:5432/$(POSTGRES_DB)?sslmode=disable"
 ---
 apiVersion: v1
 kind: Service
