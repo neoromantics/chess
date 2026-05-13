@@ -197,6 +197,12 @@ spec:
           value: http://chess-user-service:80
         - name: GAME_SERVICE_URL
           value: http://chess-game-service:80
+        # Gateway runs auth.Middleware, so it MUST verify JWTs with the
+        # same key user-service signs with. Without this env, loadSecret()
+        # falls back to a random ephemeral key on each boot and every
+        # auth-gated request 401s the moment a fresh user signs up.
+        - name: JWT_SECRET
+          valueFrom: {secretKeyRef: {name: chess-secrets, key: JWT_SECRET}}
         readinessProbe:
           httpGet: {path: /health, port: 8080}
           initialDelaySeconds: 5
