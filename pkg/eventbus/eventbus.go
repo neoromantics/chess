@@ -16,8 +16,14 @@ const (
 	StreamGameCommands   = "game:commands"
 	StreamGameEvents     = "game:events"
 	StreamEngineRequests = "engine:requests"
-	ChannelEngineResults = "engine:results"
-	ChannelUserEvents    = "user:events:" // Prefix: user:events:{userID}
+	// StreamEngineResults replaced the old ChannelEngineResults
+	// Pub/Sub channel after a production incident: pub/sub drops
+	// messages when no subscriber is connected (game-service mid
+	// rolling restart, OOM, etc.). engine:results is now a durable
+	// stream with a consumer group so at-least-once delivery applies
+	// in both directions of the engine round-trip.
+	StreamEngineResults = "engine:results"
+	ChannelUserEvents   = "user:events:" // Prefix: user:events:{userID}
 )
 
 // EngineRequest represents a request for the engine to calculate a move.
@@ -261,13 +267,26 @@ func (c *Client) ReadEngineRequests(ctx context.Context, group, consumer string,
 	return c.readStream(ctx, StreamEngineRequests, group, consumer, timeout)
 }
 
-// SendEngineResponse publishes a calculation result to the engine:results channel.
+// SendEngineResponse appends a calculation result to the engine:results
+// stream. Durable — game-service can pick it up after a restart instead
+// of losing the move forever (which is what happened when this was a
+// Pub/Sub channel).
 func (c *Client) SendEngineResponse(ctx context.Context, resp EngineResponse) error {
 	data, err := json.Marshal(resp)
 	if err != nil {
 		return err
 	}
-	return c.rdb.Publish(ctx, ChannelEngineResults, data).Err()
+	_, err = c.rdb.XAdd(ctx, &redis.XAddArgs{
+		Stream: StreamEngineResults,
+		Values: map[string]interface{}{"data": data},
+	}).Result()
+	return err
+}
+
+// ReadEngineResults blocks until an engine result is available. Used
+// by game-service to consume worker outputs as a durable stream.
+func (c *Client) ReadEngineResults(ctx context.Context, group, consumer string, timeout time.Duration) ([]redis.XMessage, error) {
+	return c.readStream(ctx, StreamEngineResults, group, consumer, timeout)
 }
 
 func (c *Client) readStream(ctx context.Context, stream, group, consumer string, timeout time.Duration) ([]redis.XMessage, error) {

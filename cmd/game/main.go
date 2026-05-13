@@ -256,38 +256,62 @@ func writeJSON(w http.ResponseWriter, v any) {
 	json.NewEncoder(w).Encode(v)
 }
 
+// listenToEngineResults consumes the engine:results stream and converts
+// each engine search outcome into a MakeMove Command on game:commands.
+// The stream + consumer group pattern (vs the old Pub/Sub) means a
+// game-service restart no longer loses results — they sit in the
+// stream's pending entries list until acked.
 func (s *GameService) listenToEngineResults(ctx context.Context) {
-	pubsub := s.bus.Rdb().Subscribe(ctx, eventbus.ChannelEngineResults)
-	defer pubsub.Close()
-
-	ch := pubsub.Channel()
+	hostname, _ := os.Hostname()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case msg := <-ch:
-			if msg == nil {
-				return
-			}
-			var resp eventbus.EngineResponse
-			if err := json.Unmarshal([]byte(msg.Payload), &resp); err != nil {
+		default:
+			msgs, err := s.bus.ReadEngineResults(ctx, "game-engine-results-group", hostname, 5*time.Second)
+			if err != nil {
+				if ctx.Err() == nil {
+					slog.Error("engine-results read error", "error", err)
+				}
+				time.Sleep(1 * time.Second)
 				continue
 			}
-
-			if resp.Context != "move" {
-				continue
+			for _, msg := range msgs {
+				s.processEngineResult(ctx, msg)
+				s.bus.Ack(ctx, eventbus.StreamEngineResults, "game-engine-results-group", msg.ID)
 			}
-
-			// Automated engine move command
-			cmdPayload, _ := json.Marshal(eventbus.MakeMoveCmd{Move: resp.BestMove})
-			cmd := eventbus.Command{
-				Type:    eventbus.CmdMakeMove,
-				GameID:  resp.GameID,
-				UserID:  0, // System/Engine user
-				Payload: cmdPayload,
-			}
-			s.bus.SendCommand(ctx, cmd)
 		}
+	}
+}
+
+func (s *GameService) processEngineResult(ctx context.Context, msg redis.XMessage) {
+	data, ok := msg.Values["data"].(string)
+	if !ok {
+		return
+	}
+	var resp eventbus.EngineResponse
+	if err := json.Unmarshal([]byte(data), &resp); err != nil {
+		slog.Error("engine-result unmarshal failed", "error", err)
+		return
+	}
+	if resp.Context != "move" {
+		// hint / assess results need different handling (broadcast
+		// to the WS hub rather than dispatching a Command). Not yet
+		// implemented; ack and drop so they don't pile up.
+		return
+	}
+
+	// Translate the engine's chosen move into a MakeMove Command so
+	// the same code path (with its per-game lock) applies it.
+	cmdPayload, _ := json.Marshal(eventbus.MakeMoveCmd{Move: resp.BestMove})
+	cmd := eventbus.Command{
+		Type:    eventbus.CmdMakeMove,
+		GameID:  resp.GameID,
+		UserID:  0, // System/Engine user
+		Payload: cmdPayload,
+	}
+	if _, err := s.bus.SendCommand(ctx, cmd); err != nil {
+		slog.Error("dispatch engine MakeMove failed", "game_id", resp.GameID, "error", err)
 	}
 }
 
