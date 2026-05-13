@@ -100,12 +100,12 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # --- Secure Deployment (Self-Hosted Runner) ---
-      deploy:
-      runs-on: self-hosted
-      needs: [docker]
-      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-      steps:
+  # --- Secure Deployment (Self-Hosted Runner) ---
+  deploy:
+    runs-on: self-hosted
+    needs: [docker]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
       - uses: actions/checkout@v4
 
       - name: Nuclear Cleanup (Namespace Reset)
@@ -121,5 +121,6 @@ jobs:
 
           # 2. Render and apply manifests
           kubectl kustomize infra --load-restrictor LoadRestrictionsNone | kubectl apply -f -
+
 
 
