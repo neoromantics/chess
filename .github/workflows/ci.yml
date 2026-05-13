@@ -107,7 +107,13 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v4
-
+      
+      - name: Total Namespace Reset
+        run: |
+          # Change selectors are immutable. We must delete the old deployments
+          # to allow the new microservices architecture to spin up.
+          kubectl delete deployments --all -n chess || true
+          
       - name: Deploy Unified Fleet
         run: |
           # 1. Build .env from individual secrets
@@ -116,25 +122,9 @@ jobs:
           echo "POSTGRES_DB=${{ secrets.POSTGRES_DB }}" >> .env
           echo "JWT_SECRET=${{ secrets.JWT_SECRET }}" >> .env
           
-          # 2. Diagnostic: List keys found (masking values for safety)
-          echo "Checking .env structure (keys only):"
-          sed 's/=.*$/=******/' .env
-          
-          # 3. Validate secret contents
-          if ! grep -q "POSTGRES_USER=." .env; then
-            echo "CRITICAL: POSTGRES_USER is empty or missing from GitHub Secrets!"
-            exit 1
-          fi
-          
-          # 4. Selective Cleanup: Remove legacy pods
-          kubectl delete deployment chess-api -n chess || true
-          kubectl delete deployment worker -n chess || true
-          
-          # 5. Render and apply manifests
+          # 2. Render and apply manifests
           kubectl kustomize infra --load-restrictor LoadRestrictionsNone | kubectl apply -f -
-          
-          # 6. Force rollout restart
-          kubectl rollout restart deployment chess-gateway chess-user-service chess-game-service chess-matchmaker chess-rating-updater chess-worker -n chess
+
 
 
 
