@@ -263,11 +263,23 @@ spec:
         env:
         - name: PORT
           value: "8081"
-        - name: DATABASE_URL
+        - name: POSTGRES_USER
           valueFrom:
             secretKeyRef:
               name: chess-secrets
-              key: DATABASE_URL
+              key: POSTGRES_USER
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: chess-secrets
+              key: POSTGRES_DB
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: chess-secrets
+              key: POSTGRES_PASSWORD
+        - name: DATABASE_URL
+          value: "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@chess-db:5432/$(POSTGRES_DB)?sslmode=disable"
         - name: JWT_SECRET
           valueFrom:
             secretKeyRef:
@@ -315,11 +327,23 @@ spec:
         env:
         - name: REDIS_URL
           value: chess-redis:6379
-        - name: DATABASE_URL
+        - name: POSTGRES_USER
           valueFrom:
             secretKeyRef:
               name: chess-secrets
-              key: DATABASE_URL
+              key: POSTGRES_USER
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: chess-secrets
+              key: POSTGRES_DB
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: chess-secrets
+              key: POSTGRES_PASSWORD
+        - name: DATABASE_URL
+          value: "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@chess-db:5432/$(POSTGRES_DB)?sslmode=disable"
         readinessProbe:
           httpGet:
             path: /health
@@ -400,11 +424,23 @@ spec:
         env:
         - name: REDIS_URL
           value: chess-redis:6379
-        - name: DATABASE_URL
+        - name: POSTGRES_USER
           valueFrom:
             secretKeyRef:
               name: chess-secrets
-              key: DATABASE_URL
+              key: POSTGRES_USER
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: chess-secrets
+              key: POSTGRES_DB
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: chess-secrets
+              key: POSTGRES_PASSWORD
+        - name: DATABASE_URL
+          value: "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@chess-db:5432/$(POSTGRES_DB)?sslmode=disable"
 ---
 apiVersion: v1
 kind: Service

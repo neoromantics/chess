@@ -97,8 +97,8 @@ jobs:
           target: gateway-runtime
           push: true
           tags: |
-            ghcr.io/${{ github.repository }}/gateway:latest
-            ghcr.io/${{ github.repository }}/gateway:${{ github.sha }}
+            ghcr.io/neoromantics/chess/gateway:latest
+            ghcr.io/neoromantics/chess/gateway:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -109,8 +109,8 @@ jobs:
           target: user-runtime
           push: true
           tags: |
-            ghcr.io/${{ github.repository }}/user-service:latest
-            ghcr.io/${{ github.repository }}/user-service:${{ github.sha }}
+            ghcr.io/neoromantics/chess/user-service:latest
+            ghcr.io/neoromantics/chess/user-service:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -121,8 +121,8 @@ jobs:
           target: game-runtime
           push: true
           tags: |
-            ghcr.io/${{ github.repository }}/game-service:latest
-            ghcr.io/${{ github.repository }}/game-service:${{ github.sha }}
+            ghcr.io/neoromantics/chess/game-service:latest
+            ghcr.io/neoromantics/chess/game-service:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -133,8 +133,8 @@ jobs:
           target: matchmaker-runtime
           push: true
           tags: |
-            ghcr.io/${{ github.repository }}/matchmaker:latest
-            ghcr.io/${{ github.repository }}/matchmaker:${{ github.sha }}
+            ghcr.io/neoromantics/chess/matchmaker:latest
+            ghcr.io/neoromantics/chess/matchmaker:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -145,8 +145,8 @@ jobs:
           target: rating-updater-runtime
           push: true
           tags: |
-            ghcr.io/${{ github.repository }}/rating-updater:latest
-            ghcr.io/${{ github.repository }}/rating-updater:${{ github.sha }}
+            ghcr.io/neoromantics/chess/rating-updater:latest
+            ghcr.io/neoromantics/chess/rating-updater:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -157,8 +157,8 @@ jobs:
           target: worker-runtime
           push: true
           tags: |
-            ghcr.io/${{ github.repository }}/worker:latest
-            ghcr.io/${{ github.repository }}/worker:${{ github.sha }}
+            ghcr.io/neoromantics/chess/worker:latest
+            ghcr.io/neoromantics/chess/worker:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -172,11 +172,16 @@ jobs:
       
       - name: Deploy to Local k3s
         run: |
-          # 1. Recreate .env for Kustomize
-          echo "${{ secrets.PROD_ENV_FILE }}" > .env
+          # 1. Clean slate: Delete old deployments to avoid label/pod drift
+          kubectl delete deployment --all -n chess || true
           
-          # 2. Render and apply manifests using the runner's local kubectl
+          # 2. Recreate .env for Kustomize
+          echo "${{ secrets.PROD_ENV_FILE }}" > .env
+          if [ ! -s .env ]; then echo "Error: PROD_ENV_FILE secret is empty"; exit 1; fi
+          
+          # 3. Render and apply manifests using the runner's local kubectl
           kubectl kustomize infra --load-restrictor LoadRestrictionsNone | kubectl apply -f -
+
           
           # 3. Force rollout restart
           kubectl rollout restart deployment chess-gateway chess-user-service chess-game-service chess-matchmaker chess-rating-updater chess-worker -n chess
