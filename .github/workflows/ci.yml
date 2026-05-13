@@ -109,26 +109,32 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Deploy Unified Fleet
+        env:
+          PROD_ENV: ${{ secrets.PROD_ENV_FILE }}
         run: |
-          # 1. Recreate .env for Kustomize
-          printf "%s\n" "${{ secrets.PROD_ENV_FILE }}" > .env
+          # 1. Recreate .env using an environment variable (safe for multiline)
+          echo "$PROD_ENV" > .env
           
-          # 2. Validate secret contents (checking for golden keys)
-          if ! grep -q "POSTGRES_USER=" .env; then
+          # 2. Diagnostic: List keys found (masking values for safety)
+          echo "Checking .env structure (keys only):"
+          sed 's/=.*$/=******/' .env
+          
+          # 3. Validate secret contents
+          if ! grep -q "POSTGRES_USER" .env; then
             echo "CRITICAL: POSTGRES_USER missing from PROD_ENV_FILE secret!"
             exit 1
           fi
           
-          # 3. Selective Cleanup: Remove legacy pods that don't match the new architecture
-          # This prevents port/label collisions without a 'nuclear' reset.
+          # 4. Selective Cleanup: Remove legacy pods
           kubectl delete deployment chess-api -n chess || true
           kubectl delete deployment worker -n chess || true
           
-          # 4. Render and apply manifests
+          # 5. Render and apply manifests
           kubectl kustomize infra --load-restrictor LoadRestrictionsNone | kubectl apply -f -
           
-          # 5. Force rollout restart to pick up latest image tags immediately
+          # 6. Force rollout restart
           kubectl rollout restart deployment chess-gateway chess-user-service chess-game-service chess-matchmaker chess-rating-updater chess-worker -n chess
+
 
 
 
