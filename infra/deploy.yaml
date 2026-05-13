@@ -24,8 +24,6 @@ spec:
       labels:
         app: chess-db
     spec:
-      imagePullSecrets:
-      - name: ghcr-auth
       containers:
       - name: postgres
         image: postgres:16-alpine
@@ -109,8 +107,6 @@ spec:
       labels:
         app: chess-redis
     spec:
-      imagePullSecrets:
-      - name: ghcr-auth
       containers:
       - name: redis
         image: redis:7-alpine
