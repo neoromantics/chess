@@ -155,6 +155,23 @@ let lastSoundedHistoryLen = 0;
 let prevFenForSound = '';
 let audioCtx: AudioContext | null = null;
 
+// Serialize WS-triggered /api/state refetches. Engine-vs-engine games
+// (and rapid PvP) can fire two MovePlayed events in quick succession,
+// and parallel fetches resolve out of order — the +2 response can land
+// before the +1 response, leaving lastSoundedHistoryLen ahead of the
+// state we eventually apply. Coalesce: at most one fetch in flight,
+// queue at most one followup.
+let stateFetchInFlight = false;
+let stateFetchPending = false;
+const refetchState = () => {
+  if (stateFetchInFlight) { stateFetchPending = true; return; }
+  stateFetchInFlight = true;
+  api.getState(props.id).then(updateState).catch(() => {}).finally(() => {
+    stateFetchInFlight = false;
+    if (stateFetchPending) { stateFetchPending = false; refetchState(); }
+  });
+};
+
 const ensureAudio = () => {
   if (!audioCtx) {
     try { audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)(); }
@@ -254,7 +271,13 @@ const updateState = (s: StateJSON) => {
   }
   
   const newLen = s.history ? s.history.length : 0;
-  if (newLen === lastSoundedHistoryLen + 1) {
+  // Strict newLen == lastSounded+1 misses sounds when two state updates
+  // arrive close enough that we only see the cumulative delta (e.g.
+  // engine-vs-engine, or a stale fetch landing after a fresher one).
+  // Use ">" so any forward progress in history fires a sound; cap with
+  // Math.max so an out-of-order older response doesn't rewind us and
+  // re-trigger the same sound on the next legitimate update.
+  if (newLen > lastSoundedHistoryLen) {
     let kind = 'move';
     if (s.in_check) kind = 'check';
     else {
@@ -263,7 +286,7 @@ const updateState = (s: StateJSON) => {
     }
     playMoveSound(kind);
   }
-  lastSoundedHistoryLen = newLen;
+  lastSoundedHistoryLen = Math.max(lastSoundedHistoryLen, newLen);
   prevFenForSound = s.fen;
 };
 
@@ -290,7 +313,7 @@ const connectWS = () => {
       if (data.type === 'state' || data.type === 'StateUpdated') {
         updateState(data.payload);
       } else if (data.type === 'MovePlayed' || data.type === 'GameStarted') {
-        api.getState(props.id).then(updateState).catch(() => {});
+        refetchState();
       } else if (data.type === 'hint') {
         onHintReceived(data.payload);
       } else if (data.type === 'assess') {

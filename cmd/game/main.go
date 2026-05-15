@@ -217,11 +217,17 @@ func (s *GameService) snapshotFromRecord(ctx context.Context, rec *db.GameRecord
 	for i, m := range legal {
 		legalStrs[i] = m.String()
 	}
+	// rec.FEN stores the *current* (post-move) position, so gm.Load
+	// above can't replay history (the first move is illegal in the
+	// loaded position; the error is swallowed). gm.LastMove is therefore
+	// always nil here — derive the last move directly from the history
+	// array, which is always a UCI string ("e2e4" or "e7e8q"). Without
+	// this the SPA never sees last_move and the from/to highlight on
+	// the board never renders.
 	var last *moveJSON
-	if gm.LastMove != nil {
-		last = &moveJSON{
-			From: core.SquareName(gm.LastMove.From),
-			To:   core.SquareName(gm.LastMove.To),
+	if n := len(history); n > 0 {
+		if mv := history[n-1]; len(mv) >= 4 {
+			last = &moveJSON{From: mv[:2], To: mv[2:4]}
 		}
 	}
 
