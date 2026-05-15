@@ -111,13 +111,8 @@ func main() {
 	mux.Handle("POST /api/new", gw.injectAuthedUser(gameProxy))
 	mux.Handle("POST /api/set_players", gw.injectAuthedUser(gameProxy))
 	mux.Handle("POST /api/undo", gw.injectAuthedUser(gameProxy))
-	mux.Handle("POST /api/touch", gw.injectAuthedUser(gameProxy))
-	mux.Handle("POST /api/touch_move", gw.injectAuthedUser(gameProxy))
-	mux.Handle("POST /api/load", gw.injectAuthedUser(gameProxy))
 	mux.Handle("DELETE /api/games/delete", gw.injectAuthedUser(gameProxy))
-	mux.Handle("GET /api/save", gw.injectAuthedUser(gameProxy))
 	mux.Handle("POST /api/hint", gw.injectAuthedUser(gameProxy))
-	mux.Handle("POST /api/assess", gw.injectAuthedUser(gameProxy))
 
 	// 4. New game (intent dispatch). Async: gateway publishes a Command
 	// onto the game:commands stream and returns the assigned game_id

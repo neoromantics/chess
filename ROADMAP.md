@@ -43,25 +43,45 @@ Nothing right now — the platform is in a stable state. Pick the next item belo
 
 ---
 
+## Queued — Restore deleted features (2026-05-14 cleanup pass)
+
+The cleanup pass deleted speculative / broken surfaces to lower
+entropy while we land core multiplayer correctness. Re-introduce one
+at a time with a fresh design pass each — don't `git revert`. The
+full removal list is in `pkg/wire/CONTRACT.md` Section 5; the most
+likely-to-return ones:
+
+- ⬜ **Touch-move rule** — chess.com/lichess parity. Re-add as a
+      session-level toggle, not a per-game mutation.
+- ⬜ **Move assessment** — engine-graded annotations on the move list,
+      pushed via WS instead of the old request/response dance.
+- ⬜ **Bullet/blitz time controls** (1+0, 3+2, 5+0, 10+5…) — gated on
+      server clocks landing first; meaningless without them.
+- ⬜ **Save / load PGN** — proper PGN this time, not the JSON dump.
+- ⬜ **Board editor + FEN paste** — a small standalone view, not
+      bolted into GameView.
+
+---
+
 ## Queued — Product / chess features
 
 In priority order. Each is independent; ship one at a time.
 
 ### ⬜ Server-authoritative clocks for PvP — **highest impact**
-Bullet (1+0, 2+1), blitz (3+2, 5+0), rapid (10+5, 15+10) are configurable but the `white_time` / `black_time` fields aren't yet decremented per move. Today the only timer is engine think-time.
+Currently only engine think-time exists; the single PvP time control
+(`15+10`) is configured but not enforced. Sketch:
 
-Sketch:
-- Redis hash `game:clock:{id}` storing `white_ms`, `black_ms`, `turn_started_at_ns`.
-- On every `MakeMove`, server deducts `now - turn_started_at` from the moving side, persists, broadcasts the new times on `game.evt.{id}`.
-- A small flag-fall sweeper (game-service goroutine, leader-elected like matchmaker) checks games where time has run out and emits `GameFinished` with `result = 1-0` / `0-1`.
+- Redis hash `clock:{id}` storing `white_ms`, `black_ms`, `turn_started_ms`, `inc_ms`, `mover`.
+- On every move (HTTP move handler + engine MakeMove path), server deducts `now - turn_started` from the moving side, applies the increment, swaps mover, persists, broadcasts the new times on `game.evt.{id}`.
+- A flag-fall sweeper (game-service goroutine; per-game lock makes it idempotent across replicas) scans a `clock:fallschedule` sorted set and finishes any game whose mover ran out.
 - SPA extrapolates between ticks for smoothness; server's number wins on every WS event.
 - Reconnect: GET `/api/state` carries the canonical `white_ms` / `black_ms`.
 
 ### ⬜ Draw offer / accept / decline
-SidePanel already emits the events; needs:
+Was removed in the cleanup. Re-add as:
 - `POST /api/games/{id}/draw-offer`, `/draw-accept`, `/draw-decline` endpoints in game-service.
-- WS events `draw_offered`, `draw_accepted`, `draw_declined` on the per-game channel (the SPA already handles `draw_offered`).
-- Pending state stored on the `games` row as a small enum field, or in a Redis ephemeral key `draw-offer:{game_id}` with TTL = remaining clock.
+- WS events `draw_offered`, `draw_accepted`, `draw_declined` on the per-game channel.
+- Pending state in a Redis ephemeral key `draw-offer:{game_id}` with TTL = remaining clock.
 
 ### ⬜ Takeback request / accept
 Same shape as draw. Casual games only — never on rated.

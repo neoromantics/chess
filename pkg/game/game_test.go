@@ -144,34 +144,6 @@ func TestRepetitionResetOnPawnMove(t *testing.T) {
 	}
 }
 
-func TestTouchCommits(t *testing.T) {
-	g := NewGame()
-	g.TouchMove = true
-	g.Touch(core.Sq(4, 1)) // e2 — has legal moves
-	if g.TouchedSq != core.Sq(4, 1) {
-		t.Errorf("TouchedSq = %d, want e2 (%d)", g.TouchedSq, core.Sq(4, 1))
-	}
-	if g.TouchLost {
-		t.Error("TouchLost set after touching a movable piece")
-	}
-}
-
-func TestTouchImmovablePieceLoses(t *testing.T) {
-	g := NewGame()
-	g.TouchMove = true
-	// Black to move. f7 pawn is blocked by f6 white pawn and cannot capture.
-	if err := g.Load("6k1/5p2/5P2/8/8/8/8/4K3 b - - 0 1", nil, false, false); err != nil {
-		t.Fatal(err)
-	}
-	g.Touch(core.Sq(5, 6)) // f7
-	if !g.TouchLost {
-		t.Error("touching the immovable f7 pawn should set TouchLost")
-	}
-	if g.Status() != StatusTouchLost {
-		t.Errorf("status = %s, want touch_lost", g.Status())
-	}
-}
-
 func TestLastHumanMoveIndexSkipsEngine(t *testing.T) {
 	g := NewGame()
 	g.EngineBlack = true // White=human, Black=engine

@@ -75,13 +75,8 @@ func main() {
 		mux.HandleFunc("POST /api/new", s.handleHTTPNew)
 		mux.HandleFunc("POST /api/set_players", s.handleHTTPSetPlayers)
 		mux.HandleFunc("POST /api/undo", s.handleHTTPUndo)
-		mux.HandleFunc("POST /api/touch", s.handleHTTPTouch)
-		mux.HandleFunc("POST /api/touch_move", s.handleHTTPTouchMove)
-		mux.HandleFunc("POST /api/load", s.handleHTTPLoad)
 		mux.HandleFunc("DELETE /api/games/delete", s.handleHTTPDelete)
-		mux.HandleFunc("GET /api/save", s.handleHTTPSave)
 		mux.HandleFunc("POST /api/hint", s.handleHTTPHint)
-		mux.HandleFunc("POST /api/assess", s.handleHTTPAssess)
 
 		mux.HandleFunc("POST /api/invites/send", s.handleSendInvite)
 		mux.HandleFunc("GET /api/invites/pending", s.handleListPendingInvites)
@@ -130,11 +125,8 @@ type stateJSON struct {
 	HistorySAN     []string  `json:"history_san"`
 	LastMove       *moveJSON `json:"last_move"`
 	Thinking       bool      `json:"thinking"`
-	TouchMove      bool      `json:"touch_move"`
-	TouchedSquare  string    `json:"touched_square"`
 	WhiteThinkTime int       `json:"white_think_time"`
 	BlackThinkTime int       `json:"black_think_time"`
-	Assessments    []any     `json:"assessments"`
 
 	// Player metadata so the SPA can decide which color the caller is,
 	// flip the board for the black player, and show "you vs opponent".
@@ -190,18 +182,11 @@ func (s *GameService) snapshotFromRecord(ctx context.Context, rec *db.GameRecord
 	if rec.HistorySAN != "" {
 		_ = json.Unmarshal([]byte(rec.HistorySAN), &historySAN)
 	}
-	var assessments []any
-	if rec.Assessments != "" {
-		_ = json.Unmarshal([]byte(rec.Assessments), &assessments)
-	}
 	if history == nil {
 		history = []string{}
 	}
 	if historySAN == nil {
 		historySAN = []string{}
-	}
-	if assessments == nil {
-		assessments = []any{}
 	}
 
 	gm := game.NewGame()
@@ -250,11 +235,8 @@ func (s *GameService) snapshotFromRecord(ctx context.Context, rec *db.GameRecord
 		HistorySAN:     historySAN,
 		LastMove:       last,
 		Thinking:       thinking,
-		TouchMove:      gm.TouchMove,
-		TouchedSquare:  core.SquareName(gm.TouchedSq),
 		WhiteThinkTime: rec.WhiteThinkTime,
 		BlackThinkTime: rec.BlackThinkTime,
-		Assessments:    assessments,
 		WhiteUserID:    rec.WhiteUserID,
 		BlackUserID:    rec.BlackUserID,
 		TimeControl:    rec.TimeControl,
@@ -423,8 +405,6 @@ func (s *GameService) processCommand(ctx context.Context, msg redis.XMessage) {
 		s.handleCreatePvPGame(ctx, cmd)
 	case eventbus.CmdHint:
 		s.handleHint(ctx, cmd)
-	case eventbus.CmdAssess:
-		s.handleAssess(ctx, cmd)
 	case eventbus.CmdJoinQueue:
 		s.handleJoinQueue(ctx, cmd)
 	case eventbus.CmdLeaveQueue:
@@ -538,10 +518,6 @@ func (s *GameService) handleHint(ctx context.Context, cmd eventbus.Command) {
 		Context:  "hint",
 	}
 	s.bus.SendEngineRequest(ctx, req)
-}
-
-func (s *GameService) handleAssess(ctx context.Context, cmd eventbus.Command) {
-	// Not implemented
 }
 
 func (s *GameService) handleMakeMove(ctx context.Context, cmd eventbus.Command) {

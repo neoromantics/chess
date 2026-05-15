@@ -362,55 +362,6 @@ func (s *GameService) handleHTTPUndo(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ===== TOUCH =====
-
-func (s *GameService) handleHTTPTouch(w http.ResponseWriter, r *http.Request) {
-	s.withLockedMutation(w, r, func(gm *game.Game, rec *db.GameRecord) error {
-		var req struct {
-			Square string `json:"square"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			return userErr(http.StatusBadRequest, "invalid body")
-		}
-		sq, _ := core.ParseSquare(req.Square)
-		gm.Touch(sq)
-		return nil
-	})
-}
-
-// ===== TOUCH_MOVE TOGGLE =====
-
-func (s *GameService) handleHTTPTouchMove(w http.ResponseWriter, r *http.Request) {
-	s.withLockedMutation(w, r, func(gm *game.Game, rec *db.GameRecord) error {
-		var req struct {
-			Enabled bool `json:"enabled"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			return userErr(http.StatusBadRequest, "invalid body")
-		}
-		gm.TouchMove = req.Enabled
-		return nil
-	})
-}
-
-// ===== LOAD =====
-
-func (s *GameService) handleHTTPLoad(w http.ResponseWriter, r *http.Request) {
-	s.withLockedMutation(w, r, func(gm *game.Game, rec *db.GameRecord) error {
-		var req struct {
-			StartFEN    string   `json:"start_fen"`
-			Moves       []string `json:"moves"`
-			EngineWhite bool     `json:"engine_white"`
-			EngineBlack bool     `json:"engine_black"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			return userErr(http.StatusBadRequest, "invalid body")
-		}
-		gm.Load(req.StartFEN, req.Moves, req.EngineWhite, req.EngineBlack)
-		return nil
-	})
-}
-
 // ===== DELETE =====
 
 func (s *GameService) handleHTTPDelete(w http.ResponseWriter, r *http.Request) {
@@ -435,33 +386,6 @@ func (s *GameService) handleHTTPDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
-}
-
-// ===== SAVE (export) =====
-
-func (s *GameService) handleHTTPSave(w http.ResponseWriter, r *http.Request) {
-	rec, _, ok := s.requireGameAccess(w, r)
-	if !ok {
-		return
-	}
-	var history, historySAN []string
-	_ = json.Unmarshal([]byte(rec.History), &history)
-	_ = json.Unmarshal([]byte(rec.HistorySAN), &historySAN)
-	var assessments []any
-	_ = json.Unmarshal([]byte(rec.Assessments), &assessments)
-
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Content-Disposition", "attachment; filename=chess-game.json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"game_id":      rec.ID,
-		"start_fen":    rec.FEN, // best-effort; the row only stores current FEN
-		"moves":        history,
-		"history_san":  historySAN,
-		"engine_white": rec.EngineWhite,
-		"engine_black": rec.EngineBlack,
-		"assessments":  assessments,
-		"exported_at":  time.Now().UTC().Format(time.RFC3339),
-	})
 }
 
 // ===== HINT (async) =====
@@ -491,42 +415,6 @@ func (s *GameService) handleHTTPHint(w http.ResponseWriter, r *http.Request) {
 		History:  game.CopyHistory(gm.HistoryHash()),
 		MoveTime: moveTime,
 		Context:  "hint",
-	}
-	if _, err := s.bus.SendEngineRequest(r.Context(), er); err != nil {
-		http.Error(w, "dispatch failed", http.StatusInternalServerError)
-		return
-	}
-	w.WriteHeader(http.StatusAccepted)
-}
-
-// ===== ASSESS (async) =====
-
-func (s *GameService) handleHTTPAssess(w http.ResponseWriter, r *http.Request) {
-	rec, _, ok := s.requireGameAccess(w, r)
-	if !ok {
-		return
-	}
-	var req struct {
-		MoveTime int  `json:"movetime"`
-		Index    *int `json:"index"`
-	}
-	_ = json.NewDecoder(r.Body).Decode(&req)
-	moveTime := time.Duration(req.MoveTime) * time.Millisecond
-	if moveTime <= 0 {
-		moveTime = 1000 * time.Millisecond
-	}
-
-	var history []string
-	_ = json.Unmarshal([]byte(rec.History), &history)
-	gm := game.NewGame()
-	gm.Load(rec.FEN, history, rec.EngineWhite, rec.EngineBlack)
-
-	er := eventbus.EngineRequest{
-		GameID:   rec.ID,
-		FEN:      gm.Board.FEN(),
-		History:  game.CopyHistory(gm.HistoryHash()),
-		MoveTime: moveTime,
-		Context:  "assess",
 	}
 	if _, err := s.bus.SendEngineRequest(r.Context(), er); err != nil {
 		http.Error(w, "dispatch failed", http.StatusInternalServerError)

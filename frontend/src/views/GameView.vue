@@ -7,17 +7,13 @@
     </div>
   </div>
   <div v-else-if="!state" class="loading">Loading game...</div>
-  <div v-else id="app-container" :class="{ editing: editMode }">
-    <ChessBoard 
+  <div v-else id="app-container">
+    <ChessBoard
       :state="state"
-      :edit-mode="editMode"
-      :edit-board="editBoard"
-      :edit-picked-up="editPickedUp"
       :flipped="flipped"
       :selected="selected"
       :hint="hint"
       @square-click="onSquare"
-      @square-right-click="onRightClick"
     />
 
     <div id="side">
@@ -25,65 +21,30 @@
       <div class="game-id">ID: {{ id }}</div>
       <div id="status">{{ statusMsg }}</div>
 
-      <SidePanel 
+      <SidePanel
         :state="state"
-        :edit-mode="editMode"
         :white-player-type="whitePlayerType"
         :black-player-type="blackPlayerType"
         :white-think-time="whiteThinkTime"
         :black-think-time="blackThinkTime"
-        :touch-move-enabled="touchMoveEnabled"
-        :auto-assess="autoAssess"
         :sound-enabled="soundEnabled"
         :hint-info="hintInfo"
-        :assess-info="assessInfo"
-        :assess-color="assessColor"
         :history-pairs="historyPairs"
-        :fen-input="fenInput"
-        :draw-offer-pending="drawOfferPending"
-        :takeback-offer-pending="takebackOfferPending"
         @update:white-player-type="updatePlayerType('white', $event)"
         @update:black-player-type="updatePlayerType('black', $event)"
         @update:white-think-time="updateThinkTime('white', $event)"
         @update:black-think-time="updateThinkTime('black', $event)"
-        @update:touch-move="setTouchMove"
-        @update:auto-assess="autoAssess = $event"
         @update:sound-enabled="setSoundEnabled"
-        @update:fen-input="fenInput = $event"
         @new-game="newGame"
         @get-hint="getHint"
-        @run-assess="runAssess"
         @undo="undoMove"
         @resign="resign"
-        @offer-draw="offerDraw"
-        @accept-draw="acceptDraw"
-        @decline-draw="declineDraw"
-        @offer-takeback="offerTakeback"
-        @accept-takeback="acceptTakeback"
-        @decline-takeback="declineTakeback"
         @open-replay="openReplay"
         @toggle-flip="flipped = !flipped"
-        @save-game="saveGame"
-        @load-game="loadGameFile"
-        @load-fen="loadFen"
-        @toggle-edit="toggleEditMode"
-      />
-
-      <EditPanel 
-        v-if="editMode"
-        :edit-palette="editPalette"
-        :edit-turn="editTurn"
-        :edit-castling="editCastling"
-        @update:edit-palette="setEditPalette"
-        @update:edit-turn="editTurn = $event"
-        @clear="editClear"
-        @start-pos="editStartPos"
-        @apply="editApply"
-        @cancel="editCancel"
       />
     </div>
 
-    <PromoModal 
+    <PromoModal
       v-if="pendingPromo"
       :turn="state?.turn"
       @select="completePromo"
@@ -92,12 +53,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import ChessBoard from '../components/ChessBoard.vue';
 import SidePanel from '../components/SidePanel.vue';
-import EditPanel from '../components/EditPanel.vue';
 import PromoModal from '../components/PromoModal.vue';
-import { PIECE, ASSESS_COLORS, ASSESS_SYMBOL, parseBoard } from '../constants';
 import { api } from '../api';
 import { useToastStore } from '../stores/toast';
 import { useAuthStore } from '../stores/auth';
@@ -123,15 +82,8 @@ const error = ref<string | null>(null);
 const selected = ref<string | null>(null);
 const flipped = ref(localStorage.getItem('chess-flipped') === '1');
 const soundEnabled = ref(localStorage.getItem('chess-muted') !== '1');
-const autoAssess = ref(false);
-const assessments = reactive<Record<number, any>>({});
-const drawOfferPending = ref(false);
-const takebackOfferPending = ref(false);
 const hint = ref<{ from: string; to: string } | null>(null);
 const hintInfo = ref('');
-const assessInfo = ref('');
-const assessColor = ref('#ddd');
-const fenInput = ref('');
 const pendingPromo = ref<{ from: string; to: string } | null>(null);
 
 let ws: WebSocket | null = null;
@@ -142,35 +94,15 @@ const blackPlayerType = ref('e');
 const whiteThinkTime = ref(1000);
 const blackThinkTime = ref(1000);
 
-// Editor
-const editMode = ref(false);
-const editBoard = ref<(string | null)[][] | null>(null);
-const editPalette = ref('select');
-const editTurn = ref('w');
-const editCastling = reactive({ K: true, Q: true, k: true, q: true });
-const editPickedUp = ref<{ r: number; f: number; pc: string } | null>(null);
-
-// Audio
+// Audio. AudioContext starts suspended until the user makes a gesture
+// inside the page (browser autoplay policy). We arm it once on the
+// first pointer/key event in this view so opponent moves arriving over
+// WebSocket can actually play sound — calling resume() from a WS
+// callback alone is silently ignored by Chrome / Safari.
 let lastSoundedHistoryLen = 0;
 let prevFenForSound = '';
 let audioCtx: AudioContext | null = null;
-
-// Serialize WS-triggered /api/state refetches. Engine-vs-engine games
-// (and rapid PvP) can fire two MovePlayed events in quick succession,
-// and parallel fetches resolve out of order — the +2 response can land
-// before the +1 response, leaving lastSoundedHistoryLen ahead of the
-// state we eventually apply. Coalesce: at most one fetch in flight,
-// queue at most one followup.
-let stateFetchInFlight = false;
-let stateFetchPending = false;
-const refetchState = () => {
-  if (stateFetchInFlight) { stateFetchPending = true; return; }
-  stateFetchInFlight = true;
-  api.getState(props.id).then(updateState).catch(() => {}).finally(() => {
-    stateFetchInFlight = false;
-    if (stateFetchPending) { stateFetchPending = false; refetchState(); }
-  });
-};
+let audioPrimed = false;
 
 const ensureAudio = () => {
   if (!audioCtx) {
@@ -180,11 +112,26 @@ const ensureAudio = () => {
   return audioCtx;
 };
 
+const primeAudio = () => {
+  if (audioPrimed) return;
+  const ctx = ensureAudio();
+  if (!ctx) return;
+  // resume() on suspended ctx only succeeds during a user gesture, so
+  // this handler is the right place to do it.
+  if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+  audioPrimed = true;
+};
+
 const playClick = (freq: number, dur: number, gain: number) => {
   if (!soundEnabled.value) return;
   const ctx = ensureAudio();
   if (!ctx) return;
-  if (ctx.state === 'suspended') ctx.resume();
+  if (ctx.state === 'suspended') {
+    // Likely no user gesture has happened yet. Skip the beep silently
+    // rather than queuing inaudible audio nodes; the very next gesture
+    // will prime us.
+    return;
+  }
   const osc = ctx.createOscillator();
   const g = ctx.createGain();
   osc.connect(g); g.connect(ctx.destination);
@@ -202,17 +149,23 @@ const playMoveSound = (kind: string) => {
   else playClick(520, 0.06, 0.10);
 };
 
-// Computed
-const touchMoveEnabled = computed(() => state.value?.touch_move || false);
+// Coalesce WS-triggered /api/state refetches. Two MovePlayed events
+// arriving close together (engine-vs-engine) used to fire concurrent
+// fetches that resolved out of order — the +2 response landing first
+// confused the sound-trigger counter.
+let stateFetchInFlight = false;
+let stateFetchPending = false;
+const refetchState = () => {
+  if (stateFetchInFlight) { stateFetchPending = true; return; }
+  stateFetchInFlight = true;
+  api.getState(props.id).then(updateState).catch(() => {}).finally(() => {
+    stateFetchInFlight = false;
+    if (stateFetchPending) { stateFetchPending = false; refetchState(); }
+  });
+};
 
+// Computed
 const statusMsg = computed(() => {
-  if (editMode.value) {
-    if (editPalette.value === 'select') {
-      return editPickedUp.value ? 'Select: click destination to drop' : 'Select: click a piece to pick it up';
-    }
-    if (editPalette.value === 'delete') return 'Delete: click pieces to remove';
-    return 'Paint ' + PIECE[editPalette.value] + ': click squares to place';
-  }
   if (!state.value) return 'Loading…';
   const s = state.value;
   if (s.status === 'checkmate') return 'Checkmate — ' + (s.turn === 'w' ? 'Black' : 'White') + ' wins';
@@ -220,8 +173,7 @@ const statusMsg = computed(() => {
   if (s.status === 'draw50') return 'Draw — 50-move rule';
   if (s.status === 'draw_repetition') return 'Draw — threefold repetition';
   if (s.status === 'draw_insufficient') return 'Draw — insufficient material';
-  if (s.status === 'touch_lost') return 'Touch-move loss — ' + (s.turn === 'w' ? 'Black' : 'White') + ' wins';
-  
+
   let msg = (s.turn === 'w' ? 'White' : 'Black') + ' to move';
   if (s.thinking) msg += ' (engine thinking…)';
   else if (s.engine_to_move) msg += ' (engine’s turn)';
@@ -235,9 +187,9 @@ const historyPairs = computed(() => {
     ? state.value.history_san : state.value.history;
   const res: any[] = [];
   for (let i = 0; i < state.value.history.length; i += 2) {
-    const pair = [{ san: display[i], lan: state.value.history[i], assess: assessments[i], idx: i }];
+    const pair = [{ san: display[i], lan: state.value.history[i], idx: i }];
     if (state.value.history[i+1]) {
-      pair.push({ san: display[i+1], lan: state.value.history[i+1], assess: assessments[i+1], idx: i+1 });
+      pair.push({ san: display[i+1], lan: state.value.history[i+1], idx: i+1 });
     }
     res.push(pair);
   }
@@ -264,19 +216,10 @@ const updateState = (s: StateJSON) => {
     didAutoOrient = true;
   }
 
-  if (s.assessments) {
-    s.assessments.forEach((a: any) => {
-      assessments[a.index] = a;
-    });
-  }
-  
   const newLen = s.history ? s.history.length : 0;
-  // Strict newLen == lastSounded+1 misses sounds when two state updates
-  // arrive close enough that we only see the cumulative delta (e.g.
-  // engine-vs-engine, or a stale fetch landing after a fresher one).
-  // Use ">" so any forward progress in history fires a sound; cap with
-  // Math.max so an out-of-order older response doesn't rewind us and
-  // re-trigger the same sound on the next legitimate update.
+  // Use ">" (not strict ===+1) so an out-of-order fetch resolution that
+  // skips a ply still fires sound. Math.max guard prevents a stale
+  // earlier response from rewinding the counter and double-sounding.
   if (newLen > lastSoundedHistoryLen) {
     let kind = 'move';
     if (s.in_check) kind = 'check';
@@ -295,7 +238,7 @@ const connectWS = () => {
   const apiBase = (import.meta.env.VITE_API_URL as string) || '';
   const host = apiBase.replace(/^https?:\/\//, '') || window.location.host;
   const url = `${protocol}//${host}/ws?game_id=${props.id}`;
-  
+
   ws = new WebSocket(url);
   ws.onmessage = (event) => {
     try {
@@ -307,23 +250,14 @@ const connectWS = () => {
       //                                consumer path; payload is partial
       //   - 'GameStarted'             new game row was written; no state
       //                                snapshot in the payload
-      // For the delta/no-payload variants we just re-fetch /api/state,
-      // which gives us the canonical full snapshot at a small latency
-      // cost. The 'state' variants apply directly.
+      // For the delta/no-payload variants we re-fetch /api/state, which
+      // gives us the canonical full snapshot.
       if (data.type === 'state' || data.type === 'StateUpdated') {
         updateState(data.payload);
       } else if (data.type === 'MovePlayed' || data.type === 'GameStarted') {
         refetchState();
       } else if (data.type === 'hint') {
         onHintReceived(data.payload);
-      } else if (data.type === 'assess') {
-        onAssessReceived(data.payload);
-      } else if (data.type === 'draw_offered') {
-        drawOfferPending.value = true;
-        toastStore.info('Opponent offered a draw.');
-      } else if (data.type === 'takeback_offered') {
-        takebackOfferPending.value = true;
-        toastStore.info('Opponent requested a takeback.');
       }
     } catch (e) {
       console.error('Failed to parse WS message', e);
@@ -344,16 +278,6 @@ const onHintReceived = (data: any) => {
   }
 };
 
-const onAssessReceived = (a: any) => {
-  assessments[a.index] = a;
-  assessColor.value = ASSESS_COLORS[a.label] || '#ddd';
-  let txt = `${a.move}: ${a.label}`;
-  if (a.label !== 'Best' && a.label !== 'Brilliant') txt += ` (-${a.cp_loss}cp; best ${a.best_move})`;
-  else if (a.label === 'Brilliant') txt += ` (+${-a.cp_loss}cp vs engine pick ${a.best_move})`;
-  else txt += ` (${a.user_score})`;
-  assessInfo.value = txt;
-};
-
 const resign = async () => {
   if (!confirm('Are you sure you want to resign?')) return;
   try {
@@ -365,111 +289,14 @@ const resign = async () => {
   }
 };
 
-const offerDraw = async () => {
-  try {
-    await api.offerDraw(props.id);
-    toastStore.success('Draw offered to opponent');
-  } catch (e) {
-    toastStore.error('Failed to offer draw');
-  }
-};
-
-const acceptDraw = async () => {
-  try {
-    const res = await api.acceptDraw(props.id);
-    updateState(res);
-    drawOfferPending.value = false;
-    toastStore.info('Draw accepted.');
-  } catch (e) {
-    toastStore.error('Failed to accept draw');
-  }
-};
-
-const declineDraw = async () => {
-  try {
-    await api.declineDraw(props.id);
-    drawOfferPending.value = false;
-    toastStore.info('Draw declined.');
-  } catch (e) {
-    toastStore.error('Failed to decline draw');
-  }
-};
-
-const offerTakeback = async () => {
-  try {
-    await api.offerTakeback(props.id);
-    toastStore.success('Takeback request sent to opponent');
-  } catch (e) {
-    toastStore.error('Failed to request takeback');
-  }
-};
-
-const acceptTakeback = async () => {
-  try {
-    const res = await api.acceptTakeback(props.id);
-    updateState(res);
-    takebackOfferPending.value = false;
-    toastStore.info('Takeback accepted.');
-  } catch (e) {
-    toastStore.error('Failed to accept takeback');
-  }
-};
-
-const declineTakeback = async () => {
-  try {
-    await api.declineTakeback(props.id);
-    takebackOfferPending.value = false;
-    toastStore.info('Takeback declined.');
-  } catch (e) {
-    toastStore.error('Failed to decline takeback');
-  }
-};
-
 const onSquare = async (sq: Square) => {
-  if (editMode.value && editBoard.value) {
-    const pc = editBoard.value[sq.r][sq.f];
-    if (editPalette.value === 'select') {
-      if (editPickedUp.value) {
-        const src = editPickedUp.value;
-        editBoard.value[src.r][src.f] = null;
-        editBoard.value[sq.r][sq.f] = src.pc;
-        editPickedUp.value = null;
-      } else if (pc) {
-        editPickedUp.value = { r: sq.r, f: sq.f, pc };
-      }
-    } else if (editPalette.value === 'delete') {
-      editBoard.value[sq.r][sq.f] = null;
-    } else {
-      editBoard.value[sq.r][sq.f] = editPalette.value;
-    }
-    return;
-  }
-
   if (!state.value || state.value.thinking || state.value.engine_to_move || state.value.status !== 'ongoing') return;
   // In a PvP game, ignore clicks while it's the opponent's turn. The
   // backend rejects mismatched moves with 409 "it is not your turn"
-  // but silent-no-op is the better UX — chess players read board
-  // non-responsiveness as "not my turn" naturally.
+  // but silent-no-op is the better UX.
   if (myColor.value !== null) {
     const myFirst = myColor.value === 'white' ? 'w' : 'b';
     if (state.value.turn !== myFirst) return;
-  }
-
-  if (state.value.touch_move) {
-    const touched = state.value.touched_square;
-    if (touched) {
-      const cands = state.value.legal_moves.filter(m => m.substring(0,2) === touched && m.substring(2,4) === sq.name);
-      if (!cands.length) return;
-      if (cands.length === 1 && cands[0].length === 4) sendMove(cands[0]);
-      else { pendingPromo.value = { from: touched, to: sq.name }; }
-    } else {
-      try {
-        updateState(await api.touch(props.id, sq.name));
-      } catch (e: any) {
-        toastStore.error(e.message);
-      }
-    }
-    return;
   }
 
   if (selected.value === sq.name) { selected.value = null; return; }
@@ -489,20 +316,11 @@ const onSquare = async (sq: Square) => {
   }
 };
 
-const onRightClick = (sq: Square) => {
-  if (editMode.value && editBoard.value) {
-    editBoard.value[sq.r][sq.f] = null;
-    if (editPickedUp.value?.r === sq.r && editPickedUp.value?.f === sq.f) editPickedUp.value = null;
-  }
-};
-
 const sendMove = async (mv: string) => {
   hint.value = null;
   hintInfo.value = '';
-  assessInfo.value = '';
   try {
     updateState(await api.move(props.id, mv));
-    if (autoAssess.value) runAssess();
   } catch (e: any) {
     toastStore.error(e.message);
   }
@@ -522,8 +340,6 @@ const newGame = async () => {
     selected.value = null;
     hint.value = null;
     hintInfo.value = '';
-    assessInfo.value = '';
-    Object.keys(assessments).forEach(k => delete assessments[parseInt(k)]);
     toastStore.success('Game reset');
   } catch (e: any) {
     toastStore.error(e.message);
@@ -536,10 +352,6 @@ const undoMove = async () => {
     selected.value = null;
     hint.value = null;
     hintInfo.value = '';
-    assessInfo.value = '';
-    if (state.value) {
-      delete assessments[state.value.history.length];
-    }
     toastStore.info('Move undone');
   } catch (e: any) {
     toastStore.error(e.message);
@@ -559,25 +371,11 @@ const getHint = async () => {
   }
 };
 
-const runAssess = async (idx?: number, fromHistory = false) => {
-  if (!state.value) return;
-  assessInfo.value = 'assessing…';
-  assessColor.value = '#888';
-  const movetime = Math.min(state.value.turn === 'w' ? whiteThinkTime.value : blackThinkTime.value, 800);
-  try {
-    await api.assess(props.id, movetime, idx);
-    // Result will be handled by WebSocket event
-  } catch (e: any) {
-    assessInfo.value = '';
-    toastStore.error('Assessment failed');
-  }
-};
-
 const updateSettings = async () => {
   try {
     updateState(await api.setPlayers(
-      props.id, 
-      whitePlayerType.value === 'e', 
+      props.id,
+      whitePlayerType.value === 'e',
       blackPlayerType.value === 'e',
       whiteThinkTime.value,
       blackThinkTime.value
@@ -599,124 +397,21 @@ const updateThinkTime = async (side: 'white' | 'black', time: number) => {
   updateSettings();
 };
 
-const setTouchMove = async (enabled: boolean) => {
-  try {
-    updateState(await api.setTouchMove(props.id, enabled));
-    toastStore.info(`Touch-move ${enabled ? 'enabled' : 'disabled'}`);
-  } catch (e: any) {
-    toastStore.error('Failed to update touch-move');
-  }
-};
-
 const setSoundEnabled = (val: boolean) => {
   soundEnabled.value = val;
   localStorage.setItem('chess-muted', val ? '0' : '1');
 };
 
-const toggleEditMode = () => {
-  if (!state.value) return;
-  if (editMode.value) {
-    editMode.value = false;
-    editBoard.value = null;
-    editPickedUp.value = null;
-  } else {
-    editMode.value = true;
-    editBoard.value = parseBoard(state.value.fen);
-    const parts = state.value.fen.split(' ');
-    editTurn.value = parts[1] || 'w';
-    const ca = parts[2] || '-';
-    editCastling.K = ca.includes('K');
-    editCastling.Q = ca.includes('Q');
-    editCastling.k = ca.includes('k');
-    editCastling.q = ca.includes('q');
-    editPalette.value = 'select';
-    editPickedUp.value = null;
-  }
-};
-
-const setEditPalette = (val: string) => {
-  editPalette.value = val;
-  editPickedUp.value = null;
-};
-
-const editClear = () => { editBoard.value = Array.from({length: 8}, () => Array(8).fill(null)); };
-const editStartPos = () => { editBoard.value = parseBoard("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR"); };
-const editCancel = () => { editMode.value = false; };
-const editApply = async () => {
-  if (!editBoard.value) return;
-  let boardStr = '';
-  for (let r = 0; r < 8; r++) {
-    let empty = 0, row = '';
-    for (let f = 0; f < 8; f++) {
-      const pc = editBoard.value[r][f];
-      if (!pc) empty++;
-      else { if (empty) { row += empty; empty = 0; } row += pc; }
-    }
-    if (empty) row += empty;
-    boardStr += row + (r < 7 ? '/' : '');
-  }
-  const findOne = (p: string) => {
-    if (!editBoard.value) return null;
-    for (let r=0; r<8; r++) for (let f=0; f<8; f++) if (editBoard.value[r][f] === p) return {r,f};
-    return null;
-  };
-  const wK = findOne('K'), bK = findOne('k');
-  const has = (p: string, r: number, f: number) => editBoard.value && editBoard.value[r] && editBoard.value[r][f] === p;
-  const valid = {
-    K: editCastling.K && wK && wK.r === 7 && wK.f === 4 && has('R', 7, 7),
-    Q: editCastling.Q && wK && wK.r === 7 && wK.f === 4 && has('R', 7, 0),
-    k: editCastling.k && bK && bK.r === 0 && bK.f === 4 && has('r', 0, 7),
-    q: editCastling.q && bK && bK.r === 0 && bK.f === 4 && has('r', 0, 0),
-  };
-  let castling = (valid.K?'K':'')+(valid.Q?'Q':'')+(valid.k?'k':'')+(valid.q?'q':'');
-  const fen = `${boardStr} ${editTurn.value} ${castling||'-'} - 0 1`;
-  try {
-    updateState(await api.loadGame(props.id, {
-      start_fen: fen, moves: [], 
-      engine_white: whitePlayerType.value === 'e', 
-      engine_black: blackPlayerType.value === 'e'
-    }));
-    editMode.value = false;
-    toastStore.success('Position applied');
-  } catch (e: any) {
-    toastStore.error('Failed to apply position');
-  }
-};
-
-const saveGame = () => { window.location.href = api.getSaveUrl(props.id); };
-const loadGameFile = async (event: Event) => {
-  const file = (event.target as HTMLInputElement).files?.[0];
-  if (!file) return;
-  const text = await file.text();
-  try {
-    updateState(await api.loadGame(props.id, text));
-    selected.value = null;
-    hint.value = null;
-    Object.keys(assessments).forEach(k => delete assessments[parseInt(k)]);
-    toastStore.success('Game loaded');
-  } catch (e: any) {
-    toastStore.error('Failed to load file');
-  }
-  (event.target as HTMLInputElement).value = '';
-};
-
-const loadFen = async () => {
-  try {
-    updateState(await api.loadGame(props.id, {
-      start_fen: fenInput.value.trim(), moves: [], 
-      engine_white: whitePlayerType.value === 'e', 
-      engine_black: blackPlayerType.value === 'e'
-    }));
-    fenInput.value = '';
-    toastStore.success('FEN loaded');
-  } catch (e: any) {
-    toastStore.error('Failed to load FEN');
-  }
-};
-
 const openReplay = () => { window.open(`/api/replay.html?game_id=${props.id}`, '_blank'); };
 
 watch(flipped, (val) => localStorage.setItem('chess-flipped', val ? '1' : '0'));
+
+const onKeyDown = (e: KeyboardEvent) => {
+  primeAudio();
+  const tag = (e.target && (e.target as any).tagName) || '';
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+  if (e.key === 'f' || e.key === 'F') flipped.value = !flipped.value;
+};
 
 onMounted(async () => {
   try {
@@ -728,12 +423,10 @@ onMounted(async () => {
   } catch (e: any) {
     error.value = e.message || 'Unknown error';
   }
-  
-  window.addEventListener('keydown', (e) => {
-    const tag = (e.target && (e.target as any).tagName) || '';
-    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-    if (e.key === 'f' || e.key === 'F') flipped.value = !flipped.value;
-  });
+
+  window.addEventListener('keydown', onKeyDown);
+  window.addEventListener('pointerdown', primeAudio);
+  window.addEventListener('touchstart', primeAudio);
 });
 
 onUnmounted(() => {
@@ -741,6 +434,9 @@ onUnmounted(() => {
     ws.onclose = null;
     ws.close();
   }
+  window.removeEventListener('keydown', onKeyDown);
+  window.removeEventListener('pointerdown', primeAudio);
+  window.removeEventListener('touchstart', primeAudio);
 });
 </script>
 

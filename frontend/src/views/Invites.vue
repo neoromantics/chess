@@ -30,13 +30,7 @@
           <label class="field">
             <span>Time control</span>
             <select v-model="form.timeControl">
-              <option value="1+0">Bullet · 1+0</option>
-              <option value="2+1">Bullet · 2+1</option>
-              <option value="3+2">Blitz · 3+2</option>
-              <option value="5+0">Blitz · 5+0</option>
-              <option value="10+5">Rapid · 10+5</option>
               <option value="15+10">Rapid · 15+10</option>
-              <option value="corr-1d">Correspondence · 1 day/move</option>
             </select>
           </label>
           <label class="field rated">
@@ -103,7 +97,7 @@ const toast = useToastStore();
 
 const form = ref({
   toUsername: '',
-  timeControl: '5+0',
+  timeControl: '15+10',
   rated: false,
 });
 const sending = ref(false);

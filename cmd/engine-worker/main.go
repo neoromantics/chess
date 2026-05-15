@@ -148,35 +148,6 @@ func ProcessRequest(req eventbus.EngineRequest, stop *atomic.Bool) eventbus.Engi
 		return eventbus.EngineResponse{GameID: req.GameID, Context: req.Context, Metadata: req.Metadata}
 	}
 
-	if req.Context == "assess" {
-		userMoveStr := req.Metadata["move"]
-		m, err := b.ParseUCIMove(userMoveStr)
-		if err != nil {
-			return eventbus.EngineResponse{GameID: req.GameID, Context: req.Context, Metadata: req.Metadata}
-		}
-
-		resBest := b.IterativeDeepening(core.SearchLimits{MoveTime: req.MoveTime, History: req.History}, stop, nil)
-		bAfter := *b
-		bAfter.MakeMove(m)
-		resUser := bAfter.IterativeDeepening(core.SearchLimits{MoveTime: req.MoveTime, History: req.History}, stop, nil)
-
-		resp := eventbus.EngineResponse{
-			GameID:   req.GameID,
-			BestMove: resBest.BestMove.String(),
-			Score:    resBest.Score,
-			Depth:    resBest.Depth,
-			Context:  req.Context,
-			Metadata: make(map[string]string),
-		}
-		for k, v := range req.Metadata {
-			resp.Metadata[k] = v
-		}
-		resp.Metadata["best_score"] = fmt.Sprintf("%d", resBest.Score)
-		resp.Metadata["user_score"] = fmt.Sprintf("%d", -resUser.Score)
-		resp.Metadata["player_side"] = fmt.Sprintf("%v", b.SideToMove)
-		return resp
-	}
-
 	res := b.IterativeDeepening(core.SearchLimits{
 		MoveTime: req.MoveTime,
 		History:  req.History,

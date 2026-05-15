@@ -17,7 +17,6 @@ const (
 	StatusDraw50           GameStatus = "draw50"
 	StatusDrawRepetition   GameStatus = "draw_repetition"
 	StatusDrawInsufficient GameStatus = "draw_insufficient"
-	StatusTouchLost        GameStatus = "touch_lost"
 	StatusTimeout          GameStatus = "timeout"
 )
 
@@ -40,24 +39,19 @@ type Game struct {
 	// Time of last tick/move to calculate elapsed duration.
 	LastTick time.Time
 
-	// Tournament-style touch-move rule (opt-in).
-	TouchMove bool
-	TouchedSq int  // core.NoSquare if no piece is currently touched
-	TouchLost bool // sticky once a touch-move loss is declared
-
 	// Repetition counter keyed by Zobrist hash.
 	posCount map[uint64]int
 }
 
 // NewGame returns a fresh game in the standard starting position.
 func NewGame() *Game {
-	g := &Game{TouchedSq: core.NoSquare}
+	g := &Game{}
 	g.Reset()
 	return g
 }
 
-// Reset returns the game to the standard starting position. Mode flags
-// (engine sides, touch-move) are preserved.
+// Reset returns the game to the standard starting position. Engine-side
+// flags are preserved.
 func (g *Game) Reset() {
 	g.Board = core.StartPosition()
 	g.StartFEN = core.StartFEN
@@ -65,8 +59,6 @@ func (g *Game) Reset() {
 	g.HistorySAN = nil
 	g.LastMove = nil
 	g.UndoStack = nil
-	g.TouchedSq = core.NoSquare
-	g.TouchLost = false
 	g.posCount = map[uint64]int{core.PositionKey(g.Board): 1}
 
 	// Default 10 minutes for now
@@ -91,8 +83,6 @@ func (g *Game) Load(startFEN string, moves []string, engineW, engineB bool) erro
 	g.HistorySAN = nil
 	g.LastMove = nil
 	g.UndoStack = nil
-	g.TouchedSq = core.NoSquare
-	g.TouchLost = false
 	g.EngineWhite = engineW
 	g.EngineBlack = engineB
 	g.posCount = map[uint64]int{core.PositionKey(g.Board): 1}
@@ -139,7 +129,6 @@ func (g *Game) PlayMove(m core.Move) {
 	mv := m
 	g.LastMove = &mv
 	g.UndoStack = append(g.UndoStack, u)
-	g.TouchedSq = core.NoSquare
 	// Pawn moves and captures reset the halfmove clock and make older
 	// positions unreachable, so the repetition counter starts fresh.
 	if g.Board.HalfmoveClock == 0 {
@@ -163,8 +152,6 @@ func (g *Game) Undo() bool {
 	g.History = g.History[:n-1]
 	g.HistorySAN = g.HistorySAN[:n-1]
 	g.UndoStack = g.UndoStack[:n-1]
-	g.TouchedSq = core.NoSquare
-	g.TouchLost = false
 	if len(g.UndoStack) > 0 {
 		mv := g.UndoStack[len(g.UndoStack)-1].Move
 		g.LastMove = &mv
@@ -191,27 +178,6 @@ func (g *Game) rebuildPosCount() {
 	}
 }
 
-// Touch implements the touch-move rule. Idempotent on engine turns and
-// when the game is already over; it is the caller's responsibility to
-// only invoke this on TouchMove-enabled human turns.
-func (g *Game) Touch(sq int) {
-	if g.TouchLost || g.EngineToMove() || g.TouchedSq != core.NoSquare {
-		return
-	}
-	p := g.Board.Squares[sq]
-	if p.IsEmpty() || p.Color() != g.Board.SideToMove {
-		return
-	}
-	for _, m := range g.Board.GenerateLegalMoves() {
-		if m.From == sq {
-			g.TouchedSq = sq
-			return
-		}
-	}
-	// Touched a piece that has no legal move — instant loss.
-	g.TouchLost = true
-}
-
 // EngineToMove reports whether the side currently to move is the engine.
 func (g *Game) EngineToMove() bool {
 	if g.Board.SideToMove == core.White {
@@ -230,9 +196,6 @@ func (g *Game) IsHuman(c core.Color) bool {
 
 // Status returns the current game outcome.
 func (g *Game) Status() GameStatus {
-	if g.TouchLost {
-		return StatusTouchLost
-	}
 	if g.WhiteTime <= 0 || g.BlackTime <= 0 {
 		return StatusTimeout
 	}
@@ -346,34 +309,6 @@ func MatchMove(legal []core.Move, m core.Move) (core.Move, bool) {
 		}
 	}
 	return core.Move{}, false
-}
-
-// ClassifyAssessment returns a human label for a move, given the engine's
-// best score and the user's resulting score (both in the user's POV) and
-// the centipawn loss between them.
-func ClassifyAssessment(played, best core.Move, cpLoss, bestScore, userScore int) string {
-	if cpLoss <= -50 {
-		return "Brilliant" // user found something better than the engine's pick
-	}
-	if played.Equal(best) {
-		return "Best"
-	}
-	// Walking from a non-mated position into a forced loss is always a Blunder.
-	if userScore <= -core.MateInMaxPly && bestScore > -core.MateInMaxPly {
-		return "Blunder"
-	}
-	switch {
-	case cpLoss <= 15:
-		return "Excellent"
-	case cpLoss <= 50:
-		return "Good"
-	case cpLoss <= 100:
-		return "Inaccuracy"
-	case cpLoss <= 250:
-		return "Mistake"
-	default:
-		return "Blunder"
-	}
 }
 
 // CopyHistory helps pass game repetition state to the engine without holding the

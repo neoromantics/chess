@@ -115,15 +115,12 @@ const userEvents = useUserEventsStore();
 const games = ref<any[]>([]);
 const loading = ref(false);
 const searching = ref(false);
-const selectedTC = ref('3+2');
+const selectedTC = ref('15+10');
 
 const timeControls = [
-  { id: '1+0', label: '1+0', desc: 'Bullet' },
-  { id: '3+0', label: '3+0', desc: 'Blitz' },
-  { id: '3+2', label: '3+2', desc: 'Blitz' },
-  { id: '5+3', label: '5+3', desc: 'Blitz' },
-  { id: '10+0', label: '10+0', desc: 'Rapid' },
-  { id: '10+5', label: '10+5', desc: 'Rapid' },
+  // Single rapid time control while we land core multiplayer
+  // correctness; bullet/blitz come back later. See ROADMAP.md.
+  { id: '15+10', label: '15+10', desc: 'Rapid' },
 ];
 
 const THINK_KEY = 'chess-new-game-think';

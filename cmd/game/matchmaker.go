@@ -33,7 +33,8 @@ import (
 
 // supportedTCs is the per-time-control queue keyspace the pairing loop
 // scans every tick. Matches what the SPA matchmaking picker exposes.
-var supportedTCs = []string{"1+0", "2+1", "3+2", "5+0", "10+5", "15+10"}
+// Single rapid TC for now; the rest come back later (see ROADMAP.md).
+var supportedTCs = []string{"15+10"}
 
 // handleJoinQueue / handleLeaveQueue are called from processCommand
 // (cmd/game/main.go) when the gateway dispatches CmdJoinQueue /

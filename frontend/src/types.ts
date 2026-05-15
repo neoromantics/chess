@@ -18,11 +18,8 @@ export interface StateJSON {
   history_san: string[];
   last_move: MoveJSON | null;
   thinking: boolean;
-  touch_move: boolean;
-  touched_square: string;
   white_think_time: number;
   black_think_time: number;
-  assessments: any[];
 
   // Player metadata. null = that side is engine, not human. SPA uses
   // these to decide board orientation and label the players.
@@ -45,19 +42,6 @@ export interface HintMove {
 export interface HintResponse {
   hint?: HintMove;
   state: StateJSON;
-}
-
-export interface AssessResponse {
-  index: number;
-  player: string;
-  move: string;
-  best_move: string;
-  user_score: string;
-  best_score: string;
-  cp_loss: number;
-  label: string;
-  depth: number;
-  pv?: string[];
 }
 
 export interface Square {

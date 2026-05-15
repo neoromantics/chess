@@ -391,11 +391,10 @@ func (s *GameService) runInviteSweeper(ctx context.Context) {
 // ===== helpers =====
 
 func validTimeControl(tc string) bool {
-	switch tc {
-	case "1+0", "2+1", "3+2", "5+0", "10+5", "15+10", "corr-1d":
-		return true
-	}
-	return false
+	// Single rapid time control while we land core multiplayer
+	// correctness; bullet/blitz/correspondence come back later.
+	// See ROADMAP.md and the chess-paused-features memory.
+	return tc == "15+10"
 }
 
 func parseInviteID(r *http.Request) (uuid.UUID, error) {

@@ -10,6 +10,12 @@ CI does a grep-check (see `scripts/check-wire-contract.sh`) that fails
 the build if a constant declared here isn't referenced from both
 backend and frontend.
 
+> **2026-05-14 cleanup pass:** touch-move, move-assess, board editor,
+> save / load PGN file, FEN paste, draw / takeback offers, and every
+> PvP time control except `15+10` were removed from this surface to
+> reduce broken-feature entropy. They will be re-introduced one at a
+> time later — see the `chess-paused-features` memory and ROADMAP.md.
+
 ---
 
 ## Section 1 — HTTP endpoints
@@ -21,15 +27,14 @@ game row.
 ### Auth & user
 | Method | Path | Auth | Owner | Frontend caller |
 |---|---|---|---|---|
-| POST | `/api/auth/signup` | 🔓 | gateway → user-svc | `api.signup` |
-| POST | `/api/auth/login` | 🔓 | gateway → user-svc | `api.login` |
-| POST | `/api/auth/logout` | 🔓 | gateway → user-svc | `api.logout` |
-| GET | `/api/user/me` | 🔐 | gateway → user-svc | `api.getMe` |
-| GET | `/api/user/profile` | 🔐 | gateway → user-svc | `api.getProfile` |
-| PUT | `/api/user/profile` | 🔐 | gateway → user-svc | `api.updateProfile` |
-| POST | `/api/user/password` | 🔐 | gateway → user-svc | `api.changePassword` |
-| GET | `/api/user/stats` | 🔐 | gateway → user-svc | `api.getUserStats` |
-| GET | `/api/users/search?q=…` | 🔐 | gateway → user-svc | `api.searchUsers` |
+| POST | `/api/auth/signup` | 🔓 | gateway | `api.signup` |
+| POST | `/api/auth/login` | 🔓 | gateway | `api.login` |
+| POST | `/api/auth/logout` | 🔓 | gateway | `api.logout` |
+| GET | `/api/user/me` | 🔐 | gateway | `api.getMe` |
+| GET | `/api/user/profile` | 🔐 | gateway | `api.getUserProfile` |
+| POST | `/api/user/password` | 🔐 | gateway | `api.changePassword` |
+| GET | `/api/user/stats` | 🔐 | gateway | `api.getUserStats` |
+| GET | `/api/users/search?q=…` | 🔐 | gateway | `api.searchUsers` |
 
 ### Games (lifecycle)
 | Method | Path | Auth | Owner | Frontend caller |
@@ -37,7 +42,6 @@ game row.
 | POST | `/api/games/new` | 🔐 | gateway | `api.createGame` |
 | GET | `/api/games` | 🔐 | gateway → game-svc | `api.listGames` |
 | DELETE | `/api/games/delete?game_id=X` | 🔐+game | gateway → game-svc | `api.deleteGame` |
-| GET | `/api/save?game_id=X` | 🔐+game | gateway → game-svc | `api.getSaveUrl` |
 
 ### Games (state)
 | Method | Path | Auth | Owner | Frontend caller |
@@ -47,12 +51,8 @@ game row.
 | POST | `/api/resign?game_id=X` | 🔐+game | gateway → game-svc | `api.resign` |
 | POST | `/api/new?game_id=X` | 🔐+game | gateway → game-svc | `api.newGame` |
 | POST | `/api/undo?game_id=X` | 🔐+game | gateway → game-svc | `api.undo` |
-| POST | `/api/touch?game_id=X` | 🔐+game | gateway → game-svc | `api.touch` |
-| POST | `/api/touch_move?game_id=X` | 🔐+game | gateway → game-svc | `api.setTouchMove` |
 | POST | `/api/set_players?game_id=X` | 🔐+game | gateway → game-svc | `api.setPlayers` |
-| POST | `/api/load?game_id=X` | 🔐+game | gateway → game-svc | `api.loadGame` |
 | POST | `/api/hint?game_id=X` | 🔐+game | gateway → game-svc | `api.getHint` |
-| POST | `/api/assess?game_id=X` | 🔐+game | gateway → game-svc | `api.assess` |
 | GET | `/api/replay?game_id=X` | 🔐+game | gateway → game-svc | (data fetched by gateway) |
 | GET | `/api/replay.html?game_id=X` | 🔐+game | gateway (template) | `Replay` button |
 
@@ -75,6 +75,11 @@ game row.
 | GET | `/ws?game_id=X` | per-game WebSocket. JWT cookie + game ownership pre-flight |
 | GET | `/ws/user` | per-user WebSocket. JWT cookie |
 | GET | `/`, `/assets/*` | gateway-embedded SPA |
+
+The single supported PvP time control is **`15+10`** (rapid). The
+matchmaking queue keys (`mm:queue:{tc}`), the invite-acceptance
+validator (`validTimeControl`), and the SPA pickers all hard-code
+this for now.
 
 ---
 
@@ -99,7 +104,7 @@ Three keyspaces with different durability semantics. Don't mix them.
 | `game:state:{id}` | hash | 1h | Hot cache for game rows |
 | `game:thinking:{id}` | string | 2×movetime + 2s | UI spinner sentinel |
 | `mm:queue:{tc}` | sorted set (rating) | none | Matchmaking queue per time control |
-| `leader:{name}` | string (SET NX) | varies | Future leader-elected sweepers |
+| `mm:leader` | string (SET NX) | 15s | Pairing-loop leader election |
 
 ---
 
@@ -128,9 +133,6 @@ Forgetting this breaks every WS upgrade silently with
 | `GameStarted` | new row written | empty | `eventbus.EvtGameStarted` | `GameView.connectWS` → `api.getState` |
 | `GameFinished` | game terminal | `stateJSON` | `eventbus.EvtGameFinished` | (rating-updater consumes; SPA reads via StateUpdated companion) |
 | `hint` | engine response, hint context | `{move, from, to, score, depth}` | (literal) | `GameView.onHintReceived` |
-| `assess` | engine response, assess context | assessment payload | (literal) | `GameView.onAssessReceived` |
-| `draw_offered` | _not implemented yet_ | — | — | `GameView.connectWS` |
-| `takeback_offered` | _not implemented yet_ | — | — | `GameView.connectWS` |
 
 ### `/ws/user` (user.evt.{user_id})
 
@@ -160,7 +162,7 @@ interface StateJSON {
   engine_white: boolean;
   engine_black: boolean;
   engine_to_move: boolean;
-  status: string;                          // ongoing | checkmate | stalemate | draw_* | resign
+  status: string;                          // ongoing | checkmate | stalemate | draw_* | resign | timeout
   result: string;                          // '*' | '1-0' | '0-1' | '1/2-1/2'
   in_check: boolean;
   legal_moves: string[];
@@ -168,14 +170,11 @@ interface StateJSON {
   history_san: string[];
   last_move: { from, to } | null;
   thinking: boolean;
-  touch_move: boolean;
-  touched_square: string;
-  white_think_time: number;
-  black_think_time: number;
-  assessments: Assessment[];
+  white_think_time: number;                // engine search budget for white, in ms
+  black_think_time: number;                // engine search budget for black, in ms
   white_user_id: number | null;            // null = engine
   black_user_id: number | null;
-  time_control: string;
+  time_control: string;                    // currently always "engine" or "15+10"
   rated: boolean;
 }
 ```
@@ -209,16 +208,23 @@ type inviteWire struct {
 
 ---
 
-## Section 5 — Known gaps (not yet implemented, but the SPA may stub)
+## Section 5 — Deferred features (will return one at a time)
 
-| Feature | SPA stubs visible | Backend status |
-|---|---|---|
-| Clocks (server-authoritative) | shows `white_think_time`/`black_think_time` (engine budget, NOT a game clock) | **Not implemented.** Highest-impact missing PvP feature. |
-| Draw offer / accept / decline | `SidePanel` emits `offer-draw` / `accept-draw` / `decline-draw`; GameView handles `draw_offered` WS event | **Not implemented.** |
-| Takeback request | similar to draw | **Not implemented.** |
-| Abort on disconnect | — | **Not implemented.** |
-| Spectator (read-only) | — | **Not implemented.** |
-| Rating updates on game-finish | `rating-updater` consumes `game:events`, runs Glicko-2 | **Implemented but unverified** — numerical correctness vs the standard paper not tested. |
+The following surfaces existed in earlier sessions and were deleted
+during the 2026-05-14 entropy-cleanup pass. When you re-introduce one,
+land it as its own commit with a fresh design pass — don't `git revert`
+the cleanup. The `chess-paused-features` memory tracks the full list.
+
+| Feature | What was removed |
+|---|---|
+| Server clocks | (Never shipped.) `white_think_time` / `black_think_time` in StateJSON are engine search budgets, NOT a game clock. |
+| Touch-move | `pkg/game/Touch`, `TouchMove`, `TouchedSq`, `TouchLost`, `StatusTouchLost`, `/api/touch`, `/api/touch_move`, SPA toggle |
+| Move assessment | `/api/assess`, `Assessments` field in `stateJSON`, `ClassifyAssessment`, SPA UI, `ASSESS_COLORS` / `ASSESS_SYMBOL` |
+| Board editor | `EditPanel.vue`, all `editMode` state in `GameView.vue` |
+| Save / load PGN file + FEN paste | `/api/save`, `/api/load`, SPA buttons + handlers |
+| Draw offer / accept / decline | SPA emit sites in `SidePanel`, `GameView` handlers |
+| Takeback request | (same as draw) |
+| Bullet / blitz / correspondence time controls | `1+0`, `2+1`, `3+2`, `5+0`, `10+5`, `corr-1d` dropped from `validTimeControl`, `supportedTCs`, SPA pickers |
 
 ---
 

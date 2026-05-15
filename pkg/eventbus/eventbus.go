@@ -32,7 +32,7 @@ type EngineRequest struct {
 	FEN      string            `json:"fen"`
 	History  map[uint64]int    `json:"history"`
 	MoveTime time.Duration     `json:"movetime"`
-	Context  string            `json:"context"` // "move", "hint", "assess"
+	Context  string            `json:"context"` // "move", "hint"
 	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
@@ -54,7 +54,6 @@ const (
 	CmdAcceptDraw    = "AcceptDraw"
 	CmdDeclineDraw   = "DeclineDraw"
 	CmdHint          = "Hint"
-	CmdAssess        = "Assess"
 	CmdNewGame       = "NewGame"
 	CmdCreatePvPGame = "CreatePvPGame"
 

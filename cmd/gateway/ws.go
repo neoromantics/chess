@@ -135,8 +135,6 @@ func (c *Client) readPump() {
 		case "hint":
 			// We can dispatch these directly or via Command
 			cmdType = "Hint"
-		case "assess":
-			cmdType = "Assess"
 		case "new_game":
 			cmdType = "NewGame"
 		}

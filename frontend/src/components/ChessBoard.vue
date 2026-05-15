@@ -5,11 +5,10 @@
         <div v-for="n in ranks" :key="n">{{ n }}</div>
       </div>
       <div id="board">
-        <div v-for="sq in boardSquares" 
-             :key="sq.name" 
+        <div v-for="sq in boardSquares"
+             :key="sq.name"
              :class="['sq', sq.dark ? 'dark' : 'light', sq.classes]"
-             @click="$emit('square-click', sq)"
-             @contextmenu.prevent="$emit('square-right-click', sq)">
+             @click="$emit('square-click', sq)">
           <span v-if="sq.piece" :class="sq.piece.color === 'w' ? 'white-piece' : 'black-piece'">
             {{ PIECE[sq.piece.char] }}
           </span>
@@ -29,9 +28,6 @@ import { StateJSON, Square } from '../types';
 
 const props = defineProps<{
   state: StateJSON | null;
-  editMode: boolean;
-  editBoard: (string | null)[][] | null;
-  editPickedUp: { r: number; f: number; pc: string } | null;
   flipped: boolean;
   selected: string | null;
   hint: { from: string; to: string } | null;
@@ -39,35 +35,35 @@ const props = defineProps<{
 
 defineEmits<{
   (e: 'square-click', sq: Square): void;
-  (e: 'square-right-click', sq: Square): void;
 }>();
 
 const ranks = computed(() => props.flipped ? [1,2,3,4,5,6,7,8] : [8,7,6,5,4,3,2,1]);
 const files = computed(() => (props.flipped ? 'hgfedcba' : 'abcdefgh').split(''));
 
 const boardSquares = computed(() => {
-  if (!props.state && !props.editMode) return [];
-  const grid = props.state ? parseBoard(props.state.fen) : null;
+  if (!props.state) return [];
+  const grid = parseBoard(props.state.fen);
   const res: Square[] = [];
-  const selSq = props.state?.touch_move ? props.state.touched_square : props.selected;
 
   for (let i = 0; i < 8; i++) {
     for (let j = 0; j < 8; j++) {
       const r = props.flipped ? 7 - i : i;
       const f = props.flipped ? 7 - j : j;
       const name = String.fromCharCode(97+f) + (8-r);
-      const pc = props.editMode && props.editBoard ? props.editBoard[r][f] : (grid ? grid[r][f] : null);
-      
+      const pc = grid[r][f];
+
+      const lastMove = props.state?.last_move;
+      const inCheck = !!props.state?.in_check;
+      const turn = props.state?.turn;
       const classes: Record<string, boolean> = {
-        last: !props.editMode && props.state?.last_move && (props.state.last_move.from === name || props.state.last_move.to === name) || false,
-        touched: !props.editMode && props.state?.touch_move && props.state.touched_square === name || false,
-        sel: props.editMode ? (props.editPickedUp?.r === r && props.editPickedUp?.f === f) : (props.selected === name),
-        check: !props.editMode && props.state?.in_check && pc && ((props.state.turn === 'w' && pc === 'K') || (props.state.turn === 'b' && pc === 'k')) || false,
-        hint: !props.editMode && props.hint && (props.hint.from === name || props.hint.to === name) || false
+        last: !!(lastMove && (lastMove.from === name || lastMove.to === name)),
+        sel: props.selected === name,
+        check: !!(inCheck && pc && ((turn === 'w' && pc === 'K') || (turn === 'b' && pc === 'k'))),
+        hint: !!(props.hint && (props.hint.from === name || props.hint.to === name)),
       };
 
-      if (!props.editMode && selSq && props.state) {
-        const moves = props.state.legal_moves.filter(m => m.startsWith(selSq) && m.substring(2,4) === name);
+      if (props.selected && props.state) {
+        const moves = props.state.legal_moves.filter(m => m.startsWith(props.selected!) && m.substring(2,4) === name);
         if (moves.length) classes[pc ? 'cap' : 'dot'] = true;
       }
 
@@ -91,7 +87,6 @@ const boardSquares = computed(() => {
 .last  { background: #cdd26a !important; }
 .check { box-shadow: inset 0 0 0 4px #ff4d4d; }
 .hint  { box-shadow: inset 0 0 0 5px #4ec77a; }
-.touched { box-shadow: inset 0 0 0 5px #ff8c1a; }
 
 .dot::before { content: ""; position: absolute; width: calc(var(--sq) * 0.34); height: calc(var(--sq) * 0.34); border-radius: 50%; background: rgba(0,0,0,0.25); }
 .cap::before { content: ""; position: absolute; inset: 5px; border-radius: 50%; box-shadow: inset 0 0 0 6px rgba(20,20,20,0.35); }
@@ -104,6 +99,4 @@ const boardSquares = computed(() => {
 .board-row { display: flex; align-items: center; }
 .coords-ranks { display: grid; grid-template-rows: repeat(8, var(--sq)); width: calc(var(--sq) * 0.2); }
 .coords-ranks div { display: flex; align-items: center; justify-content: center; }
-
-:global(body.editing) #board .sq { cursor: crosshair; }
 </style>
