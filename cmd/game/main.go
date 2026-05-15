@@ -639,6 +639,15 @@ func (s *GameService) handleMakeMove(ctx context.Context, cmd eventbus.Command) 
 	}
 	defer lock.release(context.Background())
 
+	// Always clear the thinking sentinel when this handler returns, no
+	// matter how. Without this, every drop path (game already over,
+	// illegal move because position advanced, parse failure, race with
+	// /api/set_players that fired a duplicate search) leaves the
+	// sentinel set until its TTL — the SPA shows "engine thinking…"
+	// forever from the user's POV. Engine-result Commands never come
+	// from a user, so unconditionally clearing here is safe.
+	defer s.bus.Rdb().Del(context.Background(), "game:thinking:"+cmd.GameID)
+
 	rec, err := s.getGameCached(ctx, cmd.GameID)
 	if err != nil {
 		slog.Error("game not found", "game_id", cmd.GameID)
@@ -724,10 +733,9 @@ func (s *GameService) handleMakeMove(ctx context.Context, cmd eventbus.Command) 
 		slog.Error("failed to save game", "error", err)
 		return
 	}
-	// Engine response landed and the move is on the board — drop the
-	// thinking sentinel so the SPA's spinner clears immediately rather
-	// than waiting for the TTL.
-	_ = s.bus.Rdb().Del(ctx, "game:thinking:"+rec.ID).Err()
+	// Sentinel clear is handled by the deferred Del at the top of this
+	// function, so every exit path (including the drops above) clears
+	// it — not just the success path.
 
 	evtPayload := eventbus.MovePlayedEvt{
 		Move:       matched.String(),

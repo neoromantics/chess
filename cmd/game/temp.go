@@ -602,6 +602,11 @@ func (s *GameService) applyTempEngineMove(ctx context.Context, resp eventbus.Eng
 		return
 	}
 	defer lock.release(context.Background())
+	// Same reasoning as handleMakeMove in main.go: every drop path
+	// here (expired game, parse failure, illegal move because the
+	// position advanced under us) must clear the thinking sentinel
+	// or the SPA's spinner stays up until TTL.
+	defer s.bus.Rdb().Del(context.Background(), "game:thinking:"+resp.GameID)
 
 	rec, err := store.get(ctx, resp.GameID)
 	if err != nil || rec == nil {
@@ -646,7 +651,7 @@ func (s *GameService) applyTempEngineMove(ctx context.Context, resp eventbus.Eng
 		return
 	}
 	store.refreshTTL(ctx, rec.ID, rec.OwnerAnonID)
-	_ = s.bus.Rdb().Del(ctx, "game:thinking:"+rec.ID).Err()
+	// (sentinel clear is the deferred Del at the top of this function)
 
 	s.publishTempState(ctx, rec.ID, s.tempSnapshot(ctx, rec))
 }

@@ -373,28 +373,93 @@ func (s *GameService) handleHTTPNew(w http.ResponseWriter, r *http.Request) {
 }
 
 // ===== SET_PLAYERS =====
+//
+// Bypasses withLockedMutation deliberately. The shared mutation
+// helper auto-fires triggerEngineForMove whenever it's an engine's
+// turn — but a settings change isn't a position-advancing event. If
+// the engine is already searching with the OLD think time, that
+// auto-trigger fires a SECOND request with the new time; both
+// results race back, the second's bestmove is illegal in the
+// already-advanced position and gets dropped, and the user's setting
+// change effectively didn't apply. So set_players persists settings
+// only and lets the in-flight search complete; the new think time
+// takes effect on the NEXT search after that.
 
 func (s *GameService) handleHTTPSetPlayers(w http.ResponseWriter, r *http.Request) {
-	s.withLockedMutation(w, r, func(gm *game.Game, rec *db.GameRecord) error {
-		var req struct {
-			EngineWhite    bool `json:"engine_white"`
-			EngineBlack    bool `json:"engine_black"`
-			WhiteThinkTime int  `json:"white_think_time"`
-			BlackThinkTime int  `json:"black_think_time"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			return userErr(http.StatusBadRequest, "invalid body")
-		}
-		gm.EngineWhite = req.EngineWhite
-		gm.EngineBlack = req.EngineBlack
-		if req.WhiteThinkTime > 0 {
-			rec.WhiteThinkTime = req.WhiteThinkTime
-		}
-		if req.BlackThinkTime > 0 {
-			rec.BlackThinkTime = req.BlackThinkTime
-		}
-		return nil
+	rec, _, ok := s.requireGameAccess(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		EngineWhite    bool `json:"engine_white"`
+		EngineBlack    bool `json:"engine_black"`
+		WhiteThinkTime int  `json:"white_think_time"`
+		BlackThinkTime int  `json:"black_think_time"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+
+	lock, err := acquireGameLock(r.Context(), s.bus.Rdb(), rec.ID, gameLockTTL)
+	if err != nil {
+		http.Error(w, "lock acquire failed", http.StatusInternalServerError)
+		return
+	}
+	if lock == nil {
+		http.Error(w, "another writer is mutating this game; retry", http.StatusConflict)
+		return
+	}
+	defer lock.release(context.Background())
+
+	rec, err = s.getGameCached(r.Context(), rec.ID)
+	if err != nil {
+		http.Error(w, "game not found", http.StatusNotFound)
+		return
+	}
+	wasEngineWhite := rec.EngineWhite
+	wasEngineBlack := rec.EngineBlack
+	rec.EngineWhite = req.EngineWhite
+	rec.EngineBlack = req.EngineBlack
+	if req.WhiteThinkTime > 0 {
+		rec.WhiteThinkTime = req.WhiteThinkTime
+	}
+	if req.BlackThinkTime > 0 {
+		rec.BlackThinkTime = req.BlackThinkTime
+	}
+	rec.UpdatedAt = time.Now()
+	if err := s.saveGameCached(r.Context(), rec); err != nil {
+		slog.Error("set_players save failed", "game_id", rec.ID, "error", err)
+		http.Error(w, "save failed", http.StatusInternalServerError)
+		return
+	}
+
+	snapshot := s.snapshotFromRecord(r.Context(), rec)
+	snapPayload, _ := json.Marshal(snapshot)
+	_, _ = s.bus.EmitEvent(r.Context(), eventbus.Event{
+		Type: eventbus.EvtStateUpdated, GameID: rec.ID, Payload: snapPayload,
 	})
+
+	// Edge case: user just toggled an idle side INTO being an engine
+	// (e.g. switching black from human → engine while black is on the
+	// move and no search is running). In that case nothing else will
+	// kick off a search, so we trigger one ourselves — but only if no
+	// search is already in flight, otherwise we'd recreate the
+	// duplicate-search bug this whole function exists to avoid.
+	engineAssignmentChanged := wasEngineWhite != rec.EngineWhite || wasEngineBlack != rec.EngineBlack
+	if engineAssignmentChanged && rec.Status == "ongoing" {
+		gm := game.NewGame()
+		var history []string
+		_ = json.Unmarshal([]byte(rec.History), &history)
+		gm.Load("", history, rec.EngineWhite, rec.EngineBlack)
+		if gm.EngineToMove() {
+			if v, _ := s.bus.Rdb().Get(r.Context(), "game:thinking:"+rec.ID).Result(); v != "1" {
+				s.triggerEngineForMove(rec, gm)
+			}
+		}
+	}
+
+	writeJSON(w, snapshot)
 }
 
 // ===== UNDO =====
