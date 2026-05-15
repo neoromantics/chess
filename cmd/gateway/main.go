@@ -140,6 +140,12 @@ func main() {
 	// monolith's handleReplay, just split across two services.
 	mux.HandleFunc("GET /api/replay.html", gw.handleReplay)
 
+	// 5d. Anonymous temp games. The chess-anon HttpOnly cookie carries
+	// an opaque UUID injected as ?anon_id=<uuid> into every proxied
+	// /api/temp/* request. game-service trusts the injection (mirrors
+	// the user_id pattern). See cmd/game/temp.go for the storage model.
+	mux.Handle("/api/temp/", gw.injectAnonID(gameProxy))
+
 	// 6. WebSockets
 	mux.HandleFunc("/ws", gw.handleWSGame)
 	mux.HandleFunc("/ws/user", gw.handleWSUser)
@@ -221,6 +227,58 @@ func (gw *Gateway) injectAuthedUser(next http.Handler) http.Handler {
 		}
 		q := r.URL.Query()
 		q.Set("user_id", strconv.FormatInt(user.UserID, 10))
+		r.URL.RawQuery = q.Encode()
+		next.ServeHTTP(w, r)
+	})
+}
+
+// anonCookieName is the HttpOnly cookie identifying an anonymous
+// browser session. Value is an opaque UUID; the gateway is the only
+// component that mints it. Game-service receives it as ?anon_id=...
+// via injectAnonID, never as a cookie directly.
+const anonCookieName = "chess-anon"
+
+// readAnonCookie returns the cookie value, or "" if absent/empty.
+func readAnonCookie(r *http.Request) string {
+	c, err := r.Cookie(anonCookieName)
+	if err != nil || c == nil {
+		return ""
+	}
+	return c.Value
+}
+
+// setAnonCookie writes a fresh anon cookie. 7-day MaxAge is just a
+// safety ceiling; the *real* lifetime is the temp-game Redis TTL
+// (10 min sliding) — once the game expires, the cookie is just a
+// pointer to nothing and a future /api/temp/session call mints a
+// new game under the same cookie.
+func setAnonCookie(w http.ResponseWriter, value string) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     anonCookieName,
+		Value:    value,
+		Path:     "/",
+		MaxAge:   7 * 24 * 3600,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		// Secure is set by the reverse proxy (Traefik) terminating
+		// TLS in production; cookie is only ever served over HTTPS
+		// in that environment.
+	})
+}
+
+// injectAnonID wraps a reverse-proxy handler so the caller's anon
+// session ID lands on the proxied request as ?anon_id=<uuid>. Mints
+// the cookie on first hit. Symmetric with injectAuthedUser but uses
+// the cookie rather than the JWT context.
+func (gw *Gateway) injectAnonID(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		anonID := readAnonCookie(r)
+		if anonID == "" {
+			anonID = uuid.New().String()
+			setAnonCookie(w, anonID)
+		}
+		q := r.URL.Query()
+		q.Set("anon_id", anonID)
 		r.URL.RawQuery = q.Encode()
 		next.ServeHTTP(w, r)
 	})

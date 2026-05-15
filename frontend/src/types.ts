@@ -4,6 +4,9 @@ export interface MoveJSON {
 }
 
 export interface StateJSON {
+  // Set on temp-game snapshots; durable game snapshots leave it
+  // undefined since the SPA already has the ID from the URL.
+  id?: string;
   fen: string;
   turn: 'w' | 'b';
   engine_white: boolean;

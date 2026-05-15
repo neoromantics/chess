@@ -3,7 +3,7 @@
     <div class="error-box">
       <h3>Failed to load game</h3>
       <p>{{ error }}</p>
-      <router-link to="/" class="btn-primary">Back to Dashboard</router-link>
+      <router-link to="/" class="btn-primary">Start a new game</router-link>
     </div>
   </div>
   <div v-else-if="!state" class="loading">Loading game...</div>
@@ -57,7 +57,7 @@ import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import ChessBoard from '../components/ChessBoard.vue';
 import SidePanel from '../components/SidePanel.vue';
 import PromoModal from '../components/PromoModal.vue';
-import { api } from '../api';
+import { api, isTempGameId } from '../api';
 import { useToastStore } from '../stores/toast';
 import { useAuthStore } from '../stores/auth';
 import { StateJSON, Square } from '../types';
@@ -173,6 +173,11 @@ const statusMsg = computed(() => {
   if (s.status === 'draw50') return 'Draw — 50-move rule';
   if (s.status === 'draw_repetition') return 'Draw — threefold repetition';
   if (s.status === 'draw_insufficient') return 'Draw — insufficient material';
+  if (s.status === 'resign') {
+    const winner = s.result === '1-0' ? 'White' : s.result === '0-1' ? 'Black' : '';
+    return winner ? `${winner} wins by resignation` : 'Game ended by resignation';
+  }
+  if (s.status === 'timeout') return 'Time out — game over';
 
   let msg = (s.turn === 'w' ? 'White' : 'Black') + ' to move';
   if (s.thinking) msg += ' (engine thinking…)';
@@ -336,7 +341,15 @@ const completePromo = (promo: string) => {
 
 const newGame = async () => {
   try {
-    updateState(await api.newGame(props.id, whitePlayerType.value === 'e', blackPlayerType.value === 'e'));
+    const fresh = await api.newGame(props.id, whitePlayerType.value === 'e', blackPlayerType.value === 'e');
+    // Reset the sound counter BEFORE updateState fires. After New Game
+    // history.length goes back to 0; without this reset, the
+    // "newLen > lastSoundedHistoryLen" guard stays false until enough
+    // moves accumulate to exceed the previous game's count, leaving
+    // the next several plies silent.
+    lastSoundedHistoryLen = 0;
+    prevFenForSound = fresh.fen;
+    updateState(fresh);
     selected.value = null;
     hint.value = null;
     hintInfo.value = '';
@@ -348,7 +361,12 @@ const newGame = async () => {
 
 const undoMove = async () => {
   try {
-    updateState(await api.undo(props.id));
+    const after = await api.undo(props.id);
+    // Same reasoning as newGame: history shrank, so the sound counter
+    // needs to drop with it or the next move(s) won't beep.
+    lastSoundedHistoryLen = after.history?.length ?? 0;
+    prevFenForSound = after.fen;
+    updateState(after);
     selected.value = null;
     hint.value = null;
     hintInfo.value = '';
@@ -372,6 +390,11 @@ const getHint = async () => {
 };
 
 const updateSettings = async () => {
+  // Temp games don't have a setPlayers endpoint (no PG row to update —
+  // settings live only inside the in-memory Game and are reapplied on
+  // New Game). Toggling the radio buttons updates the local refs; the
+  // chosen config takes effect on the next New Game.
+  if (isTempGameId(props.id)) return;
   try {
     updateState(await api.setPlayers(
       props.id,

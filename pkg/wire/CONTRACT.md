@@ -15,6 +15,10 @@ backend and frontend.
 > PvP time control except `15+10` were removed from this surface to
 > reduce broken-feature entropy. They will be re-introduced one at a
 > time later — see the `chess-paused-features` memory and ROADMAP.md.
+>
+> **2026-05-15:** Elo / Glicko-2 ratings paused. Anonymous **temp
+> games** added — Redis-only, 10-minute sliding TTL, cookie-bound
+> identity. See Sections 1 (`/api/temp/*` and `/play/:id`) and 6.
 
 ---
 
@@ -67,12 +71,33 @@ game row.
 | POST | `/api/invites/{id}/decline` | 🔐 | gateway → game-svc | `api.declineInvite` |
 | POST | `/api/invites/{id}/cancel` | 🔐 | gateway → game-svc | `api.cancelInvite` |
 
+### Anonymous temp games (no JWT)
+Identity is the `chess-anon` HttpOnly cookie. Gateway mints it on first
+hit and injects `?anon_id=<uuid>` on every proxied call. **Auth column
+🍪** = cookie required. The `/ws?game_id=temp-…` upgrade path branches
+inside the gateway: temp game IDs use the cookie, durable IDs use the
+JWT.
+
+| Method | Path | Auth | Owner | Frontend caller |
+|---|---|---|---|---|
+| POST | `/api/temp/session` | 🍪 | gateway → game-svc | `api.tempSession` |
+| GET | `/api/temp/state?game_id=X` | 🍪+game | gateway → game-svc | `api.getState` (auto-routed) |
+| POST | `/api/temp/move?game_id=X` | 🍪+game | gateway → game-svc | `api.move` (auto-routed) |
+| POST | `/api/temp/new?game_id=X` | 🍪+game | gateway → game-svc | `api.newGame` (auto-routed) |
+| POST | `/api/temp/undo?game_id=X` | 🍪+game | gateway → game-svc | `api.undo` (auto-routed) |
+| POST | `/api/temp/resign?game_id=X` | 🍪+game | gateway → game-svc | `api.resign` (auto-routed) |
+| POST | `/api/temp/hint?game_id=X` | 🍪+game | gateway → game-svc | `api.getHint` (auto-routed) |
+
+`api.ts` routes by ID prefix: any game whose ID starts with `temp-`
+hits the `/api/temp/*` surface; everything else hits the durable
+`/api/*` surface. SPA components don't branch on this themselves.
+
 ### Infra
 | Method | Path | Notes |
 |---|---|---|
 | GET | `/health` | every service |
 | GET | `/metrics` | Prometheus scrape, every service |
-| GET | `/ws?game_id=X` | per-game WebSocket. JWT cookie + game ownership pre-flight |
+| GET | `/ws?game_id=X` | per-game WebSocket. JWT + game-ownership pre-flight for durable; cookie + temp-ownership check for temp-prefixed IDs |
 | GET | `/ws/user` | per-user WebSocket. JWT cookie |
 | GET | `/`, `/assets/*` | gateway-embedded SPA |
 
@@ -100,11 +125,13 @@ Three keyspaces with different durability semantics. Don't mix them.
 
 | Key | Type | TTL | Purpose |
 |---|---|---|---|
-| `game:lock:{id}` | string (SET NX) | 10s | Per-game mutation serialization |
-| `game:state:{id}` | hash | 1h | Hot cache for game rows |
+| `game:lock:{id}` | string (SET NX) | 10s | Per-game mutation serialization (durable AND temp) |
+| `game:state:{id}` | hash | 1h | Hot cache for durable game rows |
 | `game:thinking:{id}` | string | 2×movetime + 2s | UI spinner sentinel |
 | `mm:queue:{tc}` | sorted set (rating) | none | Matchmaking queue per time control |
 | `mm:leader` | string (SET NX) | 15s | Pairing-loop leader election |
+| `tempgame:state:{id}` | string (JSON blob) | 10m sliding | Anonymous game record; expires after 10m of inactivity |
+| `tempgame:session:{anon_id}` | string (game_id) | 10m sliding | Maps a `chess-anon` cookie to its current temp game (one per browser) |
 
 ---
 
@@ -157,6 +184,7 @@ contract — backend emissions must match these strings exactly.
 
 ```ts
 interface StateJSON {
+  id?: string;                             // set on temp-game snapshots, omitted for durable
   fen: string;
   turn: 'w' | 'b';
   engine_white: boolean;
@@ -225,8 +253,56 @@ the cleanup. The `chess-paused-features` memory tracks the full list.
 | Draw offer / accept / decline | SPA emit sites in `SidePanel`, `GameView` handlers |
 | Takeback request | (same as draw) |
 | Bullet / blitz / correspondence time controls | `1+0`, `2+1`, `3+2`, `5+0`, `10+5`, `corr-1d` dropped from `validTimeControl`, `supportedTCs`, SPA pickers |
+| Elo / Glicko-2 ratings (paused 2026-05-15) | `cmd/game/rating.go`, `runRatingUpdater` goroutine, every UI rating chip. DB columns + `pkg/rating` math kept |
 
 ---
+
+## Section 6 — Anonymous temp games
+
+The "land on the URL, get a game; come back within 10 minutes, your
+game is still there; otherwise it's gone forever" flow.
+
+**Identity.** The gateway mints an `chess-anon` HttpOnly cookie on
+first hit (UUID). It injects `?anon_id=<uuid>` into every proxied
+`/api/temp/*` request — symmetric with `injectAuthedUser`. Game-service
+trusts the injection and authorizes by matching against the stored
+`OwnerAnonID` field on the temp record.
+
+**Storage.** Two Redis keys per session, both with sliding 10-minute
+TTL — every read AND every write calls `EXPIRE` to push the window
+back. No Postgres row, no sweeper goroutine, no migration.
+
+```
+tempgame:state:{game_id}    JSON blob (the full tempGameRec)
+tempgame:session:{anon_id}  string game_id (one per browser)
+```
+
+**Engine pipeline.** `EngineRequest.Metadata{"temp":"1","anon_id":…}`
+flags a search as temp. Engine-worker echoes Metadata verbatim;
+`processEngineResult` branches on `Metadata["temp"] == "1"` and calls
+`applyTempEngineMove` (writes to the temp store) instead of dispatching
+the usual `CmdMakeMove` Command (which would write to PG).
+
+**Realtime.** Temp games publish state on `game.evt.{game_id}` —
+exactly the same channel durable games use. The hub's existing
+`PSUBSCRIBE game.evt.*` picks both up. The `/ws?game_id=X` upgrade
+inspects the prefix: `temp-…` IDs go through the cookie-authenticated
+path that reads `tempgame:state:{id}` to verify ownership.
+
+**Routes.** Mirror the durable surface, prefixed `/api/temp/`:
+`session, state, move, new, undo, resign, hint`. The SPA's `api.ts`
+auto-routes by ID prefix so callers stay flavor-agnostic.
+
+**Limits.** Engine-only (no PvP, no invites, no rating). One game per
+browser session. No `set_players` (think time changes via New Game).
+Resigning ends the game; the cookie still points at it until expiry,
+so a refresh re-renders the resigned position.
+
+**Sign-up upgrade.** Not yet implemented — when an anonymous player
+signs up mid-game, the temp record is dropped on the floor and they
+get a fresh durable game. To carry it over, copy the `tempGameRec`
+into a `games` row owned by the new user inside the signup handler
+and redirect to `/game/<new-id>`.
 
 ## Section 6 — How to add a new wire surface
 

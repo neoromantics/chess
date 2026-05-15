@@ -84,6 +84,15 @@ func main() {
 		mux.HandleFunc("POST /api/invites/{id}/decline", s.handleDeclineInvite)
 		mux.HandleFunc("POST /api/invites/{id}/cancel", s.handleCancelInvite)
 
+		// Temp game (anonymous, Redis-only, 10-min sliding TTL). See cmd/game/temp.go.
+		mux.HandleFunc("POST /api/temp/session", s.handleTempSession)
+		mux.HandleFunc("GET /api/temp/state", s.handleTempState)
+		mux.HandleFunc("POST /api/temp/move", s.handleTempMove)
+		mux.HandleFunc("POST /api/temp/new", s.handleTempNew)
+		mux.HandleFunc("POST /api/temp/resign", s.handleTempResign)
+		mux.HandleFunc("POST /api/temp/undo", s.handleTempUndo)
+		mux.HandleFunc("POST /api/temp/hint", s.handleTempHint)
+
 		mux.Handle("/metrics", metrics.Handler())
 
 		http.ListenAndServe(":8080", metrics.HTTPMiddleware("game-service", mux))
@@ -111,6 +120,11 @@ func main() {
 // Keep this in sync with frontend/src/types.ts:StateJSON. Renaming a
 // field is a wire-protocol break; adding a field is safe.
 type stateJSON struct {
+	// ID is set on temp-game snapshots so the landing endpoint can
+	// return the snapshot directly and the SPA learns its game ID
+	// without a second request. Durable-game snapshots leave it
+	// empty (the SPA already knows the ID — it's in the URL).
+	ID             string    `json:"id,omitempty"`
 	FEN            string    `json:"fen"`
 	Turn           string    `json:"turn"`
 	EngineWhite    bool      `json:"engine_white"`
@@ -221,13 +235,24 @@ func (s *GameService) snapshotFromRecord(ctx context.Context, rec *db.GameRecord
 		thinking = true
 	}
 
+	// rec.Status wins over gm.Status() whenever it's terminal. resign /
+	// timeout / future agreed-draw don't change the *position* (gm.Status
+	// would still report "ongoing"), but the row carries the real outcome.
+	// Without this, resign silently has no effect — the SPA gets back
+	// status="ongoing" on the very next snapshot and the user keeps
+	// playing.
+	status := string(gm.Status())
+	if rec.Status != "" && rec.Status != "ongoing" {
+		status = rec.Status
+	}
+
 	return stateJSON{
 		FEN:            gm.Board.FEN(),
 		Turn:           turn,
 		EngineWhite:    gm.EngineWhite,
 		EngineBlack:    gm.EngineBlack,
 		EngineToMove:   gm.EngineToMove(),
-		Status:         string(gm.Status()),
+		Status:         status,
 		Result:         rec.Result,
 		InCheck:        gm.Board.InCheck(gm.Board.SideToMove),
 		LegalMoves:     legalStrs,
@@ -337,6 +362,14 @@ func (s *GameService) processEngineResult(ctx context.Context, msg redis.XMessag
 		// hint / assess results need different handling (broadcast
 		// to the WS hub rather than dispatching a Command). Not yet
 		// implemented; ack and drop so they don't pile up.
+		return
+	}
+
+	// Temp games short-circuit the Command pipeline. They have no PG
+	// row and a different store; applyTempEngineMove does its own
+	// lock + save + publish.
+	if resp.Metadata["temp"] == "1" {
+		s.applyTempEngineMove(ctx, resp)
 		return
 	}
 
@@ -563,6 +596,16 @@ func (s *GameService) handleMakeMove(ctx context.Context, cmd eventbus.Command) 
 	rec, err := s.getGameCached(ctx, cmd.GameID)
 	if err != nil {
 		slog.Error("game not found", "game_id", cmd.GameID)
+		return
+	}
+
+	// Drop late engine replies for games that ended in the meantime
+	// (resign / timeout). Without this, an engine search dispatched a
+	// second before the user resigned would land here, get applied to
+	// the row, and unwind the resign — the SPA snapshot would flip back
+	// to "ongoing" with the engine's reply on the board.
+	if rec.Status != "" && rec.Status != "ongoing" {
+		slog.Info("dropping move for finished game", "game_id", cmd.GameID, "status", rec.Status)
 		return
 	}
 

@@ -72,15 +72,17 @@ export const api = {
   cancelInvite: (id: string) => request<void>(`/api/invites/${id}/cancel`, { method: 'POST' }),
 
   // ===== In-game actions (require game_id) =====
-  getState: (gameId: string) => request<StateJSON>(`/api/state?game_id=${gameId}`),
-  move: (gameId: string, move: string) => request<StateJSON>(`/api/move?game_id=${gameId}`, {
+  // Each helper auto-routes to /api/temp/* when the gameId starts with
+  // "temp-" so GameView is unaware of the storage tier.
+  getState: (gameId: string) => request<StateJSON>(`${gameRoute(gameId, 'state')}?game_id=${gameId}`),
+  move: (gameId: string, move: string) => request<StateJSON>(`${gameRoute(gameId, 'move')}?game_id=${gameId}`, {
     method: 'POST',
     body: JSON.stringify({ move })
   }),
-  resign: (gameId: string) => request<StateJSON>(`/api/resign?game_id=${gameId}`, {
+  resign: (gameId: string) => request<StateJSON>(`${gameRoute(gameId, 'resign')}?game_id=${gameId}`, {
     method: 'POST',
   }),
-  newGame: (gameId: string, engine_white: boolean, engine_black: boolean) => request<StateJSON>(`/api/new?game_id=${gameId}`, {
+  newGame: (gameId: string, engine_white: boolean, engine_black: boolean) => request<StateJSON>(`${gameRoute(gameId, 'new')}?game_id=${gameId}`, {
     method: 'POST',
     body: JSON.stringify({ engine_white, engine_black })
   }),
@@ -88,11 +90,30 @@ export const api = {
     method: 'POST',
     body: JSON.stringify({ engine_white, engine_black, white_think_time, black_think_time })
   }),
-  undo: (gameId: string) => request<StateJSON>(`/api/undo?game_id=${gameId}`, { method: 'POST' }),
-  getHint: (gameId: string, movetime: number) => request<HintResponse>(`/api/hint?game_id=${gameId}`, {
+  undo: (gameId: string) => request<StateJSON>(`${gameRoute(gameId, 'undo')}?game_id=${gameId}`, { method: 'POST' }),
+  getHint: (gameId: string, movetime: number) => request<HintResponse>(`${gameRoute(gameId, 'hint')}?game_id=${gameId}`, {
     method: 'POST',
     body: JSON.stringify({ movetime })
   }),
 
+  // ===== Anonymous temp-game session =====
+  // Idempotent: returns the caller's currently-active temp game (if
+  // any, refreshing TTL) or creates a fresh one. The chess-anon cookie
+  // is set by the gateway on first call.
+  tempSession: () => request<StateJSON & { id?: string }>('/api/temp/session', {
+    method: 'POST',
+  }),
+
   ping: () => fetch(`${API_BASE}/api/ping`, { method: 'POST' }).catch(() => {}),
 };
+
+export function isTempGameId(id: string): boolean {
+  return id.startsWith('temp-');
+}
+
+// gameRoute picks /api/temp/<verb> for temp games and /api/<verb> for
+// durable games. Centralises the "which surface owns this game" decision
+// so callers don't sprinkle isTempGameId checks everywhere.
+function gameRoute(id: string, verb: 'state' | 'move' | 'resign' | 'new' | 'hint' | 'undo'): string {
+  return isTempGameId(id) ? `/api/temp/${verb}` : `/api/${verb}`;
+}

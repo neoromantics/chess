@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -31,6 +32,14 @@ func (gw *Gateway) handleWSGame(w http.ResponseWriter, r *http.Request) {
 	gameID := r.URL.Query().Get("game_id")
 	if gameID == "" {
 		http.Error(w, "missing game_id", 400)
+		return
+	}
+
+	// Temp games take a different auth path: the chess-anon cookie
+	// must match the game's owner. Routed inside this handler so the
+	// SPA only needs one /ws endpoint regardless of game flavor.
+	if strings.HasPrefix(gameID, "temp-") {
+		gw.handleWSTempGame(w, r, gameID)
 		return
 	}
 
@@ -67,6 +76,54 @@ func (gw *Gateway) handleWSGame(w http.ResponseWriter, r *http.Request) {
 	gw.hub.register <- client
 	go client.writePump()
 	client.readPump()
+}
+
+// handleWSTempGame is the cookie-authenticated WS path for anonymous
+// temp games. Verifies the chess-anon cookie matches the temp game's
+// OwnerAnonID by reading the JSON-encoded record straight out of
+// Redis (same key that game-service writes). Subscribes to the same
+// game.evt.{id} channel so hub fan-out is unchanged.
+func (gw *Gateway) handleWSTempGame(w http.ResponseWriter, r *http.Request, gameID string) {
+	anonID := readAnonCookie(r)
+	if anonID == "" {
+		http.Error(w, "no anon session", http.StatusUnauthorized)
+		return
+	}
+	if !gw.tempGameOwnedBy(r.Context(), gameID, anonID) {
+		http.Error(w, "game not found", http.StatusNotFound)
+		return
+	}
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		slog.Error("temp ws upgrade failed", "error", err)
+		return
+	}
+	client := &Client{
+		hub:    gw.hub,
+		conn:   conn,
+		send:   make(chan []byte, 256),
+		gameID: gameID,
+	}
+	gw.hub.register <- client
+	go client.writePump()
+	client.readPump()
+}
+
+// tempGameOwnedBy answers "is this anon allowed to subscribe to this
+// temp game?". Reads the same key game-service writes; only checks
+// the OwnerAnonID field, not the rest of the record.
+func (gw *Gateway) tempGameOwnedBy(ctx context.Context, gameID, anonID string) bool {
+	v, err := gw.bus.Rdb().Get(ctx, "tempgame:state:"+gameID).Result()
+	if err != nil {
+		return false
+	}
+	var rec struct {
+		OwnerAnonID string `json:"owner_anon_id"`
+	}
+	if err := json.Unmarshal([]byte(v), &rec); err != nil {
+		return false
+	}
+	return rec.OwnerAnonID == anonID
 }
 
 func (gw *Gateway) handleWSUser(w http.ResponseWriter, r *http.Request) {

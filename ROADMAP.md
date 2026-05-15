@@ -34,6 +34,7 @@ The session that produced this roadmap shipped ~40 commits restructuring the pla
 - ✅ Prometheus metrics scaffold (`/metrics` on every service; service-discovery annotations).
 - ✅ k3s secrets owned by the cluster (`infra/bootstrap-secrets.sh`); CI never sees prod secrets.
 - ✅ Postgres `max_connections=500` (instead of an external pooler — pgbouncer image-tag situation on Docker Hub was unreliable).
+- ✅ Anonymous **temp games** (2026-05-15). Visitor lands on `/`, gets a Redis-only game with 10-minute sliding TTL. `chess-anon` HttpOnly cookie binds the session. Engine-only, no PvP. See `pkg/wire/CONTRACT.md` Section 6.
 
 ---
 
@@ -94,6 +95,9 @@ Same shape as draw. Casual games only — never on rated.
 
 ### ⬜ Spectator mode
 Read-only WS subscription for public games. Need to relax `userMayWatchGame` for games flagged public, and a new `is_public` schema column.
+
+### ⬜ Anonymous → signed-in upgrade
+A visitor playing a temp game who signs up mid-session loses their game today (the temp record is dropped on the floor; they get a fresh durable game). To preserve it, copy the `tempGameRec` into a `games` row owned by the new user inside the signup handler and redirect to `/game/<new-id>`. Single-session UX win; not blocking anyone yet.
 
 ### ⬜ Matchmaker expanding rating window
 Today `ZRange 0 1` takes the two lowest-rated queue entries. Real platforms grow the rating window over time (start at ±50, expand by +50 every 2s up to ±400) so similar-rated players prefer each other on first pass.
