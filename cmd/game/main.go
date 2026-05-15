@@ -80,6 +80,9 @@ func main() {
 		mux.HandleFunc("POST /api/draw_offer", s.handleDrawOffer)
 		mux.HandleFunc("POST /api/draw_accept", s.handleDrawAccept)
 		mux.HandleFunc("POST /api/draw_decline", s.handleDrawDecline)
+		mux.HandleFunc("POST /api/takeback_offer", s.handleTakebackOffer)
+		mux.HandleFunc("POST /api/takeback_accept", s.handleTakebackAccept)
+		mux.HandleFunc("POST /api/takeback_decline", s.handleTakebackDecline)
 
 		mux.HandleFunc("POST /api/invites/send", s.handleSendInvite)
 		mux.HandleFunc("GET /api/invites/pending", s.handleListPendingInvites)

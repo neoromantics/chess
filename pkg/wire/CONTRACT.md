@@ -135,6 +135,7 @@ Three keyspaces with different durability semantics. Don't mix them.
 | `clock:{id}` | hash | none (deleted on game end) | Server-authoritative bank: `white_ms`, `black_ms`, `inc_ms`, `initial_ms`, `mover`, `turn_started_ms` |
 | `clock:fallschedule` | sorted set | none | game_id → unix-ms deadline of current mover; clock-fall sweeper polls this every 500ms |
 | `draw-offer:{game_id}` | string (user_id) | 60s (capped to remaining clock) | Pending draw offer; SETNX-protected so only one offer can be open at a time |
+| `takeback-offer:{game_id}` | string (user_id) | 60s (capped to remaining clock) | Pending takeback request; SETNX-protected |
 
 ---
 
@@ -166,6 +167,9 @@ Forgetting this breaks every WS upgrade silently with
 | `DrawOffered` | one PvP participant offered a draw | `{from_user_id, game_id}` | `eventbus.EvtDrawOffered` | `GameView.connectWS` → set incoming-draw banner |
 | `DrawDeclined` | opponent declined a draw offer | `{by_user_id, game_id}` | `eventbus.EvtDrawDeclined` | `GameView.connectWS` → toast + clear banner |
 | `DrawAccepted` | opponent accepted; game ends 1/2-1/2 | `stateJSON` (status=draw_agreement) | `eventbus.EvtDrawAccepted` | (companion to StateUpdated; SPA clears banner) |
+| `TakebackRequested` | PvP casual game; one side asked for a takeback | `{from_user_id, game_id, plies}` | (literal — defined in cmd/game/takebacks.go) | `GameView.connectWS` → set incoming-takeback banner |
+| `TakebackDeclined` | opponent declined a takeback | `{by_user_id, game_id}` | (literal) | toast + clear banner |
+| `TakebackAccepted` | opponent accepted; history rolled back N plies | `stateJSON` | (literal) | (companion to StateUpdated; SPA clears banner) |
 
 ### `/ws/user` (user.evt.{user_id})
 

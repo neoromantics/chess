@@ -42,7 +42,10 @@
       <h3>Analysis</h3>
       <div class="btn-row">
         <button @click="$emit('get-hint')" class="btn-analysis" :disabled="state?.thinking || state?.status !== 'ongoing'">Hint</button>
-        <button @click="$emit('undo')" class="btn-analysis" :disabled="state?.thinking">Undo</button>
+        <!-- Undo is unilateral; only safe to expose in engine games.
+             PvP uses the Takeback flow (button moves to the Game
+             section so it sits next to Resign / Offer Draw). -->
+        <button v-if="!isPvP" @click="$emit('undo')" class="btn-analysis" :disabled="state?.thinking">Undo</button>
       </div>
       <div class="info-line hint-info">{{ hintInfo }}</div>
     </section>
@@ -61,9 +64,20 @@
       <div v-else-if="outgoingDraw" class="draw-prompt subtle">
         <span>Draw offer sent — waiting…</span>
       </div>
+      <div v-if="incomingTakeback" class="draw-prompt">
+        <span>Opponent requests a takeback.</span>
+        <div class="btn-row tight">
+          <button class="btn-accept" @click="$emit('takeback-accept')">Accept</button>
+          <button class="btn-secondary" @click="$emit('takeback-decline')">Decline</button>
+        </div>
+      </div>
+      <div v-else-if="outgoingTakeback" class="draw-prompt subtle">
+        <span>Takeback requested — waiting…</span>
+      </div>
       <div class="btn-row" v-if="state?.status === 'ongoing'">
         <button @click="$emit('resign')" class="btn-danger">Resign</button>
         <button v-if="canOfferDraw" @click="$emit('draw-offer')" class="btn-secondary" :disabled="outgoingDraw">Offer Draw</button>
+        <button v-if="canRequestTakeback" @click="$emit('takeback-offer')" class="btn-secondary" :disabled="outgoingTakeback">Takeback</button>
       </div>
       <div class="btn-row">
         <button @click="$emit('new-game')" style="flex: 2; background: #2d5a2d; border-color: #3a703a; font-weight: 600;">New Game</button>
@@ -99,9 +113,10 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue';
 import { StateJSON } from '../types';
 
-defineProps<{
+const props = defineProps<{
   state: StateJSON | null;
   whitePlayerType: string;
   blackPlayerType: string;
@@ -117,6 +132,9 @@ defineProps<{
   canOfferDraw?: boolean;
   incomingDraw?: boolean;
   outgoingDraw?: boolean;
+  canRequestTakeback?: boolean;
+  incomingTakeback?: boolean;
+  outgoingTakeback?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -134,7 +152,12 @@ const emit = defineEmits<{
   (e: 'draw-offer'): void;
   (e: 'draw-accept'): void;
   (e: 'draw-decline'): void;
+  (e: 'takeback-offer'): void;
+  (e: 'takeback-accept'): void;
+  (e: 'takeback-decline'): void;
 }>();
+
+const isPvP = computed(() => !!(props.state && props.state.white_user_id !== null && props.state.black_user_id !== null));
 
 const thinkOptions = [
   { v: 100, l: '0.1s (weak)' },

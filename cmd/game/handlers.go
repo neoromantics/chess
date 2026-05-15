@@ -401,6 +401,12 @@ func (s *GameService) handleHTTPSetPlayers(w http.ResponseWriter, r *http.Reques
 
 func (s *GameService) handleHTTPUndo(w http.ResponseWriter, r *http.Request) {
 	s.withLockedMutation(w, r, func(gm *game.Game, rec *db.GameRecord) error {
+		// Unilateral undo is only allowed when there's no real opponent
+		// (either side is the engine). For PvP, the agreed-upon
+		// equivalent is the Takeback flow — see cmd/game/takebacks.go.
+		if rec.WhiteUserID != nil && rec.BlackUserID != nil {
+			return userErr(http.StatusBadRequest, "PvP games can't undo unilaterally; use Takeback instead")
+		}
 		gm.Undo()
 		return nil
 	})

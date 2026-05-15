@@ -101,6 +101,11 @@ export const api = {
   drawAccept: (gameId: string) => request<StateJSON>(`/api/draw_accept?game_id=${gameId}`, { method: 'POST' }),
   drawDecline: (gameId: string) => request<void>(`/api/draw_decline?game_id=${gameId}`, { method: 'POST' }),
 
+  // ===== Takeback flow (PvP, casual only) =====
+  takebackOffer: (gameId: string) => request<void>(`/api/takeback_offer?game_id=${gameId}`, { method: 'POST' }),
+  takebackAccept: (gameId: string) => request<StateJSON>(`/api/takeback_accept?game_id=${gameId}`, { method: 'POST' }),
+  takebackDecline: (gameId: string) => request<void>(`/api/takeback_decline?game_id=${gameId}`, { method: 'POST' }),
+
   // ===== Anonymous temp-game session =====
   // Idempotent: returns the caller's currently-active temp game (if
   // any, refreshing TTL) or creates a fresh one. The chess-anon cookie

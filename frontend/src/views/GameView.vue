@@ -35,6 +35,9 @@
         :can-offer-draw="canOfferDraw"
         :incoming-draw="incomingDrawFrom !== null"
         :outgoing-draw="outgoingDrawSent"
+        :can-request-takeback="canRequestTakeback"
+        :incoming-takeback="incomingTakebackFrom !== null"
+        :outgoing-takeback="outgoingTakebackSent"
         @update:white-player-type="updatePlayerType('white', $event)"
         @update:black-player-type="updatePlayerType('black', $event)"
         @update:white-think-time="updateThinkTime('white', $event)"
@@ -47,6 +50,9 @@
         @draw-offer="drawOffer"
         @draw-accept="drawAccept"
         @draw-decline="drawDecline"
+        @takeback-offer="takebackOffer"
+        @takeback-accept="takebackAccept"
+        @takeback-decline="takebackDecline"
         @open-replay="openReplay"
         @toggle-flip="flipped = !flipped"
       />
@@ -108,10 +114,20 @@ const blackThinkTime = ref(1000);
 // mirror its broadcasts here so the SPA renders the right banner.
 const incomingDrawFrom = ref<number | null>(null); // user_id of offerer
 const outgoingDrawSent = ref(false);
+const incomingTakebackFrom = ref<number | null>(null);
+const outgoingTakebackSent = ref(false);
 const canOfferDraw = computed(() => {
   // PvP-only, ongoing, and we're not the offerer waiting for a response.
   if (!state.value || state.value.status !== 'ongoing') return false;
   if (state.value.white_user_id === null || state.value.black_user_id === null) return false;
+  return true;
+});
+const canRequestTakeback = computed(() => {
+  // PvP, casual, ongoing, and we've actually played a move.
+  if (!state.value || state.value.status !== 'ongoing') return false;
+  if (state.value.white_user_id === null || state.value.black_user_id === null) return false;
+  if (state.value.rated) return false;
+  if (!state.value.history || state.value.history.length === 0) return false;
   return true;
 });
 
@@ -268,6 +284,8 @@ const updateState = (s: StateJSON) => {
   if (s.status !== 'ongoing') {
     incomingDrawFrom.value = null;
     outgoingDrawSent.value = false;
+    incomingTakebackFrom.value = null;
+    outgoingTakebackSent.value = false;
   }
 };
 
@@ -318,6 +336,21 @@ const connectWS = () => {
         // update render the terminal status.
         incomingDrawFrom.value = null;
         outgoingDrawSent.value = false;
+      } else if (data.type === 'TakebackRequested') {
+        const fromId = data.payload?.from_user_id;
+        if (authStore.user && fromId && fromId !== authStore.user.id) {
+          incomingTakebackFrom.value = fromId;
+        }
+      } else if (data.type === 'TakebackDeclined') {
+        if (outgoingTakebackSent.value) {
+          toastStore.info('Opponent declined the takeback.');
+        }
+        incomingTakebackFrom.value = null;
+        outgoingTakebackSent.value = false;
+      } else if (data.type === 'TakebackAccepted') {
+        // StateUpdated rolls in alongside; just clear the banner state.
+        incomingTakebackFrom.value = null;
+        outgoingTakebackSent.value = false;
       }
     } catch (e) {
       console.error('Failed to parse WS message', e);
@@ -378,6 +411,38 @@ const drawDecline = async () => {
     toastStore.info('Draw declined.');
   } catch (e: any) {
     toastStore.error('Could not decline draw: ' + (e?.message || e));
+  }
+};
+
+const takebackOffer = async () => {
+  try {
+    await api.takebackOffer(props.id);
+    outgoingTakebackSent.value = true;
+    toastStore.info('Takeback requested.');
+  } catch (e: any) {
+    toastStore.error('Could not request takeback: ' + (e?.message || e));
+  }
+};
+
+const takebackAccept = async () => {
+  try {
+    const snap = await api.takebackAccept(props.id);
+    if (snap) updateState(snap);
+    incomingTakebackFrom.value = null;
+    outgoingTakebackSent.value = false;
+    toastStore.success('Takeback granted.');
+  } catch (e: any) {
+    toastStore.error('Could not accept takeback: ' + (e?.message || e));
+  }
+};
+
+const takebackDecline = async () => {
+  try {
+    await api.takebackDecline(props.id);
+    incomingTakebackFrom.value = null;
+    toastStore.info('Takeback declined.');
+  } catch (e: any) {
+    toastStore.error('Could not decline takeback: ' + (e?.message || e));
   }
 };
 

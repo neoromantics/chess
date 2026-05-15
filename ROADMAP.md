@@ -37,6 +37,7 @@ The session that produced this roadmap shipped ~40 commits restructuring the pla
 - ✅ Anonymous **temp games** (2026-05-15). Visitor lands on `/`, gets a Redis-only game with 10-minute sliding TTL. `chess-anon` HttpOnly cookie binds the session. Engine-only, no PvP. See `pkg/wire/CONTRACT.md` Section 6.
 - ✅ Server-authoritative clocks for PvP (2026-05-15). `clock:{id}` Redis hash holds the bank state; `clock:fallschedule` sorted-set drives a 500ms-tick flag-fall sweeper. PvP games initialize from `time_control` ("M+S"). SPA's `ClockDisplay` extrapolates locally between snapshots for smoothness; the server's number is always authoritative.
 - ✅ Draw offer / accept / decline (2026-05-15). PvP only. SETNX-protected ephemeral key `draw-offer:{game_id}` holds the offerer; only the opposite participant can accept (status=`draw_agreement`, result=`1/2-1/2`) or decline. WS events `DrawOffered` / `DrawAccepted` / `DrawDeclined` round-trip both sides.
+- ✅ Takeback request / accept (2026-05-15). PvP casual only (rated games never take back). Same SETNX pattern as draws; accept pops 1 or 2 plies depending on whose turn it is, so the requester ends up on move. Unilateral `/api/undo` now rejects PvP — Takeback is the only path.
 
 ---
 
@@ -76,9 +77,6 @@ likely-to-return ones:
 ## Queued — Product / chess features
 
 In priority order. Each is independent; ship one at a time.
-
-### ⬜ Takeback request / accept
-Same shape as draw. Casual games only — never on rated.
 
 ### ⬜ Spectator mode
 Read-only WS subscription for public games. Need to relax `userMayWatchGame` for games flagged public, and a new `is_public` schema column.
