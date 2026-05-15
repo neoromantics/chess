@@ -63,8 +63,12 @@ likely-to-return ones:
       until it makes a legal move; can't switch to a different piece or
       deselect. localStorage-persisted, applies to PvP + engine games.
       Pure SPA — no backend churn.
-- ⬜ **Move assessment** — engine-graded annotations on the move list,
-      pushed via WS instead of the old request/response dance.
+- ✅ **Move assessment** (2026-05-15, phase 1) — `POST /api/analyze`
+      replays the game ply-by-ply and fires a 200ms engine search per
+      pre-move position; per-ply `EvtAssessment` streams over the
+      per-game WS channel. SidePanel renders ✓ / ? / ★ (best / alt /
+      only-legal) next to each SAN. Centipawn-loss classification +
+      stored `rec.Assessments` persistence are follow-up phases.
 - ✅ **Bullet/blitz/classical time controls** (2026-05-15) — restored
       `1+0, 2+1, 3+0, 3+2, 5+0, 5+3, 10+0, 10+5, 15+10, 30+0` via
       `validTimeControl` + `supportedTCs`. Match page exposes the

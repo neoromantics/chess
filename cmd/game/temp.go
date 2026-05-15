@@ -489,6 +489,24 @@ func (s *GameService) handleTempLoadPGN(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, snapshot)
 }
 
+// handleTempAnalyze dispatches the per-ply assess jobs for an anonymous
+// game. Same wire as the durable variant; the dispatcher tags each
+// request with temp=1 so engine-worker can return Metadata that we
+// can identify here later (currently the consumer doesn't branch on
+// temp for assess — the per-game WS channel works the same for both
+// surfaces).
+func (s *GameService) handleTempAnalyze(w http.ResponseWriter, r *http.Request) {
+	rec, _, ok := s.requireTempAccess(w, r)
+	if !ok {
+		return
+	}
+	if err := s.dispatchAssessmentJobs(r.Context(), rec.ID, rec.StartFEN, rec.History, true); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "plies": len(rec.History)})
+}
+
 // handleTempSetPosition mirrors handleHTTPSetPosition for anonymous
 // games. Temp games are always engine-vs-human (or engine-vs-engine),
 // so there's no PvP guard. Same shape: validate FEN, wipe history,

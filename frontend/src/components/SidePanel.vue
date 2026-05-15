@@ -106,10 +106,21 @@
         <div v-for="(pair, i) in historyPairs" :key="i" class="move-row">
           <span class="move-num">{{ i + 1 }}.</span>
           <span v-for="(mv, j) in pair" :key="j" class="move-cell">
-            <span class="move-san" :title="mv.lan">{{ mv.san }}</span>
+            <span
+              class="move-san"
+              :class="moveClass(mv.idx)"
+              :title="moveTooltip(mv)"
+            >{{ mv.san }}{{ moveMarker(mv.idx) }}</span>
           </span>
         </div>
         <div v-if="!historyPairs.length" class="move-empty">No moves yet.</div>
+      </div>
+      <!-- Analyze button: visible whenever there's at least one ply.
+           Disabled during analysis; shows partial progress. -->
+      <div v-if="plyCount > 0" class="analyze-row">
+        <button class="btn ghost analyze-btn" :disabled="analyzing" @click="$emit('analyze')">
+          {{ analyzing ? `Analyzing… ${assessedCount}/${plyCount}` : (assessedCount > 0 ? 'Re-analyze' : 'Analyze game') }}
+        </button>
       </div>
     </section>
 
@@ -165,6 +176,8 @@ const props = defineProps<{
   outgoingTakeback?: boolean;
   canEditPosition?: boolean;
   pgnDownloadUrl?: string;
+  assessments?: Record<number, { ply: number; played: string; best: string; score: number; depth: number; class: string }>;
+  analyzing?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -188,10 +201,32 @@ const emit = defineEmits<{
   (e: 'takeback-decline'): void;
   (e: 'edit-position'): void;
   (e: 'load-pgn', pgn: string): void;
+  (e: 'analyze'): void;
 }>();
 
 const isPvP = computed(() => !!(props.state && props.state.white_user_id !== null && props.state.black_user_id !== null));
 const plyCount = computed(() => props.state?.history?.length ?? 0);
+const assessedCount = computed(() => Object.keys(props.assessments ?? {}).length);
+
+const moveClass = (idx: number) => {
+  const a = props.assessments?.[idx];
+  if (!a) return '';
+  return 'assess-' + a.class;
+};
+const moveMarker = (idx: number) => {
+  const a = props.assessments?.[idx];
+  if (!a) return '';
+  if (a.class === 'best') return ' ✓';
+  if (a.class === 'only') return ' ★';
+  return ' ?';
+};
+const moveTooltip = (mv: { san: string; lan: string; idx: number }) => {
+  const a = props.assessments?.[mv.idx];
+  if (!a) return mv.lan;
+  if (a.class === 'best') return `${mv.lan} — engine's pick (eval ${a.score / 100}, depth ${a.depth})`;
+  if (a.class === 'only') return `${mv.lan} — only legal move`;
+  return `${mv.lan} — engine preferred ${a.best} (eval ${a.score / 100}, depth ${a.depth})`;
+};
 
 // Engine settings collapsed by default. Stored in localStorage so a
 // power user who likes seeing them keeps that across reloads.
@@ -337,6 +372,12 @@ const onLoadPgn = () => {
 .move-cell { min-width: 60px; }
 .move-san { color: #e0e0e0; padding: 0 2px; border-radius: 2px; }
 .move-empty { color: #666; font-style: italic; padding: 8px 0; font-family: inherit; }
+.move-san.assess-best { color: #6ec77a; }
+.move-san.assess-alt  { color: #e4b15a; }
+.move-san.assess-only { color: #c2bfff; }
+
+.analyze-row { padding: 8px 0 0; border-top: 1px solid #2f2f2f; margin-top: 8px; }
+.analyze-btn { width: 100%; font-size: 12px; }
 
 /* New game CTA */
 .new-game {

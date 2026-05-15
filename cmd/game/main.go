@@ -77,6 +77,7 @@ func main() {
 		mux.HandleFunc("POST /api/set_position", s.handleHTTPSetPosition)
 		mux.HandleFunc("GET /api/pgn", s.handleHTTPDownloadPGN)
 		mux.HandleFunc("POST /api/load_pgn", s.handleHTTPLoadPGN)
+		mux.HandleFunc("POST /api/analyze", s.handleHTTPAnalyze)
 		mux.HandleFunc("POST /api/undo", s.handleHTTPUndo)
 		mux.HandleFunc("DELETE /api/games/delete", s.handleHTTPDelete)
 		mux.HandleFunc("POST /api/hint", s.handleHTTPHint)
@@ -105,6 +106,7 @@ func main() {
 		mux.HandleFunc("POST /api/temp/set_position", s.handleTempSetPosition)
 		mux.HandleFunc("GET /api/temp/pgn", s.handleTempDownloadPGN)
 		mux.HandleFunc("POST /api/temp/load_pgn", s.handleTempLoadPGN)
+		mux.HandleFunc("POST /api/temp/analyze", s.handleTempAnalyze)
 		// Internal-only — gateway calls this from handleSignup when
 		// the signup request carried a chess-anon cookie. Not in the
 		// public proxy table.
@@ -412,10 +414,14 @@ func (s *GameService) processEngineResult(ctx context.Context, msg redis.XMessag
 		slog.Error("engine-result unmarshal failed", "error", err)
 		return
 	}
+	if resp.Context == "assess" {
+		s.applyAssessmentResult(ctx, resp)
+		return
+	}
 	if resp.Context != "move" {
-		// hint / assess results need different handling (broadcast
-		// to the WS hub rather than dispatching a Command). Not yet
-		// implemented; ack and drop so they don't pile up.
+		// hint results are broadcast directly by engine-worker on the
+		// per-game channel — nothing to do here. Ack-and-drop so they
+		// don't pile up in pending.
 		return
 	}
 

@@ -136,6 +136,10 @@ const (
 	EvtDrawOffered  = "DrawOffered"
 	EvtDrawAccepted = "DrawAccepted"
 	EvtDrawDeclined = "DrawDeclined"
+	// EvtAssessment carries one per-ply analysis update so the SPA can
+	// decorate the move list as results arrive. Payload is one
+	// PlyAssessment object (ply, played, best, score, class).
+	EvtAssessment = "Assessment"
 
 	// User-channel events (user.evt.{id}). snake_case matches what
 	// every Pinia store .on()s for. Renaming any of these is a

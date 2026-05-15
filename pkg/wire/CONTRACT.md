@@ -59,6 +59,7 @@ game row.
 | POST | `/api/set_position?game_id=X` | 🔐+game | gateway → game-svc | `api.setPosition` (engine games only) |
 | GET  | `/api/pgn?game_id=X` | 🔐+game | gateway → game-svc | `api.pgnDownloadUrl` (browser download) |
 | POST | `/api/load_pgn?game_id=X` | 🔐+game | gateway → game-svc | `api.loadPgn` (engine games only) |
+| POST | `/api/analyze?game_id=X` | 🔐+game | gateway → game-svc | `api.analyze` (kicks per-ply jobs, streams `Assessment` over WS) |
 | POST | `/api/hint?game_id=X` | 🔐+game | gateway → game-svc | `api.getHint` |
 | GET | `/api/replay?game_id=X` | 🔐+game | gateway → game-svc | (data fetched by gateway) |
 | GET | `/api/replay.html?game_id=X` | 🔐+game | gateway (template) | `Replay` button |
@@ -274,7 +275,7 @@ the cleanup. The `chess-paused-features` memory tracks the full list.
 |---|---|
 | Server clocks | Shipped 2026-05-15. PvP games initialize a `clock:{id}` Redis hash from `time_control` (e.g. "15+10"); `clocks.go` deducts elapsed wall time + adds increment per move; flag-fall sweeper finalizes timeouts. Engine games still use `white_think_time`/`black_think_time` — those are engine search budgets, not a game clock. |
 | Touch-move | `pkg/game/Touch`, `TouchMove`, `TouchedSq`, `TouchLost`, `StatusTouchLost`, `/api/touch`, `/api/touch_move`, SPA toggle |
-| Move assessment | `/api/assess`, `Assessments` field in `stateJSON`, `ClassifyAssessment`, SPA UI, `ASSESS_COLORS` / `ASSESS_SYMBOL` |
+| Move assessment | Restored 2026-05-15 as on-demand. `POST /api/analyze?game_id=X` replays the game ply-by-ply, dispatches one engine search per pre-move position (Context="assess", 200ms each), and streams per-ply `EvtAssessment` events over `game.evt.{id}`. Coarse classification: `best` (matched engine pick) / `alt` / `only` (single legal move). Centipawn-loss classification is a follow-up. |
 | Board editor | Restored 2026-05-15. `EditPanel.vue` is back; `POST /api/set_position` (engine games only) replaces the position with a user-supplied FEN, persisted as `start_fen` on the `games` row. PvP games are rejected server-side. |
 | Save / load PGN file + FEN paste | PGN restored 2026-05-15 via `GET /api/pgn` (download) + `POST /api/load_pgn` (paste, engine games only). FEN paste is still available via `/api/set_position`. |
 | Draw offer / accept / decline | SPA emit sites in `SidePanel`, `GameView` handlers |
@@ -317,7 +318,7 @@ inspects the prefix: `temp-…` IDs go through the cookie-authenticated
 path that reads `tempgame:state:{id}` to verify ownership.
 
 **Routes.** Mirror the durable surface, prefixed `/api/temp/`:
-`session, state, move, new, undo, resign, hint, set_players, set_position, pgn, load_pgn`. The
+`session, state, move, new, undo, resign, hint, set_players, set_position, pgn, load_pgn, analyze`. The
 SPA's `api.ts` auto-routes by ID prefix so callers stay flavor-agnostic.
 `set_players` updates engine assignment + per-side think time on the
 existing temp record (split fields `WhiteThinkTimeMS`/`BlackThinkTimeMS`)

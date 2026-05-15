@@ -44,6 +44,8 @@
         :outgoing-takeback="outgoingTakebackSent"
         :can-edit-position="canEditPosition"
         :pgn-download-url="pgnDownloadUrl"
+        :assessments="assessments"
+        :analyzing="analyzing"
         @update:white-player-type="updatePlayerType('white', $event)"
         @update:black-player-type="updatePlayerType('black', $event)"
         @update:white-think-time="updateThinkTime('white', $event)"
@@ -64,6 +66,7 @@
         @toggle-flip="flipped = !flipped"
         @edit-position="enterEditMode"
         @load-pgn="loadPgn"
+        @analyze="analyze"
       />
 
       <EditPanel
@@ -166,6 +169,14 @@ const canEditPosition = computed(() => {
   return state.value.white_user_id === null || state.value.black_user_id === null;
 });
 const pgnDownloadUrl = computed(() => api.pgnDownloadUrl(props.id));
+
+// Move-assessment results stream in over WS after the user hits
+// "Analyze". Keyed by ply index. Cleared on every state mutation that
+// changes the history (new game / undo / load PGN) since the indices
+// no longer refer to the same moves.
+type Assessment = { ply: number; played: string; best: string; score: number; depth: number; class: string };
+const assessments = ref<Record<number, Assessment>>({});
+const analyzing = ref(false);
 const editMode = ref(false);
 const editBoard = ref<(string | null)[][] | null>(null);
 const editPalette = ref('P');
@@ -392,6 +403,15 @@ const connectWS = () => {
         // StateUpdated rolls in alongside; just clear the banner state.
         incomingTakebackFrom.value = null;
         outgoingTakebackSent.value = false;
+      } else if (data.type === 'Assessment') {
+        const a = data.payload as Assessment;
+        assessments.value[a.ply] = a;
+        // analyzing stays "true" until we've received as many results
+        // as the move list length; SidePanel uses it to disable the
+        // button + show a counter.
+        if (state.value?.history && Object.keys(assessments.value).length >= state.value.history.length) {
+          analyzing.value = false;
+        }
       }
     } catch (e) {
       console.error('Failed to parse WS message', e);
@@ -580,6 +600,7 @@ const newGame = async () => {
     selected.value = null;
     hint.value = null;
     hintInfo.value = '';
+    assessments.value = {};
     toastStore.success('Game reset');
   } catch (e: any) {
     toastStore.error(e.message);
@@ -597,6 +618,7 @@ const undoMove = async () => {
     selected.value = null;
     hint.value = null;
     hintInfo.value = '';
+    assessments.value = {};
     toastStore.info('Move undone');
   } catch (e: any) {
     toastStore.error(e.message);
@@ -693,6 +715,19 @@ const editStartPos = () => {
   editBoard.value = parseBoard('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR');
   editTurn.value = 'w';
   editCastling.value = { K: true, Q: true, k: true, q: true };
+};
+
+const analyze = async () => {
+  if (analyzing.value) return;
+  try {
+    assessments.value = {};
+    analyzing.value = true;
+    await api.analyze(props.id);
+    toastStore.info('Analyzing… results will stream in.');
+  } catch (e: any) {
+    analyzing.value = false;
+    toastStore.error('Analyze failed: ' + (e?.message || e));
+  }
 };
 
 const loadPgn = async (pgn: string) => {
