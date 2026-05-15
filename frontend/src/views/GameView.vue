@@ -21,6 +21,8 @@
       <div class="game-id">ID: {{ id }}</div>
       <div id="status">{{ statusMsg }}</div>
 
+      <ClockDisplay :state="state" />
+
       <SidePanel
         :state="state"
         :white-player-type="whitePlayerType"
@@ -57,6 +59,7 @@ import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import ChessBoard from '../components/ChessBoard.vue';
 import SidePanel from '../components/SidePanel.vue';
 import PromoModal from '../components/PromoModal.vue';
+import ClockDisplay from '../components/ClockDisplay.vue';
 import { api } from '../api';
 import { useToastStore } from '../stores/toast';
 import { useAuthStore } from '../stores/auth';

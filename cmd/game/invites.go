@@ -249,7 +249,13 @@ func (s *GameService) createPvPGameFromInvite(inv *db.Invite) (string, error) {
 	}
 	// Use the cached save so a brand-new PvP game is hot in Redis
 	// before either client's first /api/state poll lands.
-	return id, s.saveGameCached(context.Background(), rec)
+	if err := s.saveGameCached(context.Background(), rec); err != nil {
+		return id, err
+	}
+	if err := initClock(context.Background(), s.bus.Rdb(), rec); err != nil {
+		slog.Error("clock init failed", "game_id", id, "error", err)
+	}
+	return id, nil
 }
 
 // ===== DECLINE / CANCEL =====

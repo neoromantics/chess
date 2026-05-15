@@ -35,6 +35,7 @@ The session that produced this roadmap shipped ~40 commits restructuring the pla
 - ✅ k3s secrets owned by the cluster (`infra/bootstrap-secrets.sh`); CI never sees prod secrets.
 - ✅ Postgres `max_connections=500` (instead of an external pooler — pgbouncer image-tag situation on Docker Hub was unreliable).
 - ✅ Anonymous **temp games** (2026-05-15). Visitor lands on `/`, gets a Redis-only game with 10-minute sliding TTL. `chess-anon` HttpOnly cookie binds the session. Engine-only, no PvP. See `pkg/wire/CONTRACT.md` Section 6.
+- ✅ Server-authoritative clocks for PvP (2026-05-15). `clock:{id}` Redis hash holds the bank state; `clock:fallschedule` sorted-set drives a 500ms-tick flag-fall sweeper. PvP games initialize from `time_control` ("M+S"). SPA's `ClockDisplay` extrapolates locally between snapshots for smoothness; the server's number is always authoritative.
 
 ---
 
@@ -56,8 +57,9 @@ likely-to-return ones:
       session-level toggle, not a per-game mutation.
 - ⬜ **Move assessment** — engine-graded annotations on the move list,
       pushed via WS instead of the old request/response dance.
-- ⬜ **Bullet/blitz time controls** (1+0, 3+2, 5+0, 10+5…) — gated on
-      server clocks landing first; meaningless without them.
+- ⬜ **Bullet/blitz time controls** (1+0, 3+2, 5+0, 10+5…) — server
+      clocks already shipped; just need to allow more strings through
+      `validTimeControl` and add the SPA pickers.
 - ⬜ **Save / load PGN** — proper PGN this time, not the JSON dump.
 - ⬜ **Board editor + FEN paste** — a small standalone view, not
       bolted into GameView.
@@ -73,16 +75,6 @@ likely-to-return ones:
 ## Queued — Product / chess features
 
 In priority order. Each is independent; ship one at a time.
-
-### ⬜ Server-authoritative clocks for PvP — **highest impact**
-Currently only engine think-time exists; the single PvP time control
-(`15+10`) is configured but not enforced. Sketch:
-
-- Redis hash `clock:{id}` storing `white_ms`, `black_ms`, `turn_started_ms`, `inc_ms`, `mover`.
-- On every move (HTTP move handler + engine MakeMove path), server deducts `now - turn_started` from the moving side, applies the increment, swaps mover, persists, broadcasts the new times on `game.evt.{id}`.
-- A flag-fall sweeper (game-service goroutine; per-game lock makes it idempotent across replicas) scans a `clock:fallschedule` sorted set and finishes any game whose mover ran out.
-- SPA extrapolates between ticks for smoothness; server's number wins on every WS event.
-- Reconnect: GET `/api/state` carries the canonical `white_ms` / `black_ms`.
 
 ### ⬜ Draw offer / accept / decline
 Was removed in the cleanup. Re-add as:

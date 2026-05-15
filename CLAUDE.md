@@ -151,7 +151,6 @@ Common failure modes and where to look:
 The full status board lives in `ROADMAP.md`. The high-impact open items at a glance:
 
 **Product / chess features (next):**
-- **Server-authoritative clocks for PvP** — biggest missing piece. Blitz/bullet require a real clock; today only engine think-time exists.
 - **Draw offer / accept / decline** — SidePanel already emits the events; needs backend endpoints + WS round-trip.
 - **Takeback request / accept** — same shape as draw.
 
@@ -173,3 +172,4 @@ The full status board lives in `ROADMAP.md`. The high-impact open items at a gla
 - Per-game lock + ownership authz; side-to-move authz on /api/move
 - Resign endpoint; auto-flip for black player
 - `pkg/wire/CONTRACT.md` as the canonical wire-protocol doc
+- Server-authoritative clocks for PvP (`clock:{id}` hash + `clock:fallschedule` sweeper; SPA `ClockDisplay` extrapolates between snapshots)

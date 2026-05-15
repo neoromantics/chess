@@ -104,6 +104,7 @@ func (s *GameService) withLockedMutation(
 	_ = json.Unmarshal([]byte(rec.History), &history)
 	gm.Load("", history, rec.EngineWhite, rec.EngineBlack)
 
+	historyBefore := len(gm.History)
 	if err := fn(gm, rec); err != nil {
 		// fn already wrote a response if its error is user-facing;
 		// otherwise log and 500.
@@ -117,6 +118,31 @@ func (s *GameService) withLockedMutation(
 		return
 	}
 
+	// Server-authoritative clock update. Only fires when fn extended
+	// the move list by one (a real move) — set_players, undo, new all
+	// either shrink or leave history alone and shouldn't tick the
+	// clock. Engine games carry no clock; loadClock returns nil.
+	clockTimedOut := false
+	if len(gm.History) == historyBefore+1 {
+		if c, _ := loadClock(r.Context(), s.bus.Rdb(), rec.ID); c != nil {
+			flagged, loser := c.applyMove(time.Now().UnixMilli())
+			if flagged {
+				rec.Status = "timeout"
+				if loser == "w" {
+					rec.Result = "0-1"
+				} else {
+					rec.Result = "1-0"
+				}
+				clockTimedOut = true
+				_ = c.save(r.Context(), s.bus.Rdb())
+				deleteClock(r.Context(), s.bus.Rdb(), rec.ID)
+			} else {
+				_ = c.save(r.Context(), s.bus.Rdb())
+				c.scheduleFlag(r.Context(), s.bus.Rdb())
+			}
+		}
+	}
+
 	// Write the new state back. Status is taken from gm.Status() so
 	// terminal conditions (checkmate / stalemate / draw rules) land in
 	// the row automatically.
@@ -127,7 +153,9 @@ func (s *GameService) withLockedMutation(
 	rec.HistorySAN = string(sanJSON)
 	rec.EngineWhite = gm.EngineWhite
 	rec.EngineBlack = gm.EngineBlack
-	rec.Status = string(gm.Status())
+	if !clockTimedOut {
+		rec.Status = string(gm.Status())
+	}
 	rec.UpdatedAt = time.Now()
 	if err := s.saveGameCached(r.Context(), rec); err != nil {
 		slog.Error("save game failed", "game_id", rec.ID, "error", err)
@@ -151,6 +179,12 @@ func (s *GameService) withLockedMutation(
 	// is no longer relevant. triggerEngineForMove below will re-set it
 	// (with the right TTL) when applicable.
 	_ = s.bus.Rdb().Del(context.Background(), "game:thinking:"+rec.ID).Err()
+
+	// Position-derived terminal (checkmate / stalemate / draw rules)
+	// also tears down the clock so the sweeper stops checking it.
+	if rec.Status != "" && rec.Status != "ongoing" {
+		deleteClock(r.Context(), s.bus.Rdb(), rec.ID)
+	}
 
 	// If it's now an engine's turn and the game isn't over, kick off
 	// the search. Async on a background context so the HTTP response
@@ -300,6 +334,7 @@ func (s *GameService) handleHTTPResign(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "save failed", http.StatusInternalServerError)
 		return
 	}
+	deleteClock(r.Context(), s.bus.Rdb(), rec.ID)
 
 	snapshot := s.snapshotFromRecord(r.Context(), rec)
 	snapPayload, _ := json.Marshal(snapshot)
@@ -326,6 +361,13 @@ func (s *GameService) handleHTTPNew(w http.ResponseWriter, r *http.Request) {
 		gm.Reset()
 		gm.EngineWhite = req.EngineWhite
 		gm.EngineBlack = req.EngineBlack
+		// Wipe and re-initialize the clock from the row's time_control.
+		// withLockedMutation will overwrite rec.Status to "ongoing"
+		// (gm.Status is reset), so the new clock starts fresh.
+		deleteClock(r.Context(), s.bus.Rdb(), rec.ID)
+		if err := initClock(r.Context(), s.bus.Rdb(), rec); err != nil {
+			slog.Error("clock reinit failed", "game_id", rec.ID, "error", err)
+		}
 		return nil
 	})
 }

@@ -106,6 +106,10 @@ func main() {
 	// pairing loop is Redis-leader-elected so multiple game-service
 	// replicas don't race the queue. See cmd/game/matchmaker.go.
 	go s.runPairingLoop(ctx)
+	// Clock flag-fall sweeper. Per-game lock makes the work idempotent
+	// across replicas — no leader election needed at this scale. See
+	// cmd/game/clocks.go.
+	go s.runClockFallSweeper(ctx)
 	// Rating updater paused with the rest of the Elo surface in the
 	// 2026-05-15 cleanup. Stream events still emit GameFinished; nothing
 	// consumes them today. See ROADMAP.md "Restore deleted features".
@@ -149,6 +153,17 @@ type stateJSON struct {
 	BlackUserID *int64 `json:"black_user_id"`
 	TimeControl string `json:"time_control"`
 	Rated       bool   `json:"rated"`
+
+	// Server-authoritative clock state. Engine-only / pre-clocks games
+	// leave ClockInitial=0; the SPA hides the clock UI when initial is 0.
+	// WhiteClockMS/BlackClockMS are reduced for the mover at snapshot
+	// time — the SPA extrapolates further locally for smoothness.
+	WhiteClockMS  int64  `json:"white_clock_ms"`
+	BlackClockMS  int64  `json:"black_clock_ms"`
+	ClockInitial  int64  `json:"clock_initial_ms"`
+	ClockInc      int64  `json:"clock_inc_ms"`
+	ClockMover    string `json:"clock_mover"`     // "w", "b", or "" if not running
+	ClockServerMS int64  `json:"clock_server_ms"` // unix ms at snapshot time, for SPA extrapolation
 }
 
 type moveJSON struct {
@@ -247,7 +262,7 @@ func (s *GameService) snapshotFromRecord(ctx context.Context, rec *db.GameRecord
 		status = rec.Status
 	}
 
-	return stateJSON{
+	snap := stateJSON{
 		FEN:            gm.Board.FEN(),
 		Turn:           turn,
 		EngineWhite:    gm.EngineWhite,
@@ -268,6 +283,27 @@ func (s *GameService) snapshotFromRecord(ctx context.Context, rec *db.GameRecord
 		TimeControl:    rec.TimeControl,
 		Rated:          rec.Rated,
 	}
+
+	// Clock projection: read the live hash, deduct mid-turn elapsed for
+	// the mover, surface ClockServerMS so the SPA's local tick lines up.
+	// Errors here are non-fatal — clock UI just stays hidden / stale.
+	if c, err := loadClock(ctx, s.bus.Rdb(), rec.ID); err == nil && c != nil {
+		w, b := c.currentTimes()
+		snap.WhiteClockMS = w
+		snap.BlackClockMS = b
+		snap.ClockInitial = c.InitialMS
+		snap.ClockInc = c.IncMS
+		// Stop the clock visually once the game ends — flagGame zeros
+		// Mover, but resign / checkmate finalize the row without
+		// touching the clock hash. Rely on rec.Status to decide.
+		if rec.Status != "" && rec.Status != "ongoing" {
+			snap.ClockMover = ""
+		} else {
+			snap.ClockMover = c.Mover
+		}
+		snap.ClockServerMS = time.Now().UnixMilli()
+	}
+	return snap
 }
 
 // handleReplayData returns the per-ply ReplayFrame slice for a single
@@ -541,6 +577,9 @@ func (s *GameService) handleCreatePvPGame(ctx context.Context, cmd eventbus.Comm
 		slog.Error("failed to create pvp game", "error", err)
 		return
 	}
+	if err := initClock(ctx, s.bus.Rdb(), rec); err != nil {
+		slog.Error("clock init failed", "game_id", id, "error", err)
+	}
 
 	slog.Info("new pvp game created", "game_id", id, "white", white, "black", black)
 
@@ -639,12 +678,40 @@ func (s *GameService) handleMakeMove(ctx context.Context, cmd eventbus.Command) 
 
 	gm.PlayMove(matched)
 
+	// Server-authoritative clock update. PvP only — engine games carry
+	// no clock hash and loadClock returns nil silently.
+	if c, _ := loadClock(ctx, s.bus.Rdb(), rec.ID); c != nil {
+		flagged, loser := c.applyMove(time.Now().UnixMilli())
+		if flagged {
+			// The mover ran out exactly as their move landed. Treat as
+			// a timeout (the move is moot — clock fell first). The
+			// sweeper would catch this milliseconds later anyway; doing
+			// it here avoids the brief "looks fine" snapshot in between.
+			rec.Status = "timeout"
+			if loser == "w" {
+				rec.Result = "0-1"
+			} else {
+				rec.Result = "1-0"
+			}
+			_ = c.save(ctx, s.bus.Rdb())
+			deleteClock(ctx, s.bus.Rdb(), rec.ID)
+		} else {
+			_ = c.save(ctx, s.bus.Rdb())
+			c.scheduleFlag(ctx, s.bus.Rdb())
+		}
+	}
+
 	rec.FEN = gm.Board.FEN()
 	hJSON, _ := json.Marshal(gm.History)
 	rec.History = string(hJSON)
 	hsJSON, _ := json.Marshal(gm.HistorySAN)
 	rec.HistorySAN = string(hsJSON)
-	rec.Status = string(gm.Status())
+	if rec.Status == "" || rec.Status == "ongoing" {
+		// Don't overwrite a clock-flagged "timeout" status with whatever
+		// gm reports (still ongoing because the position itself is
+		// playable).
+		rec.Status = string(gm.Status())
+	}
 	rec.UpdatedAt = time.Now()
 
 	if err := s.saveGameCached(ctx, rec); err != nil {
@@ -672,7 +739,11 @@ func (s *GameService) handleMakeMove(ctx context.Context, cmd eventbus.Command) 
 		Payload: pJSON,
 	})
 
-	if gm.Status() != game.StatusOngoing {
+	if rec.Status != "ongoing" {
+		// Position-derived terminal (checkmate / stalemate / draw) OR
+		// clock-flagged terminal handled above. Either way the row is
+		// final; emit GameFinished and tear down the clock.
+		deleteClock(ctx, s.bus.Rdb(), rec.ID)
 		s.emitGameFinished(ctx, cmd.GameID, gm)
 	} else if gm.EngineToMove() {
 		s.triggerEngine(ctx, cmd.GameID, gm)

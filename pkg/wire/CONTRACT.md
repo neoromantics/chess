@@ -132,6 +132,8 @@ Three keyspaces with different durability semantics. Don't mix them.
 | `mm:leader` | string (SET NX) | 15s | Pairing-loop leader election |
 | `tempgame:state:{id}` | string (JSON blob) | 10m sliding | Anonymous game record; expires after 10m of inactivity |
 | `tempgame:session:{anon_id}` | string (game_id) | 10m sliding | Maps a `chess-anon` cookie to its current temp game (one per browser) |
+| `clock:{id}` | hash | none (deleted on game end) | Server-authoritative bank: `white_ms`, `black_ms`, `inc_ms`, `initial_ms`, `mover`, `turn_started_ms` |
+| `clock:fallschedule` | sorted set | none | game_id → unix-ms deadline of current mover; clock-fall sweeper polls this every 500ms |
 
 ---
 
@@ -202,8 +204,22 @@ interface StateJSON {
   black_think_time: number;                // engine search budget for black, in ms
   white_user_id: number | null;            // null = engine
   black_user_id: number | null;
-  time_control: string;                    // currently always "engine" or "15+10"
+  time_control: string;                    // "engine" | "M+S" e.g. "15+10"
   rated: boolean;
+
+  // Server-authoritative clock projection (PvP only; engine games leave
+  // clock_initial_ms === 0 and the SPA hides the clock UI).
+  // - white_clock_ms / black_clock_ms: bank values at clock_server_ms.
+  //   The mover's bank already has elapsed wall time deducted.
+  // - clock_mover: "w" | "b" while a clock is running, "" otherwise.
+  // - SPA extrapolates locally: for the mover side, subtract
+  //   (Date.now() - snapshot_received_at) from the bank each frame.
+  white_clock_ms: number;
+  black_clock_ms: number;
+  clock_initial_ms: number;
+  clock_inc_ms: number;
+  clock_mover: '' | 'w' | 'b';
+  clock_server_ms: number;                 // unix-ms at snapshot time
 }
 ```
 
@@ -245,7 +261,7 @@ the cleanup. The `chess-paused-features` memory tracks the full list.
 
 | Feature | What was removed |
 |---|---|
-| Server clocks | (Never shipped.) `white_think_time` / `black_think_time` in StateJSON are engine search budgets, NOT a game clock. |
+| Server clocks | Shipped 2026-05-15. PvP games initialize a `clock:{id}` Redis hash from `time_control` (e.g. "15+10"); `clocks.go` deducts elapsed wall time + adds increment per move; flag-fall sweeper finalizes timeouts. Engine games still use `white_think_time`/`black_think_time` — those are engine search budgets, not a game clock. |
 | Touch-move | `pkg/game/Touch`, `TouchMove`, `TouchedSq`, `TouchLost`, `StatusTouchLost`, `/api/touch`, `/api/touch_move`, SPA toggle |
 | Move assessment | `/api/assess`, `Assessments` field in `stateJSON`, `ClassifyAssessment`, SPA UI, `ASSESS_COLORS` / `ASSESS_SYMBOL` |
 | Board editor | `EditPanel.vue`, all `editMode` state in `GameView.vue` |

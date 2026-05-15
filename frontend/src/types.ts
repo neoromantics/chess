@@ -30,6 +30,20 @@ export interface StateJSON {
   black_user_id: number | null;
   time_control: string;
   rated: boolean;
+
+  // Server-authoritative clock projection. clock_initial_ms === 0 means
+  // this game has no clock (engine games, pre-clock games). Otherwise:
+  //   - white_clock_ms / black_clock_ms are the bank values at
+  //     clock_server_ms (mover's bank already had elapsed time deducted).
+  //   - clock_mover is "w" | "b" while running, "" when paused/over.
+  //   - SPA extrapolates locally between snapshots: for the mover side,
+  //     subtract (Date.now() - received_at) from the bank each frame.
+  white_clock_ms: number;
+  black_clock_ms: number;
+  clock_initial_ms: number;
+  clock_inc_ms: number;
+  clock_mover: '' | 'w' | 'b';
+  clock_server_ms: number;
 }
 
 export interface HintMove {
