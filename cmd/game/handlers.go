@@ -95,14 +95,17 @@ func (s *GameService) withLockedMutation(
 		return
 	}
 
-	// Replay from StartFEN, NOT rec.FEN — see snapshotFromRecord for why.
-	// Loading from "" populates History/HistorySAN/UndoStack/LastMove
-	// correctly, which is what makes Undo, the move list, and the
-	// last-move highlight all work.
+	// Replay from StartFEN ("" = standard start), NOT rec.FEN. rec.FEN
+	// is the *current* (post-move) position and the moves in history
+	// are illegal there. Loading from StartFEN replays cleanly so
+	// History/HistorySAN/UndoStack/LastMove are all correctly
+	// populated, which is what makes Undo, the move list, and the
+	// last-move highlight work. For board-editor games StartFEN is
+	// the user-supplied setup; for everything else it's "".
 	gm := game.NewGame()
 	var history []string
 	_ = json.Unmarshal([]byte(rec.History), &history)
-	gm.Load("", history, rec.EngineWhite, rec.EngineBlack)
+	gm.Load(rec.StartFEN, history, rec.EngineWhite, rec.EngineBlack)
 
 	historyBefore := len(gm.History)
 	if err := fn(gm, rec); err != nil {
@@ -451,7 +454,7 @@ func (s *GameService) handleHTTPSetPlayers(w http.ResponseWriter, r *http.Reques
 		gm := game.NewGame()
 		var history []string
 		_ = json.Unmarshal([]byte(rec.History), &history)
-		gm.Load("", history, rec.EngineWhite, rec.EngineBlack)
+		gm.Load(rec.StartFEN, history, rec.EngineWhite, rec.EngineBlack)
 		if gm.EngineToMove() {
 			if v, _ := s.bus.Rdb().Get(r.Context(), "game:thinking:"+rec.ID).Result(); v != "1" {
 				s.triggerEngineForMove(rec, gm)
@@ -522,7 +525,7 @@ func (s *GameService) handleHTTPHint(w http.ResponseWriter, r *http.Request) {
 	var history []string
 	_ = json.Unmarshal([]byte(rec.History), &history)
 	gm := game.NewGame()
-	gm.Load("", history, rec.EngineWhite, rec.EngineBlack)
+	gm.Load(rec.StartFEN, history, rec.EngineWhite, rec.EngineBlack)
 
 	er := eventbus.EngineRequest{
 		GameID:   rec.ID,

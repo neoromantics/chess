@@ -8,7 +8,8 @@
         <div v-for="sq in boardSquares"
              :key="sq.name"
              :class="['sq', sq.dark ? 'dark' : 'light', sq.classes]"
-             @click="$emit('square-click', sq)">
+             @click="$emit('square-click', sq)"
+             @contextmenu.prevent="$emit('square-context', sq)">
           <span v-if="sq.piece" :class="sq.piece.color === 'w' ? 'white-piece' : 'black-piece'">
             {{ PIECE[sq.piece.char] }}
           </span>
@@ -31,18 +32,26 @@ const props = defineProps<{
   flipped: boolean;
   selected: string | null;
   hint: { from: string; to: string } | null;
+  // Optional 8x8 grid that, when present, replaces the live FEN as the
+  // source of squares. Used by the board editor so the user sees their
+  // in-progress setup without the game-state machinery being involved.
+  editBoard?: (string | null)[][] | null;
 }>();
 
 defineEmits<{
   (e: 'square-click', sq: Square): void;
+  (e: 'square-context', sq: Square): void;
 }>();
 
 const ranks = computed(() => props.flipped ? [1,2,3,4,5,6,7,8] : [8,7,6,5,4,3,2,1]);
 const files = computed(() => (props.flipped ? 'hgfedcba' : 'abcdefgh').split(''));
 
 const boardSquares = computed(() => {
-  if (!props.state) return [];
-  const grid = parseBoard(props.state.fen);
+  if (!props.state && !props.editBoard) return [];
+  // In edit mode the editor's grid wins over the live FEN; we hide
+  // last-move / check / hint overlays so the user sees a clean board.
+  const editing = !!props.editBoard;
+  const grid = editing ? (props.editBoard as (string | null)[][]) : parseBoard(props.state!.fen);
   const res: Square[] = [];
 
   for (let i = 0; i < 8; i++) {
@@ -52,17 +61,17 @@ const boardSquares = computed(() => {
       const name = String.fromCharCode(97+f) + (8-r);
       const pc = grid[r][f];
 
-      const lastMove = props.state?.last_move;
-      const inCheck = !!props.state?.in_check;
+      const lastMove = editing ? null : props.state?.last_move;
+      const inCheck = !editing && !!props.state?.in_check;
       const turn = props.state?.turn;
       const classes: Record<string, boolean> = {
         last: !!(lastMove && (lastMove.from === name || lastMove.to === name)),
         sel: props.selected === name,
         check: !!(inCheck && pc && ((turn === 'w' && pc === 'K') || (turn === 'b' && pc === 'k'))),
-        hint: !!(props.hint && (props.hint.from === name || props.hint.to === name)),
+        hint: !editing && !!(props.hint && (props.hint.from === name || props.hint.to === name)),
       };
 
-      if (props.selected && props.state) {
+      if (!editing && props.selected && props.state) {
         const moves = props.state.legal_moves.filter(m => m.startsWith(props.selected!) && m.substring(2,4) === name);
         if (moves.length) classes[pc ? 'cap' : 'dot'] = true;
       }

@@ -132,6 +132,7 @@ func marshalGameHash(rec *db.GameRecord) map[string]interface{} {
 		"v":                "1",
 		"id":               rec.ID,
 		"fen":              rec.FEN,
+		"start_fen":        rec.StartFEN,
 		"history":          rec.History,
 		"history_san":      rec.HistorySAN,
 		"engine_white":     boolToStr(rec.EngineWhite),
@@ -162,6 +163,7 @@ func unmarshalGameHash(m map[string]string) (*db.GameRecord, error) {
 	rec := &db.GameRecord{
 		ID:             m["id"],
 		FEN:            m["fen"],
+		StartFEN:       m["start_fen"],
 		History:        m["history"],
 		HistorySAN:     m["history_san"],
 		EngineWhite:    m["engine_white"] == "1",

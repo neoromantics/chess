@@ -13,7 +13,9 @@
       :flipped="flipped"
       :selected="selected"
       :hint="hint"
+      :edit-board="editMode ? editBoard : null"
       @square-click="onSquare"
+      @square-context="onSquareContext"
     />
 
     <div id="side">
@@ -24,6 +26,7 @@
       <ClockDisplay :state="state" />
 
       <SidePanel
+        v-if="!editMode"
         :state="state"
         :white-player-type="whitePlayerType"
         :black-player-type="blackPlayerType"
@@ -38,6 +41,7 @@
         :can-request-takeback="canRequestTakeback"
         :incoming-takeback="incomingTakebackFrom !== null"
         :outgoing-takeback="outgoingTakebackSent"
+        :can-edit-position="canEditPosition"
         @update:white-player-type="updatePlayerType('white', $event)"
         @update:black-player-type="updatePlayerType('black', $event)"
         @update:white-think-time="updateThinkTime('white', $event)"
@@ -55,6 +59,21 @@
         @takeback-decline="takebackDecline"
         @open-replay="openReplay"
         @toggle-flip="flipped = !flipped"
+        @edit-position="enterEditMode"
+      />
+
+      <EditPanel
+        v-else
+        :palette="editPalette"
+        :turn="editTurn"
+        :castling="editCastling"
+        @update:palette="editPalette = $event"
+        @update:turn="editTurn = $event"
+        @update:castling="editCastling = $event"
+        @clear="editClear"
+        @start-pos="editStartPos"
+        @apply="editApply"
+        @cancel="editCancel"
       />
     </div>
 
@@ -70,9 +89,11 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import ChessBoard from '../components/ChessBoard.vue';
 import SidePanel from '../components/SidePanel.vue';
+import EditPanel from '../components/EditPanel.vue';
 import PromoModal from '../components/PromoModal.vue';
 import ClockDisplay from '../components/ClockDisplay.vue';
 import { api } from '../api';
+import { parseBoard } from '../constants';
 import { useToastStore } from '../stores/toast';
 import { useAuthStore } from '../stores/auth';
 import { StateJSON, Square } from '../types';
@@ -130,6 +151,20 @@ const canRequestTakeback = computed(() => {
   if (!state.value.history || state.value.history.length === 0) return false;
   return true;
 });
+
+// Board editor — engine games only (server enforces the same; the
+// button just stays hidden in PvP). Setting up a position wipes
+// history and restarts the engine if it's the engine's turn in the
+// new setup. See cmd/game/editor.go for the backend contract.
+const canEditPosition = computed(() => {
+  if (!state.value) return false;
+  return state.value.white_user_id === null || state.value.black_user_id === null;
+});
+const editMode = ref(false);
+const editBoard = ref<(string | null)[][] | null>(null);
+const editPalette = ref('P');
+const editTurn = ref('w');
+const editCastling = ref<Record<string, boolean>>({ K: true, Q: true, k: true, q: true });
 
 // Audio. AudioContext starts suspended until the user makes a gesture
 // inside the page (browser autoplay policy). We arm it once on the
@@ -447,6 +482,17 @@ const takebackDecline = async () => {
 };
 
 const onSquare = async (sq: Square) => {
+  // Edit-mode click: place/erase a piece. Bypasses every play-mode
+  // guard because we're not advancing a move, we're painting the
+  // setup grid.
+  if (editMode.value && editBoard.value) {
+    if (editPalette.value === 'delete') {
+      editBoard.value[sq.r][sq.f] = null;
+    } else {
+      editBoard.value[sq.r][sq.f] = editPalette.value;
+    }
+    return;
+  }
   if (!state.value || state.value.thinking || state.value.engine_to_move || state.value.status !== 'ongoing') return;
   // In a PvP game, ignore clicks while it's the opponent's turn. The
   // backend rejects mismatched moves with 409 "it is not your turn"
@@ -575,6 +621,94 @@ const setSoundEnabled = (val: boolean) => {
 };
 
 const openReplay = () => { window.open(`/api/replay.html?game_id=${props.id}`, '_blank'); };
+
+// ===== Board editor =====
+
+const onSquareContext = (sq: Square) => {
+  if (!editMode.value || !editBoard.value) return;
+  editBoard.value[sq.r][sq.f] = null;
+};
+
+const enterEditMode = () => {
+  if (!state.value) return;
+  editBoard.value = parseBoard(state.value.fen);
+  const parts = state.value.fen.split(' ');
+  editTurn.value = parts[1] === 'b' ? 'b' : 'w';
+  const ca = parts[2] || '';
+  editCastling.value = {
+    K: ca.includes('K'), Q: ca.includes('Q'),
+    k: ca.includes('k'), q: ca.includes('q'),
+  };
+  editPalette.value = 'P';
+  editMode.value = true;
+};
+
+const editCancel = () => {
+  editMode.value = false;
+  editBoard.value = null;
+};
+
+const editClear = () => {
+  editBoard.value = Array.from({ length: 8 }, () => Array(8).fill(null));
+};
+
+const editStartPos = () => {
+  editBoard.value = parseBoard('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR');
+  editTurn.value = 'w';
+  editCastling.value = { K: true, Q: true, k: true, q: true };
+};
+
+const editApply = async () => {
+  if (!editBoard.value) return;
+  // Build the board half of the FEN.
+  let boardStr = '';
+  for (let r = 0; r < 8; r++) {
+    let empty = 0, row = '';
+    for (let f = 0; f < 8; f++) {
+      const pc = editBoard.value[r][f];
+      if (!pc) { empty++; continue; }
+      if (empty) { row += empty; empty = 0; }
+      row += pc;
+    }
+    if (empty) row += empty;
+    boardStr += row + (r < 7 ? '/' : '');
+  }
+  // Castling: validate against king/rook squares so we don't ship a
+  // FEN the engine will reject.
+  const findOne = (p: string) => {
+    if (!editBoard.value) return null;
+    for (let r = 0; r < 8; r++) for (let f = 0; f < 8; f++) {
+      if (editBoard.value[r][f] === p) return { r, f };
+    }
+    return null;
+  };
+  const has = (p: string, r: number, f: number) =>
+    !!(editBoard.value && editBoard.value[r] && editBoard.value[r][f] === p);
+  const wK = findOne('K');
+  const bK = findOne('k');
+  const valid = {
+    K: editCastling.value.K && wK && wK.r === 7 && wK.f === 4 && has('R', 7, 7),
+    Q: editCastling.value.Q && wK && wK.r === 7 && wK.f === 4 && has('R', 7, 0),
+    k: editCastling.value.k && bK && bK.r === 0 && bK.f === 4 && has('r', 0, 7),
+    q: editCastling.value.q && bK && bK.r === 0 && bK.f === 4 && has('r', 0, 0),
+  };
+  const castling = (valid.K ? 'K' : '') + (valid.Q ? 'Q' : '') + (valid.k ? 'k' : '') + (valid.q ? 'q' : '');
+  const fen = `${boardStr} ${editTurn.value} ${castling || '-'} - 0 1`;
+  try {
+    const snap = await api.setPosition(props.id, fen);
+    lastSoundedHistoryLen = 0;
+    prevFenForSound = snap.fen;
+    updateState(snap);
+    selected.value = null;
+    hint.value = null;
+    hintInfo.value = '';
+    editMode.value = false;
+    editBoard.value = null;
+    toastStore.success('Position applied');
+  } catch (e: any) {
+    toastStore.error('Failed to apply position: ' + (e?.message || e));
+  }
+};
 
 watch(flipped, (val) => localStorage.setItem('chess-flipped', val ? '1' : '0'));
 

@@ -224,6 +224,7 @@ func (s *PostgresStore) SaveGame(g *GameRecord) error {
 		Assessments:    g.Assessments,
 		CreatedAt:      g.CreatedAt,
 		UpdatedAt:      g.UpdatedAt,
+		StartFen:       g.StartFEN,
 	})
 }
 
@@ -239,6 +240,7 @@ func (s *PostgresStore) ListGames(userID int64) ([]GameRecord, error) {
 			WhiteUserID:    nullToInt64Ptr(r.WhiteUserID),
 			BlackUserID:    nullToInt64Ptr(r.BlackUserID),
 			FEN:            r.Fen,
+			StartFEN:       r.StartFen,
 			History:        r.History,
 			HistorySAN:     r.HistorySan,
 			EngineWhite:    r.EngineWhite,
@@ -267,6 +269,7 @@ func (s *PostgresStore) GetGame(id string) (*GameRecord, error) {
 		WhiteUserID:    nullToInt64Ptr(r.WhiteUserID),
 		BlackUserID:    nullToInt64Ptr(r.BlackUserID),
 		FEN:            r.Fen,
+		StartFEN:       r.StartFen,
 		History:        r.History,
 		HistorySAN:     r.HistorySan,
 		EngineWhite:    r.EngineWhite,

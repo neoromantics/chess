@@ -60,6 +60,7 @@ type GameRecord struct {
 	WhiteUserID    *int64    `json:"white_user_id,omitempty"` // nil when engine plays white
 	BlackUserID    *int64    `json:"black_user_id,omitempty"` // nil when engine plays black
 	FEN            string    `json:"fen"`
+	StartFEN       string    `json:"start_fen"`   // empty = standard start; non-empty = board-editor setup
 	History        string    `json:"history"`     // JSON string
 	HistorySAN     string    `json:"history_san"` // JSON string
 	EngineWhite    bool      `json:"engine_white"`

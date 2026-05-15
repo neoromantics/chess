@@ -67,8 +67,12 @@ likely-to-return ones:
       `validTimeControl` + `supportedTCs`. Match page exposes the
       pills grouped by category (bullet/blitz/rapid/classical).
 - ⬜ **Save / load PGN** — proper PGN this time, not the JSON dump.
-- ⬜ **Board editor + FEN paste** — a small standalone view, not
-      bolted into GameView.
+- ✅ **Board editor** (2026-05-15) — restored as `POST /api/set_position`
+      (engine games only) + `EditPanel.vue` inside `GameView`. User opens
+      the Setup tool, paints pieces, sets side-to-move + castling, hits
+      Apply; backend validates the FEN, wipes history, stores it as
+      `start_fen`, and kicks the engine if it's the engine's turn.
+      PvP rejected server-side. FEN paste still queued.
 - ⬜ **Elo / Glicko-2 ratings** — paused 2026-05-15. The Glicko-2 math
       lives in `pkg/rating` and the DB columns are still on `users`;
       what was deleted was the consumer goroutine + every UI surface.

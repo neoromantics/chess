@@ -74,6 +74,7 @@ func main() {
 		mux.HandleFunc("POST /api/resign", s.handleHTTPResign)
 		mux.HandleFunc("POST /api/new", s.handleHTTPNew)
 		mux.HandleFunc("POST /api/set_players", s.handleHTTPSetPlayers)
+		mux.HandleFunc("POST /api/set_position", s.handleHTTPSetPosition)
 		mux.HandleFunc("POST /api/undo", s.handleHTTPUndo)
 		mux.HandleFunc("DELETE /api/games/delete", s.handleHTTPDelete)
 		mux.HandleFunc("POST /api/hint", s.handleHTTPHint)
@@ -99,6 +100,7 @@ func main() {
 		mux.HandleFunc("POST /api/temp/undo", s.handleTempUndo)
 		mux.HandleFunc("POST /api/temp/hint", s.handleTempHint)
 		mux.HandleFunc("POST /api/temp/set_players", s.handleTempSetPlayers)
+		mux.HandleFunc("POST /api/temp/set_position", s.handleTempSetPosition)
 		// Internal-only — gateway calls this from handleSignup when
 		// the signup request carried a chess-anon cookie. Not in the
 		// public proxy table.
@@ -228,15 +230,16 @@ func (s *GameService) snapshotFromRecord(ctx context.Context, rec *db.GameRecord
 		historySAN = []string{}
 	}
 
-	// Replay from the standard starting position, NOT rec.FEN. rec.FEN
-	// is the *current* (post-move) position, and the moves in history
-	// are illegal there (replay bombs out on move 1). Loading from "" /
-	// StartFEN replays cleanly so gm.History, gm.HistorySAN, gm.UndoStack,
-	// and gm.LastMove are all correctly populated. This is what makes
-	// undo work, the move list survive across mutations, and the SAN
-	// column stay in sync with history.
+	// Replay from rec.StartFEN ("" = standard start), NOT rec.FEN.
+	// rec.FEN is the *current* (post-move) position, and the moves in
+	// history are illegal there (replay bombs out on move 1). Loading
+	// from StartFEN replays cleanly so gm.History, gm.HistorySAN,
+	// gm.UndoStack, and gm.LastMove are all correctly populated. This
+	// is what makes undo work, the move list survive across mutations,
+	// and the SAN column stay in sync with history. For board-editor
+	// games StartFEN is the user-supplied setup; otherwise it's "".
 	gm := game.NewGame()
-	gm.Load("", history, rec.EngineWhite, rec.EngineBlack)
+	gm.Load(rec.StartFEN, history, rec.EngineWhite, rec.EngineBlack)
 	_ = historySAN // SAN is recomputed by gm.Load; the saved column is just a wire shortcut
 
 	turn := "w"
@@ -341,7 +344,7 @@ func (s *GameService) handleReplayData(w http.ResponseWriter, r *http.Request) {
 		_ = json.Unmarshal([]byte(rec.History), &history)
 	}
 	gm := game.NewGame()
-	gm.Load("", history, rec.EngineWhite, rec.EngineBlack)
+	gm.Load(rec.StartFEN, history, rec.EngineWhite, rec.EngineBlack)
 	writeJSON(w, gm.ReplayData())
 }
 
@@ -607,7 +610,7 @@ func (s *GameService) handleHint(ctx context.Context, cmd eventbus.Command) {
 	gm := game.NewGame()
 	var history []string
 	json.Unmarshal([]byte(rec.History), &history)
-	gm.Load("", history, rec.EngineWhite, rec.EngineBlack)
+	gm.Load(rec.StartFEN, history, rec.EngineWhite, rec.EngineBlack)
 
 	req := eventbus.EngineRequest{
 		GameID:   cmd.GameID,
@@ -686,7 +689,7 @@ func (s *GameService) handleMakeMove(ctx context.Context, cmd eventbus.Command) 
 	gm := game.NewGame()
 	var history []string
 	json.Unmarshal([]byte(rec.History), &history)
-	gm.Load("", history, rec.EngineWhite, rec.EngineBlack)
+	gm.Load(rec.StartFEN, history, rec.EngineWhite, rec.EngineBlack)
 
 	m, err := gm.Board.ParseUCIMove(payload.Move)
 	if err != nil {

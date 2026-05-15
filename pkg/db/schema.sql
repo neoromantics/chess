@@ -42,8 +42,16 @@ CREATE TABLE IF NOT EXISTS games (
     black_user_id     BIGINT REFERENCES users(id) ON DELETE SET NULL,
     time_control      TEXT    NOT NULL DEFAULT 'engine',
     rated             BOOLEAN NOT NULL DEFAULT FALSE,
-    result            TEXT    NOT NULL DEFAULT '*'
+    result            TEXT    NOT NULL DEFAULT '*',
+    -- Empty string = "standard starting position" (the common case).
+    -- A non-empty FEN means the game was set up via the board editor
+    -- and history replays from there. Required for the editor feature
+    -- because rec.FEN is the *current* position; without start_fen we
+    -- can't replay subsequent moves correctly.
+    start_fen         TEXT    NOT NULL DEFAULT ''
 );
+-- Idempotent add for clusters that predate the start_fen column.
+ALTER TABLE games ADD COLUMN IF NOT EXISTS start_fen TEXT NOT NULL DEFAULT '';
 
 CREATE TABLE IF NOT EXISTS invites (
   id           UUID PRIMARY KEY,

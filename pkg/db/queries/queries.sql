@@ -80,9 +80,9 @@ INSERT INTO games (
     fen, history, history_san,
     engine_white, engine_black, white_think_time, black_think_time,
     time_control, rated, status, result, assessments,
-    created_at, updated_at
+    created_at, updated_at, start_fen
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 ON CONFLICT (id) DO UPDATE SET
     white_user_id    = EXCLUDED.white_user_id,
     black_user_id    = EXCLUDED.black_user_id,
@@ -98,6 +98,7 @@ ON CONFLICT (id) DO UPDATE SET
     status           = EXCLUDED.status,
     result           = EXCLUDED.result,
     assessments      = EXCLUDED.assessments,
+    start_fen        = EXCLUDED.start_fen,
     updated_at       = EXCLUDED.updated_at;
 
 -- name: ListGames :many
@@ -107,7 +108,7 @@ SELECT id, white_user_id, black_user_id,
        fen, history, history_san,
        engine_white, engine_black, white_think_time, black_think_time,
        time_control, rated, status, result, assessments,
-       created_at, updated_at
+       created_at, updated_at, start_fen
 FROM games
 WHERE white_user_id = $1::BIGINT
    OR black_user_id = $1::BIGINT
@@ -118,7 +119,7 @@ SELECT id, white_user_id, black_user_id,
        fen, history, history_san,
        engine_white, engine_black, white_think_time, black_think_time,
        time_control, rated, status, result, assessments,
-       created_at, updated_at
+       created_at, updated_at, start_fen
 FROM games
 WHERE id = $1;
 

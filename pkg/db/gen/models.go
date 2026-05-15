@@ -30,6 +30,7 @@ type Game struct {
 	TimeControl    string        `json:"time_control"`
 	Rated          bool          `json:"rated"`
 	Result         string        `json:"result"`
+	StartFen       string        `json:"start_fen"`
 }
 
 type Invite struct {

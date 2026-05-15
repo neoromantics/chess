@@ -53,8 +53,12 @@ const (
 // individual fields anywhere, so the hash-of-fields layout the durable
 // store uses would be over-engineered here.
 type tempGameRec struct {
-	ID          string   `json:"id"`
-	OwnerAnonID string   `json:"owner_anon_id"`
+	ID          string `json:"id"`
+	OwnerAnonID string `json:"owner_anon_id"`
+	// StartFEN is "" for standard-start games; non-empty for board-editor
+	// setups. Same shape and meaning as db.GameRecord.StartFEN — see
+	// cmd/game/handlers.go for the rationale. History replays from here.
+	StartFEN    string   `json:"start_fen,omitempty"`
 	History     []string `json:"history"`
 	EngineWhite bool     `json:"engine_white"`
 	EngineBlack bool     `json:"engine_black"`
@@ -285,7 +289,7 @@ func (s *GameService) handleTempMove(w http.ResponseWriter, r *http.Request) {
 	}
 
 	gm := game.NewGame()
-	gm.Load("", rec.History, rec.EngineWhite, rec.EngineBlack)
+	gm.Load(rec.StartFEN, rec.History, rec.EngineWhite, rec.EngineBlack)
 
 	if gm.EngineToMove() {
 		http.Error(w, "it is the engine's turn", http.StatusConflict)
@@ -373,11 +377,67 @@ func (s *GameService) handleTempNew(w http.ResponseWriter, r *http.Request) {
 
 	// If engine plays white, kick off its move immediately.
 	gm := game.NewGame()
-	gm.Load("", rec.History, rec.EngineWhite, rec.EngineBlack)
+	gm.Load(rec.StartFEN, rec.History, rec.EngineWhite, rec.EngineBlack)
 	if gm.EngineToMove() {
 		s.triggerTempEngineMove(rec, gm)
 	}
 
+	writeJSON(w, snapshot)
+}
+
+// handleTempSetPosition mirrors handleHTTPSetPosition for anonymous
+// games. Temp games are always engine-vs-human (or engine-vs-engine),
+// so there's no PvP guard. Same shape: validate FEN, wipe history,
+// reset status, store StartFEN, kick the engine if it's its turn.
+func (s *GameService) handleTempSetPosition(w http.ResponseWriter, r *http.Request) {
+	rec, store, ok := s.requireTempAccess(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		FEN string `json:"fen"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	if _, err := core.ParseFEN(req.FEN); err != nil {
+		http.Error(w, "invalid FEN: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	lock, err := acquireGameLock(r.Context(), s.bus.Rdb(), rec.ID, gameLockTTL)
+	if err != nil || lock == nil {
+		http.Error(w, "lock contention", http.StatusConflict)
+		return
+	}
+	defer lock.release(context.Background())
+
+	rec, err = store.get(r.Context(), rec.ID)
+	if err != nil || rec == nil {
+		http.Error(w, "temp game not found", http.StatusNotFound)
+		return
+	}
+	rec.StartFEN = req.FEN
+	rec.History = []string{}
+	rec.Status = "ongoing"
+	rec.Result = "*"
+
+	if err := store.save(r.Context(), rec); err != nil {
+		http.Error(w, "save failed", http.StatusInternalServerError)
+		return
+	}
+	store.refreshTTL(r.Context(), rec.ID, rec.OwnerAnonID)
+	_ = s.bus.Rdb().Del(r.Context(), "game:thinking:"+rec.ID).Err()
+
+	snapshot := s.tempSnapshot(r.Context(), rec)
+	s.publishTempState(r.Context(), rec.ID, snapshot)
+
+	gm := game.NewGame()
+	gm.Load(rec.StartFEN, rec.History, rec.EngineWhite, rec.EngineBlack)
+	if gm.Status() == game.StatusOngoing && gm.EngineToMove() {
+		s.triggerTempEngineMove(rec, gm)
+	}
 	writeJSON(w, snapshot)
 }
 
@@ -444,7 +504,7 @@ func (s *GameService) handleTempUndo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	gm := game.NewGame()
-	gm.Load("", rec.History, rec.EngineWhite, rec.EngineBlack)
+	gm.Load(rec.StartFEN, rec.History, rec.EngineWhite, rec.EngineBlack)
 	// Pop two moves so undo lands the user back on their own turn (the
 	// engine's last reply + the user's last move). Single-ply undo
 	// would leave the engine to move again, which immediately re-fires
@@ -523,7 +583,7 @@ func (s *GameService) handleTempSetPlayers(w http.ResponseWriter, r *http.Reques
 	// withLockedMutation path: settings change can immediately produce a
 	// new engine move.
 	gm := game.NewGame()
-	gm.Load("", rec.History, rec.EngineWhite, rec.EngineBlack)
+	gm.Load(rec.StartFEN, rec.History, rec.EngineWhite, rec.EngineBlack)
 	if rec.Status == "ongoing" && gm.EngineToMove() {
 		// Drop any stale "thinking" sentinel — the in-flight search (if
 		// any) used the OLD think time; if we're flipping sides or
@@ -586,7 +646,7 @@ func (s *GameService) handleTempUpgrade(w http.ResponseWriter, r *http.Request) 
 
 	// Replay so HistorySAN is populated correctly on the durable row.
 	gm := game.NewGame()
-	gm.Load("", rec.History, rec.EngineWhite, rec.EngineBlack)
+	gm.Load(rec.StartFEN, rec.History, rec.EngineWhite, rec.EngineBlack)
 
 	// Decide which side the user plays. Defaults follow the temp-game
 	// landing convention (human=white, engine=black). If the user
@@ -615,6 +675,7 @@ func (s *GameService) handleTempUpgrade(w http.ResponseWriter, r *http.Request) 
 		WhiteUserID:    whiteUID,
 		BlackUserID:    blackUID,
 		FEN:            gm.Board.FEN(),
+		StartFEN:       rec.StartFEN,
 		History:        string(histJSON),
 		HistorySAN:     string(sanJSON),
 		EngineWhite:    rec.EngineWhite,
@@ -660,7 +721,7 @@ func (s *GameService) handleTempHint(w http.ResponseWriter, r *http.Request) {
 	}
 
 	gm := game.NewGame()
-	gm.Load("", rec.History, rec.EngineWhite, rec.EngineBlack)
+	gm.Load(rec.StartFEN, rec.History, rec.EngineWhite, rec.EngineBlack)
 
 	er := eventbus.EngineRequest{
 		GameID:   rec.ID,
@@ -735,7 +796,7 @@ func (s *GameService) applyTempEngineMove(ctx context.Context, resp eventbus.Eng
 	}
 
 	gm := game.NewGame()
-	gm.Load("", rec.History, rec.EngineWhite, rec.EngineBlack)
+	gm.Load(rec.StartFEN, rec.History, rec.EngineWhite, rec.EngineBlack)
 	m, err := gm.Board.ParseUCIMove(resp.BestMove)
 	if err != nil {
 		slog.Warn("temp engine: invalid move format", "move", resp.BestMove)
@@ -800,7 +861,7 @@ func (s *GameService) publishTempState(ctx context.Context, gameID string, snaps
 // component with no field-level changes.
 func (s *GameService) tempSnapshot(ctx context.Context, rec *tempGameRec) stateJSON {
 	gm := game.NewGame()
-	gm.Load("", rec.History, rec.EngineWhite, rec.EngineBlack)
+	gm.Load(rec.StartFEN, rec.History, rec.EngineWhite, rec.EngineBlack)
 
 	turn := "w"
 	if gm.Board.SideToMove == core.Black {

@@ -105,7 +105,7 @@ func (s *GameService) handleTakebackOffer(w http.ResponseWriter, r *http.Request
 	gm := game.NewGame()
 	var history []string
 	_ = json.Unmarshal([]byte(rec.History), &history)
-	gm.Load("", history, false, false)
+	gm.Load(rec.StartFEN, history, false, false)
 	requesterColor := requesterColorOnRec(rec, uid)
 	if requesterColor == "" {
 		http.Error(w, "you are not a player in this game", http.StatusForbidden)
@@ -211,7 +211,7 @@ func (s *GameService) handleTakebackAccept(w http.ResponseWriter, r *http.Reques
 	gm := game.NewGame()
 	var history []string
 	_ = json.Unmarshal([]byte(rec.History), &history)
-	gm.Load("", history, false, false)
+	gm.Load(rec.StartFEN, history, false, false)
 	requesterColor := requesterColorOnRec(rec, requester)
 	pliesToPop := pliesToTakeBack(gm, requesterColor)
 	if pliesToPop == 0 {

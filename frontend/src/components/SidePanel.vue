@@ -15,6 +15,10 @@
         <span aria-hidden="true">▶</span>
         <span class="tool-label">Replay</span>
       </button>
+      <button v-if="canEditPosition" class="tool" @click="$emit('edit-position')" title="Set up a custom position (engine games only)">
+        <span aria-hidden="true">✎</span>
+        <span class="tool-label">Setup</span>
+      </button>
     </div>
 
     <!-- Draw / takeback prompts. Render before the action row so
@@ -138,6 +142,7 @@ const props = defineProps<{
   canRequestTakeback?: boolean;
   incomingTakeback?: boolean;
   outgoingTakeback?: boolean;
+  canEditPosition?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -158,6 +163,7 @@ const emit = defineEmits<{
   (e: 'takeback-offer'): void;
   (e: 'takeback-accept'): void;
   (e: 'takeback-decline'): void;
+  (e: 'edit-position'): void;
 }>();
 
 const isPvP = computed(() => !!(props.state && props.state.white_user_id !== null && props.state.black_user_id !== null));

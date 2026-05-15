@@ -110,6 +110,7 @@ func main() {
 	mux.Handle("POST /api/resign", gw.injectAuthedUser(gameProxy))
 	mux.Handle("POST /api/new", gw.injectAuthedUser(gameProxy))
 	mux.Handle("POST /api/set_players", gw.injectAuthedUser(gameProxy))
+	mux.Handle("POST /api/set_position", gw.injectAuthedUser(gameProxy))
 	mux.Handle("POST /api/undo", gw.injectAuthedUser(gameProxy))
 	mux.Handle("DELETE /api/games/delete", gw.injectAuthedUser(gameProxy))
 	mux.Handle("POST /api/hint", gw.injectAuthedUser(gameProxy))

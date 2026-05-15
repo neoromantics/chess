@@ -90,6 +90,10 @@ export const api = {
     method: 'POST',
     body: JSON.stringify({ engine_white, engine_black, white_think_time, black_think_time })
   }),
+  setPosition: (gameId: string, fen: string) => request<StateJSON>(`${gameRoute(gameId, 'set_position')}?game_id=${gameId}`, {
+    method: 'POST',
+    body: JSON.stringify({ fen })
+  }),
   undo: (gameId: string) => request<StateJSON>(`${gameRoute(gameId, 'undo')}?game_id=${gameId}`, { method: 'POST' }),
   getHint: (gameId: string, movetime: number) => request<HintResponse>(`${gameRoute(gameId, 'hint')}?game_id=${gameId}`, {
     method: 'POST',
@@ -124,6 +128,6 @@ export function isTempGameId(id: string): boolean {
 // gameRoute picks /api/temp/<verb> for temp games and /api/<verb> for
 // durable games. Centralises the "which surface owns this game" decision
 // so callers don't sprinkle isTempGameId checks everywhere.
-function gameRoute(id: string, verb: 'state' | 'move' | 'resign' | 'new' | 'hint' | 'undo' | 'set_players'): string {
+function gameRoute(id: string, verb: 'state' | 'move' | 'resign' | 'new' | 'hint' | 'undo' | 'set_players' | 'set_position'): string {
   return isTempGameId(id) ? `/api/temp/${verb}` : `/api/${verb}`;
 }
