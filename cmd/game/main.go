@@ -643,18 +643,21 @@ func (s *GameService) handleMakeMove(ctx context.Context, cmd eventbus.Command) 
 	}
 	defer lock.release(context.Background())
 
-	// Always clear the thinking sentinel when this handler returns, no
-	// matter how. Without this, every drop path (game already over,
-	// illegal move because position advanced, parse failure, race with
-	// /api/set_players that fired a duplicate search) leaves the
-	// sentinel set until its TTL — the SPA shows "engine thinking…"
-	// forever from the user's POV. Engine-result Commands never come
-	// from a user, so unconditionally clearing here is safe.
-	defer s.bus.Rdb().Del(context.Background(), "game:thinking:"+cmd.GameID)
+	// Drop paths must clear the thinking sentinel; the success path
+	// either clears it (if no engine-to-move next) or transfers it to
+	// the new search (triggerEngineForMove re-SETs it with a fresh
+	// TTL after the successful move). A blanket defer-Del at the top
+	// would race the new sentinel: triggerEngineForMove sets it just
+	// before this function returns, and the defer would immediately
+	// wipe it. So we Del explicitly at each abort path instead.
+	clearThinking := func() {
+		_ = s.bus.Rdb().Del(context.Background(), "game:thinking:"+cmd.GameID).Err()
+	}
 
 	rec, err := s.getGameCached(ctx, cmd.GameID)
 	if err != nil {
 		slog.Error("game not found", "game_id", cmd.GameID)
+		clearThinking()
 		return
 	}
 
@@ -665,6 +668,7 @@ func (s *GameService) handleMakeMove(ctx context.Context, cmd eventbus.Command) 
 	// to "ongoing" with the engine's reply on the board.
 	if rec.Status != "" && rec.Status != "ongoing" {
 		slog.Info("dropping move for finished game", "game_id", cmd.GameID, "status", rec.Status)
+		clearThinking()
 		return
 	}
 
@@ -674,6 +678,7 @@ func (s *GameService) handleMakeMove(ctx context.Context, cmd eventbus.Command) 
 			// Valid
 		} else {
 			slog.Warn("unauthorized move attempt", "game_id", cmd.GameID, "user_id", cmd.UserID)
+			clearThinking()
 			return
 		}
 	}
@@ -686,12 +691,14 @@ func (s *GameService) handleMakeMove(ctx context.Context, cmd eventbus.Command) 
 	m, err := gm.Board.ParseUCIMove(payload.Move)
 	if err != nil {
 		slog.Error("invalid move format", "move", payload.Move)
+		clearThinking()
 		return
 	}
 
 	matched, ok := game.MatchMove(gm.Board.GenerateLegalMoves(), m)
 	if !ok {
 		slog.Warn("illegal move", "game_id", cmd.GameID, "move", payload.Move)
+		clearThinking()
 		return
 	}
 
@@ -735,11 +742,9 @@ func (s *GameService) handleMakeMove(ctx context.Context, cmd eventbus.Command) 
 
 	if err := s.saveGameCached(ctx, rec); err != nil {
 		slog.Error("failed to save game", "error", err)
+		clearThinking()
 		return
 	}
-	// Sentinel clear is handled by the deferred Del at the top of this
-	// function, so every exit path (including the drops above) clears
-	// it — not just the success path.
 
 	evtPayload := eventbus.MovePlayedEvt{
 		Move:       matched.String(),
@@ -763,21 +768,19 @@ func (s *GameService) handleMakeMove(ctx context.Context, cmd eventbus.Command) 
 		// final; emit GameFinished and tear down the clock.
 		deleteClock(ctx, s.bus.Rdb(), rec.ID)
 		s.emitGameFinished(ctx, cmd.GameID, gm)
+		clearThinking()
 	} else if gm.EngineToMove() {
-		s.triggerEngine(ctx, cmd.GameID, gm)
+		// Chain into the next engine search. triggerEngineForMove
+		// reads rec.{White,Black}ThinkTime so engine-vs-engine
+		// respects per-side think-time settings, and SETs the
+		// thinking sentinel so the SPA's spinner survives the
+		// transition between consecutive engine moves.
+		s.triggerEngineForMove(rec, gm)
+	} else {
+		// Non-engine to move next: clear the sentinel so the SPA's
+		// spinner falls.
+		clearThinking()
 	}
-}
-
-func (s *GameService) triggerEngine(ctx context.Context, gameID string, gm *game.Game) {
-	req := eventbus.EngineRequest{
-		GameID:   gameID,
-		FEN:      gm.Board.FEN(),
-		History:  game.CopyHistory(gm.HistoryHash()),
-		MoveTime: 1 * time.Second,
-		Context:  "move",
-	}
-	s.bus.SendEngineRequest(ctx, req)
-	slog.Info("engine request dispatched", "game_id", gameID)
 }
 
 func (s *GameService) handleResign(ctx context.Context, cmd eventbus.Command) {

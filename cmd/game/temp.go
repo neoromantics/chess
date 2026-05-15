@@ -712,21 +712,25 @@ func (s *GameService) applyTempEngineMove(ctx context.Context, resp eventbus.Eng
 		return
 	}
 	defer lock.release(context.Background())
-	// Same reasoning as handleMakeMove in main.go: every drop path
-	// here (expired game, parse failure, illegal move because the
-	// position advanced under us) must clear the thinking sentinel
-	// or the SPA's spinner stays up until TTL.
-	defer s.bus.Rdb().Del(context.Background(), "game:thinking:"+resp.GameID)
+	// Drop paths Del the sentinel; success path either Dels (no engine
+	// to move next) or transfers it to the next search (a fresh SET
+	// happens inside triggerTempEngineMove). A blanket defer-Del would
+	// race that fresh SET.
+	clearThinking := func() {
+		_ = s.bus.Rdb().Del(context.Background(), "game:thinking:"+resp.GameID).Err()
+	}
 
 	rec, err := store.get(ctx, resp.GameID)
 	if err != nil || rec == nil {
 		// Game expired or never existed — drop the result silently.
+		clearThinking()
 		return
 	}
 	if rec.Status != "ongoing" {
 		// User resigned (or game otherwise terminated) while engine was
 		// thinking; drop the late move so the SPA doesn't see the board
 		// jump back to "ongoing" with the engine's reply applied.
+		clearThinking()
 		return
 	}
 
@@ -735,11 +739,13 @@ func (s *GameService) applyTempEngineMove(ctx context.Context, resp eventbus.Eng
 	m, err := gm.Board.ParseUCIMove(resp.BestMove)
 	if err != nil {
 		slog.Warn("temp engine: invalid move format", "move", resp.BestMove)
+		clearThinking()
 		return
 	}
 	matched, ok := game.MatchMove(gm.Board.GenerateLegalMoves(), m)
 	if !ok {
 		slog.Warn("temp engine: illegal move", "game_id", rec.ID, "move", resp.BestMove)
+		clearThinking()
 		return
 	}
 	gm.PlayMove(matched)
@@ -758,12 +764,21 @@ func (s *GameService) applyTempEngineMove(ctx context.Context, resp eventbus.Eng
 
 	if err := store.save(ctx, rec); err != nil {
 		slog.Error("temp engine save failed", "game_id", rec.ID, "error", err)
+		clearThinking()
 		return
 	}
 	store.refreshTTL(ctx, rec.ID, rec.OwnerAnonID)
-	// (sentinel clear is the deferred Del at the top of this function)
 
 	s.publishTempState(ctx, rec.ID, s.tempSnapshot(ctx, rec))
+
+	// Chain into the next engine search if the game is still going and
+	// the next side is also engine (engine-vs-engine continuation).
+	// Otherwise clear the sentinel so the SPA's spinner falls.
+	if gm.Status() == game.StatusOngoing && gm.EngineToMove() {
+		s.triggerTempEngineMove(rec, gm)
+	} else {
+		clearThinking()
+	}
 }
 
 // publishTempState fans the new snapshot out via Redis Pub/Sub on the
