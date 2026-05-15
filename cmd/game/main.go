@@ -96,10 +96,9 @@ func main() {
 	// pairing loop is Redis-leader-elected so multiple game-service
 	// replicas don't race the queue. See cmd/game/matchmaker.go.
 	go s.runPairingLoop(ctx)
-	// Rating updater absorbed from the former cmd/rating-updater pod.
-	// Consumer-group reader on game:events; processes GameFinished
-	// events and writes Glicko-2 deltas to PG. See cmd/game/rating.go.
-	go s.runRatingUpdater(ctx)
+	// Rating updater paused with the rest of the Elo surface in the
+	// 2026-05-15 cleanup. Stream events still emit GameFinished; nothing
+	// consumes them today. See ROADMAP.md "Restore deleted features".
 	s.Run(ctx)
 }
 
@@ -189,9 +188,16 @@ func (s *GameService) snapshotFromRecord(ctx context.Context, rec *db.GameRecord
 		historySAN = []string{}
 	}
 
+	// Replay from the standard starting position, NOT rec.FEN. rec.FEN
+	// is the *current* (post-move) position, and the moves in history
+	// are illegal there (replay bombs out on move 1). Loading from "" /
+	// StartFEN replays cleanly so gm.History, gm.HistorySAN, gm.UndoStack,
+	// and gm.LastMove are all correctly populated. This is what makes
+	// undo work, the move list survive across mutations, and the SAN
+	// column stay in sync with history.
 	gm := game.NewGame()
-	gm.Load(rec.FEN, history, rec.EngineWhite, rec.EngineBlack)
-	gm.HistorySAN = historySAN
+	gm.Load("", history, rec.EngineWhite, rec.EngineBlack)
+	_ = historySAN // SAN is recomputed by gm.Load; the saved column is just a wire shortcut
 
 	turn := "w"
 	if gm.Board.SideToMove == core.Black {
@@ -202,17 +208,11 @@ func (s *GameService) snapshotFromRecord(ctx context.Context, rec *db.GameRecord
 	for i, m := range legal {
 		legalStrs[i] = m.String()
 	}
-	// rec.FEN stores the *current* (post-move) position, so gm.Load
-	// above can't replay history (the first move is illegal in the
-	// loaded position; the error is swallowed). gm.LastMove is therefore
-	// always nil here — derive the last move directly from the history
-	// array, which is always a UCI string ("e2e4" or "e7e8q"). Without
-	// this the SPA never sees last_move and the from/to highlight on
-	// the board never renders.
 	var last *moveJSON
-	if n := len(history); n > 0 {
-		if mv := history[n-1]; len(mv) >= 4 {
-			last = &moveJSON{From: mv[:2], To: mv[2:4]}
+	if gm.LastMove != nil {
+		last = &moveJSON{
+			From: core.SquareName(gm.LastMove.From),
+			To:   core.SquareName(gm.LastMove.To),
 		}
 	}
 
@@ -231,8 +231,8 @@ func (s *GameService) snapshotFromRecord(ctx context.Context, rec *db.GameRecord
 		Result:         rec.Result,
 		InCheck:        gm.Board.InCheck(gm.Board.SideToMove),
 		LegalMoves:     legalStrs,
-		History:        history,
-		HistorySAN:     historySAN,
+		History:        gm.History,
+		HistorySAN:     gm.HistorySAN,
 		LastMove:       last,
 		Thinking:       thinking,
 		WhiteThinkTime: rec.WhiteThinkTime,
@@ -269,7 +269,7 @@ func (s *GameService) handleReplayData(w http.ResponseWriter, r *http.Request) {
 		_ = json.Unmarshal([]byte(rec.History), &history)
 	}
 	gm := game.NewGame()
-	gm.Load(rec.FEN, history, rec.EngineWhite, rec.EngineBlack)
+	gm.Load("", history, rec.EngineWhite, rec.EngineBlack)
 	writeJSON(w, gm.ReplayData())
 }
 
@@ -421,6 +421,22 @@ func (s *GameService) handleNewGame(ctx context.Context, cmd eventbus.Command) {
 		return
 	}
 
+	// Defaults if the gateway didn't pass a payload (e.g. an older
+	// caller). Engine on black, 1s think time — the historical default.
+	engineWhite := false
+	engineBlack := true
+	thinkMS := 1000
+	if len(cmd.Payload) > 0 {
+		var p eventbus.NewGameCmd
+		if err := json.Unmarshal(cmd.Payload, &p); err == nil {
+			engineWhite = p.EngineWhite
+			engineBlack = p.EngineBlack
+			if p.ThinkTimeMS > 0 {
+				thinkMS = p.ThinkTimeMS
+			}
+		}
+	}
+
 	white := cmd.UserID
 	rec := &db.GameRecord{
 		ID:             id,
@@ -429,10 +445,10 @@ func (s *GameService) handleNewGame(ctx context.Context, cmd eventbus.Command) {
 		FEN:            gm.Board.FEN(),
 		History:        "[]",
 		HistorySAN:     "[]",
-		EngineWhite:    false,
-		EngineBlack:    true,
-		WhiteThinkTime: 1000,
-		BlackThinkTime: 1000,
+		EngineWhite:    engineWhite,
+		EngineBlack:    engineBlack,
+		WhiteThinkTime: thinkMS,
+		BlackThinkTime: thinkMS,
 		TimeControl:    "engine",
 		Rated:          false,
 		Status:         "ongoing",
@@ -508,7 +524,7 @@ func (s *GameService) handleHint(ctx context.Context, cmd eventbus.Command) {
 	gm := game.NewGame()
 	var history []string
 	json.Unmarshal([]byte(rec.History), &history)
-	gm.Load(rec.FEN, history, rec.EngineWhite, rec.EngineBlack)
+	gm.Load("", history, rec.EngineWhite, rec.EngineBlack)
 
 	req := eventbus.EngineRequest{
 		GameID:   cmd.GameID,
@@ -561,11 +577,9 @@ func (s *GameService) handleMakeMove(ctx context.Context, cmd eventbus.Command) 
 	}
 
 	gm := game.NewGame()
-	var history, historySAN []string
+	var history []string
 	json.Unmarshal([]byte(rec.History), &history)
-	json.Unmarshal([]byte(rec.HistorySAN), &historySAN)
-	gm.Load(rec.FEN, history, rec.EngineWhite, rec.EngineBlack)
-	gm.HistorySAN = historySAN
+	gm.Load("", history, rec.EngineWhite, rec.EngineBlack)
 
 	m, err := gm.Board.ParseUCIMove(payload.Move)
 	if err != nil {

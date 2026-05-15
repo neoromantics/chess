@@ -45,14 +45,6 @@ export const useAuthStore = defineStore('auth', {
       events.reset();
       events.connect();
 
-      // Handle rating updates from the distributed backend
-      events.on('rating_updated', (payload: any) => {
-        if (this.user) {
-          this.user.rating = payload.rating;
-          this.user.rd = payload.rd;
-        }
-      });
-
       // Seed the invite cache so reconnects don't drop pending state.
       const invites = useInviteStore();
       invites.init();

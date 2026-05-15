@@ -95,12 +95,14 @@ func (s *GameService) withLockedMutation(
 		return
 	}
 
+	// Replay from StartFEN, NOT rec.FEN — see snapshotFromRecord for why.
+	// Loading from "" populates History/HistorySAN/UndoStack/LastMove
+	// correctly, which is what makes Undo, the move list, and the
+	// last-move highlight all work.
 	gm := game.NewGame()
-	var history, historySAN []string
+	var history []string
 	_ = json.Unmarshal([]byte(rec.History), &history)
-	_ = json.Unmarshal([]byte(rec.HistorySAN), &historySAN)
-	gm.Load(rec.FEN, history, rec.EngineWhite, rec.EngineBlack)
-	gm.HistorySAN = historySAN
+	gm.Load("", history, rec.EngineWhite, rec.EngineBlack)
 
 	if err := fn(gm, rec); err != nil {
 		// fn already wrote a response if its error is user-facing;
@@ -407,7 +409,7 @@ func (s *GameService) handleHTTPHint(w http.ResponseWriter, r *http.Request) {
 	var history []string
 	_ = json.Unmarshal([]byte(rec.History), &history)
 	gm := game.NewGame()
-	gm.Load(rec.FEN, history, rec.EngineWhite, rec.EngineBlack)
+	gm.Load("", history, rec.EngineWhite, rec.EngineBlack)
 
 	er := eventbus.EngineRequest{
 		GameID:   rec.ID,

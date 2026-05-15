@@ -23,7 +23,7 @@
             <ul v-if="autocomplete.length > 0" class="autocomplete">
               <li v-for="u in autocomplete" :key="u.id" @mousedown.prevent="pickUser(u)">
                 <strong>{{ u.username }}</strong>
-                <span class="muted">{{ u.display_name || '' }} · {{ Math.round(u.rating) }}</span>
+                <span class="muted">{{ u.display_name || '' }}</span>
               </li>
             </ul>
           </label>
@@ -32,10 +32,6 @@
             <select v-model="form.timeControl">
               <option value="15+10">Rapid · 15+10</option>
             </select>
-          </label>
-          <label class="field rated">
-            <input type="checkbox" v-model="form.rated">
-            <span>Rated</span>
           </label>
         </div>
         <button type="submit" class="btn-primary" :disabled="!canSend || sending">
@@ -51,7 +47,7 @@
         <li v-for="inv in inviteStore.received" :key="inv.id" class="invite-row">
           <div class="invite-meta">
             <strong>{{ inv.from_username || `user #${inv.from_user_id}` }}</strong>
-            <span class="muted">{{ inv.time_control }} · {{ inv.rated ? 'rated' : 'casual' }}</span>
+            <span class="muted">{{ inv.time_control }}</span>
             <span class="ttl" :title="inv.expires_at">expires in {{ secondsUntil(inv.expires_at) }}s</span>
           </div>
           <div class="invite-actions">
@@ -69,7 +65,7 @@
         <li v-for="inv in inviteStore.sent" :key="inv.id" class="invite-row">
           <div class="invite-meta">
             <strong>{{ inv.to_username || `user #${inv.to_user_id}` }}</strong>
-            <span class="muted">{{ inv.time_control }} · {{ inv.rated ? 'rated' : 'casual' }}</span>
+            <span class="muted">{{ inv.time_control }}</span>
             <span class="ttl">expires in {{ secondsUntil(inv.expires_at) }}s</span>
           </div>
           <div class="invite-actions">
@@ -98,7 +94,6 @@ const toast = useToastStore();
 const form = ref({
   toUsername: '',
   timeControl: '15+10',
-  rated: false,
 });
 const sending = ref(false);
 const busyId = ref<string | null>(null);
@@ -148,7 +143,10 @@ function pickUser(u: UserSummary) {
 async function onSend() {
   sending.value = true;
   try {
-    await inviteStore.send(form.value.toUsername.trim(), form.value.timeControl, form.value.rated);
+    // Rated games removed in 2026-05-15 cleanup; backend stores `false`
+    // unconditionally for now. Pass it explicitly so the wire shape stays
+    // stable.
+    await inviteStore.send(form.value.toUsername.trim(), form.value.timeControl, false);
     toast.success(`Invite sent to ${form.value.toUsername}`);
     form.value.toUsername = '';
   } catch (e: any) {

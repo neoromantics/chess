@@ -6,9 +6,6 @@
         <section class="play-section">
           <div class="section-header">
             <h2>Play</h2>
-            <div class="user-rating" v-if="authStore.user">
-              Rating: <strong>{{ Math.round(authStore.user.rating || 1500) }}</strong>
-            </div>
           </div>
 
           <div class="matchmaking-card">

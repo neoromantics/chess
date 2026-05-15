@@ -12,10 +12,6 @@
 
       <div class="stats-grid">
         <div class="stat-item">
-          <div class="stat-value">{{ Math.round(authStore.user.rating || 1500) }}</div>
-          <div class="stat-label">Rating (±{{ Math.round(authStore.user.rd || 350) }})</div>
-        </div>
-        <div class="stat-item">
           <div class="stat-value">{{ stats?.wins || 0 }}</div>
           <div class="stat-label">Wins</div>
         </div>
@@ -85,7 +81,7 @@ onMounted(async () => {
 
 .badge.premium { background: #d4af37; color: #1e1e1e; font-size: 10px; font-weight: 800; padding: 2px 8px; border-radius: 4px; letter-spacing: 1px; }
 
-.stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; margin-bottom: 40px; border-top: 1px solid #3d3d3d; border-bottom: 1px solid #3d3d3d; padding: 30px 0; }
+.stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-bottom: 40px; border-top: 1px solid #3d3d3d; border-bottom: 1px solid #3d3d3d; padding: 30px 0; }
 
 .stat-item { text-align: center; }
 .stat-value { font-size: 24px; font-weight: 700; color: #4ec77a; margin-bottom: 4px; }

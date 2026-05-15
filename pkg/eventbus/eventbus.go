@@ -76,6 +76,16 @@ type OfferDrawCmd struct{}
 type AcceptDrawCmd struct{}
 type DeclineDrawCmd struct{}
 
+// NewGameCmd carries the human-vs-engine creation params from the
+// dashboard's "Engine think" dropdown. EngineWhite/EngineBlack default
+// to false/true (you play white). ThinkTimeMS bounded to a sane range
+// in the handler.
+type NewGameCmd struct {
+	EngineWhite bool `json:"engine_white"`
+	EngineBlack bool `json:"engine_black"`
+	ThinkTimeMS int  `json:"think_time_ms"`
+}
+
 type CreatePvPGameCmd struct {
 	WhiteUserID int64  `json:"white_user_id"`
 	BlackUserID int64  `json:"black_user_id"`

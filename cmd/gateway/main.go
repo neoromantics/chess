@@ -166,12 +166,33 @@ func (gw *Gateway) handleCreateGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	gameID := uuid.New().String()
+	// Dashboard sends { engine_white, engine_black, white_think_time,
+	// black_think_time }. We don't yet support split per-side think times
+	// from the dashboard form, so collapse to one. Body is optional —
+	// missing fields fall back to the human-vs-engine defaults.
+	var body struct {
+		EngineWhite    bool `json:"engine_white"`
+		EngineBlack    bool `json:"engine_black"`
+		WhiteThinkTime int  `json:"white_think_time"`
+		BlackThinkTime int  `json:"black_think_time"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	think := body.WhiteThinkTime
+	if think == 0 {
+		think = body.BlackThinkTime
+	}
 
+	gameID := uuid.New().String()
+	payload, _ := json.Marshal(eventbus.NewGameCmd{
+		EngineWhite: body.EngineWhite,
+		EngineBlack: body.EngineBlack || (!body.EngineWhite && !body.EngineBlack), // default: engine plays black
+		ThinkTimeMS: think,
+	})
 	cmd := eventbus.Command{
-		Type:   eventbus.CmdNewGame,
-		GameID: gameID,
-		UserID: user.UserID,
+		Type:    eventbus.CmdNewGame,
+		GameID:  gameID,
+		UserID:  user.UserID,
+		Payload: payload,
 	}
 
 	if _, err := gw.bus.SendCommand(r.Context(), cmd); err != nil {

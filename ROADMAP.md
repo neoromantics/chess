@@ -60,6 +60,12 @@ likely-to-return ones:
 - ⬜ **Save / load PGN** — proper PGN this time, not the JSON dump.
 - ⬜ **Board editor + FEN paste** — a small standalone view, not
       bolted into GameView.
+- ⬜ **Elo / Glicko-2 ratings** — paused 2026-05-15. The Glicko-2 math
+      lives in `pkg/rating` and the DB columns are still on `users`;
+      what was deleted was the consumer goroutine + every UI surface.
+      When it returns, verify against the paper's worked example
+      (was never numerically tested) and rebuild the matchmaker queue
+      to use rating windows.
 
 ---
 
@@ -88,9 +94,6 @@ Same shape as draw. Casual games only — never on rated.
 
 ### ⬜ Spectator mode
 Read-only WS subscription for public games. Need to relax `userMayWatchGame` for games flagged public, and a new `is_public` schema column.
-
-### ⬜ Glicko-2 numerical verification
-`rating-updater` is wired and consumes `GameFinished` events but the math hasn't been table-tested against the reference paper's worked example. Pure unit-test work in `pkg/rating`.
 
 ### ⬜ Matchmaker expanding rating window
 Today `ZRange 0 1` takes the two lowest-rated queue entries. Real platforms grow the rating window over time (start at ±50, expand by +50 every 2s up to ±400) so similar-rated players prefer each other on first pass.
