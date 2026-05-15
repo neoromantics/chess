@@ -94,6 +94,16 @@ export const api = {
     method: 'POST',
     body: JSON.stringify({ fen })
   }),
+
+  // PGN. Download is a plain GET that the SPA hands to the browser
+  // (returns a file download) — we don't need to round-trip through
+  // request(). loadPgn replays a pasted PGN; same engine-only rule
+  // as setPosition.
+  pgnDownloadUrl: (gameId: string) => `${API_BASE}${gameRoute(gameId, 'pgn')}?game_id=${gameId}`,
+  loadPgn: (gameId: string, pgn: string) => request<StateJSON>(`${gameRoute(gameId, 'load_pgn')}?game_id=${gameId}`, {
+    method: 'POST',
+    body: JSON.stringify({ pgn })
+  }),
   undo: (gameId: string) => request<StateJSON>(`${gameRoute(gameId, 'undo')}?game_id=${gameId}`, { method: 'POST' }),
   getHint: (gameId: string, movetime: number) => request<HintResponse>(`${gameRoute(gameId, 'hint')}?game_id=${gameId}`, {
     method: 'POST',
@@ -128,6 +138,6 @@ export function isTempGameId(id: string): boolean {
 // gameRoute picks /api/temp/<verb> for temp games and /api/<verb> for
 // durable games. Centralises the "which surface owns this game" decision
 // so callers don't sprinkle isTempGameId checks everywhere.
-function gameRoute(id: string, verb: 'state' | 'move' | 'resign' | 'new' | 'hint' | 'undo' | 'set_players' | 'set_position'): string {
+function gameRoute(id: string, verb: 'state' | 'move' | 'resign' | 'new' | 'hint' | 'undo' | 'set_players' | 'set_position' | 'pgn' | 'load_pgn'): string {
   return isTempGameId(id) ? `/api/temp/${verb}` : `/api/${verb}`;
 }

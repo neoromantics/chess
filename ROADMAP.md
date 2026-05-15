@@ -66,7 +66,10 @@ likely-to-return ones:
       `1+0, 2+1, 3+0, 3+2, 5+0, 5+3, 10+0, 10+5, 15+10, 30+0` via
       `validTimeControl` + `supportedTCs`. Match page exposes the
       pills grouped by category (bullet/blitz/rapid/classical).
-- ⬜ **Save / load PGN** — proper PGN this time, not the JSON dump.
+- ✅ **Save / load PGN** (2026-05-15) — proper Seven-Tag-Roster PGN
+      via `pkg/pgn`. `GET /api/pgn?game_id=X` downloads, `POST
+      /api/load_pgn` replays a pasted PGN onto the row (engine games
+      only). Tested round-trip + custom-FEN headers + comments/variations.
 - ✅ **Board editor** (2026-05-15) — restored as `POST /api/set_position`
       (engine games only) + `EditPanel.vue` inside `GameView`. User opens
       the Setup tool, paints pieces, sets side-to-move + castling, hits

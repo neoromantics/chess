@@ -75,6 +75,8 @@ func main() {
 		mux.HandleFunc("POST /api/new", s.handleHTTPNew)
 		mux.HandleFunc("POST /api/set_players", s.handleHTTPSetPlayers)
 		mux.HandleFunc("POST /api/set_position", s.handleHTTPSetPosition)
+		mux.HandleFunc("GET /api/pgn", s.handleHTTPDownloadPGN)
+		mux.HandleFunc("POST /api/load_pgn", s.handleHTTPLoadPGN)
 		mux.HandleFunc("POST /api/undo", s.handleHTTPUndo)
 		mux.HandleFunc("DELETE /api/games/delete", s.handleHTTPDelete)
 		mux.HandleFunc("POST /api/hint", s.handleHTTPHint)
@@ -101,6 +103,8 @@ func main() {
 		mux.HandleFunc("POST /api/temp/hint", s.handleTempHint)
 		mux.HandleFunc("POST /api/temp/set_players", s.handleTempSetPlayers)
 		mux.HandleFunc("POST /api/temp/set_position", s.handleTempSetPosition)
+		mux.HandleFunc("GET /api/temp/pgn", s.handleTempDownloadPGN)
+		mux.HandleFunc("POST /api/temp/load_pgn", s.handleTempLoadPGN)
 		// Internal-only — gateway calls this from handleSignup when
 		// the signup request carried a chess-anon cookie. Not in the
 		// public proxy table.

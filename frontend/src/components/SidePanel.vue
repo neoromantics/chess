@@ -120,6 +120,22 @@
       <summary>FEN</summary>
       <div class="fen">{{ state?.fen }}</div>
     </details>
+
+    <!-- PGN export + import. Behind a disclosure since most players
+         don't care; load is engine-only (same rule as set_position). -->
+    <details class="fen-block">
+      <summary>PGN</summary>
+      <div class="pgn-actions">
+        <a v-if="pgnDownloadUrl" :href="pgnDownloadUrl" download class="btn ghost">Download</a>
+        <button v-if="canEditPosition" class="btn ghost" @click="pgnImportOpen = !pgnImportOpen">
+          {{ pgnImportOpen ? 'Cancel' : 'Load…' }}
+        </button>
+      </div>
+      <div v-if="pgnImportOpen" class="pgn-import">
+        <textarea v-model="pgnImportText" placeholder="Paste PGN here" rows="6"></textarea>
+        <button class="btn primary" :disabled="!pgnImportText.trim()" @click="onLoadPgn">Apply</button>
+      </div>
+    </details>
   </div>
 </template>
 
@@ -143,6 +159,7 @@ const props = defineProps<{
   incomingTakeback?: boolean;
   outgoingTakeback?: boolean;
   canEditPosition?: boolean;
+  pgnDownloadUrl?: string;
 }>();
 
 const emit = defineEmits<{
@@ -164,6 +181,7 @@ const emit = defineEmits<{
   (e: 'takeback-accept'): void;
   (e: 'takeback-decline'): void;
   (e: 'edit-position'): void;
+  (e: 'load-pgn', pgn: string): void;
 }>();
 
 const isPvP = computed(() => !!(props.state && props.state.white_user_id !== null && props.state.black_user_id !== null));
@@ -186,6 +204,14 @@ const emitThinkTime = (side: 'white' | 'black', event: Event) => {
   const val = parseInt((event.target as HTMLSelectElement).value);
   if (side === 'white') emit('update:white-think-time', val);
   else emit('update:black-think-time', val);
+};
+
+const pgnImportOpen = ref(false);
+const pgnImportText = ref('');
+const onLoadPgn = () => {
+  emit('load-pgn', pgnImportText.value);
+  pgnImportText.value = '';
+  pgnImportOpen.value = false;
 };
 </script>
 
@@ -337,4 +363,20 @@ const emitThinkTime = (side: 'white' | 'black', event: Event) => {
 .fen-block > summary::after { content: '▸'; float: right; transition: transform 120ms ease; color: #666; }
 .fen-block[open] > summary::after { transform: rotate(90deg); }
 .fen { padding: 0 12px 12px; font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: #888; word-break: break-all; }
+
+.pgn-actions { display: flex; gap: 6px; padding: 0 12px 8px; }
+.pgn-actions .btn { flex: 1 1 auto; text-align: center; text-decoration: none; padding: 6px 10px; font-size: 12px; }
+.pgn-import { padding: 0 12px 12px; display: flex; flex-direction: column; gap: 8px; }
+.pgn-import textarea {
+  width: 100%;
+  box-sizing: border-box;
+  background: #1c1c1c;
+  border: 1px solid #333;
+  color: #ddd;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 11px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  resize: vertical;
+}
 </style>

@@ -57,6 +57,8 @@ game row.
 | POST | `/api/undo?game_id=X` | 🔐+game | gateway → game-svc | `api.undo` |
 | POST | `/api/set_players?game_id=X` | 🔐+game | gateway → game-svc | `api.setPlayers` |
 | POST | `/api/set_position?game_id=X` | 🔐+game | gateway → game-svc | `api.setPosition` (engine games only) |
+| GET  | `/api/pgn?game_id=X` | 🔐+game | gateway → game-svc | `api.pgnDownloadUrl` (browser download) |
+| POST | `/api/load_pgn?game_id=X` | 🔐+game | gateway → game-svc | `api.loadPgn` (engine games only) |
 | POST | `/api/hint?game_id=X` | 🔐+game | gateway → game-svc | `api.getHint` |
 | GET | `/api/replay?game_id=X` | 🔐+game | gateway → game-svc | (data fetched by gateway) |
 | GET | `/api/replay.html?game_id=X` | 🔐+game | gateway (template) | `Replay` button |
@@ -274,7 +276,7 @@ the cleanup. The `chess-paused-features` memory tracks the full list.
 | Touch-move | `pkg/game/Touch`, `TouchMove`, `TouchedSq`, `TouchLost`, `StatusTouchLost`, `/api/touch`, `/api/touch_move`, SPA toggle |
 | Move assessment | `/api/assess`, `Assessments` field in `stateJSON`, `ClassifyAssessment`, SPA UI, `ASSESS_COLORS` / `ASSESS_SYMBOL` |
 | Board editor | Restored 2026-05-15. `EditPanel.vue` is back; `POST /api/set_position` (engine games only) replaces the position with a user-supplied FEN, persisted as `start_fen` on the `games` row. PvP games are rejected server-side. |
-| Save / load PGN file + FEN paste | `/api/save`, `/api/load`, SPA buttons + handlers |
+| Save / load PGN file + FEN paste | PGN restored 2026-05-15 via `GET /api/pgn` (download) + `POST /api/load_pgn` (paste, engine games only). FEN paste is still available via `/api/set_position`. |
 | Draw offer / accept / decline | SPA emit sites in `SidePanel`, `GameView` handlers |
 | Takeback request | (same as draw) |
 | Bullet / blitz / correspondence time controls | `1+0`, `2+1`, `3+2`, `5+0`, `10+5`, `corr-1d` dropped from `validTimeControl`, `supportedTCs`, SPA pickers |
@@ -315,7 +317,7 @@ inspects the prefix: `temp-…` IDs go through the cookie-authenticated
 path that reads `tempgame:state:{id}` to verify ownership.
 
 **Routes.** Mirror the durable surface, prefixed `/api/temp/`:
-`session, state, move, new, undo, resign, hint, set_players, set_position`. The
+`session, state, move, new, undo, resign, hint, set_players, set_position, pgn, load_pgn`. The
 SPA's `api.ts` auto-routes by ID prefix so callers stay flavor-agnostic.
 `set_players` updates engine assignment + per-side think time on the
 existing temp record (split fields `WhiteThinkTimeMS`/`BlackThinkTimeMS`)

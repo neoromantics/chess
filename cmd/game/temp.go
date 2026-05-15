@@ -29,9 +29,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -39,6 +41,7 @@ import (
 	"github.com/neoromantics/chess/pkg/db"
 	"github.com/neoromantics/chess/pkg/eventbus"
 	"github.com/neoromantics/chess/pkg/game"
+	"github.com/neoromantics/chess/pkg/pgn"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -382,6 +385,107 @@ func (s *GameService) handleTempNew(w http.ResponseWriter, r *http.Request) {
 		s.triggerTempEngineMove(rec, gm)
 	}
 
+	writeJSON(w, snapshot)
+}
+
+// handleTempDownloadPGN streams the temp game as a PGN file. Anonymous
+// games have no real "White / Black" identity, so we just label both
+// sides accordingly. Same content negotiation as the durable variant.
+func (s *GameService) handleTempDownloadPGN(w http.ResponseWriter, r *http.Request) {
+	rec, _, ok := s.requireTempAccess(w, r)
+	if !ok {
+		return
+	}
+	gm := game.NewGame()
+	gm.Load(rec.StartFEN, rec.History, rec.EngineWhite, rec.EngineBlack)
+	white := "you"
+	if rec.EngineWhite {
+		white = "engine"
+	}
+	black := "you"
+	if rec.EngineBlack {
+		black = "engine"
+	}
+	body := pgn.Encode(pgn.Headers{
+		Event: "Anonymous game",
+		Site:  "chess.vcm-50800.vm.duke.edu (anon)",
+		Date:  pgn.FormatDate(time.UnixMilli(rec.CreatedAt)),
+		Round: "-",
+		White: white,
+		Black: black,
+		Result: func() string {
+			if strings.TrimSpace(rec.Result) == "" {
+				return "*"
+			}
+			return rec.Result
+		}(),
+	}, rec.StartFEN, gm.HistorySAN, rec.Result)
+	w.Header().Set("Content-Type", "application/x-chess-pgn; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.pgn"`, rec.ID))
+	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+	_, _ = w.Write([]byte(body))
+}
+
+func (s *GameService) handleTempLoadPGN(w http.ResponseWriter, r *http.Request) {
+	rec, store, ok := s.requireTempAccess(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		PGN string `json:"pgn"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.PGN) == "" {
+		http.Error(w, "invalid body: expected {\"pgn\":\"...\"}", http.StatusBadRequest)
+		return
+	}
+	dec, err := pgn.Decode(req.PGN)
+	if err != nil {
+		http.Error(w, "invalid PGN: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	lock, lockErr := acquireGameLock(r.Context(), s.bus.Rdb(), rec.ID, gameLockTTL)
+	if lockErr != nil || lock == nil {
+		http.Error(w, "lock contention", http.StatusConflict)
+		return
+	}
+	defer lock.release(r.Context())
+
+	rec, err = store.get(r.Context(), rec.ID)
+	if err != nil || rec == nil {
+		http.Error(w, "temp game not found", http.StatusNotFound)
+		return
+	}
+
+	gm := game.NewGame()
+	if err := gm.Load(dec.StartFEN, dec.UCIMoves, rec.EngineWhite, rec.EngineBlack); err != nil {
+		http.Error(w, "replay failed: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	rec.StartFEN = dec.StartFEN
+	rec.History = gm.History
+	rec.Status = string(gm.Status())
+	if rec.Status != "ongoing" {
+		rec.Result = dec.Result
+	} else {
+		rec.Result = "*"
+	}
+
+	if err := store.save(r.Context(), rec); err != nil {
+		http.Error(w, "save failed", http.StatusInternalServerError)
+		return
+	}
+	store.refreshTTL(r.Context(), rec.ID, rec.OwnerAnonID)
+	_ = s.bus.Rdb().Del(r.Context(), "game:thinking:"+rec.ID).Err()
+
+	snapshot := s.tempSnapshot(r.Context(), rec)
+	s.publishTempState(r.Context(), rec.ID, snapshot)
+
+	gm2 := game.NewGame()
+	gm2.Load(rec.StartFEN, rec.History, rec.EngineWhite, rec.EngineBlack)
+	if gm2.Status() == game.StatusOngoing && gm2.EngineToMove() {
+		s.triggerTempEngineMove(rec, gm2)
+	}
 	writeJSON(w, snapshot)
 }
 

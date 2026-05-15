@@ -42,6 +42,7 @@
         :incoming-takeback="incomingTakebackFrom !== null"
         :outgoing-takeback="outgoingTakebackSent"
         :can-edit-position="canEditPosition"
+        :pgn-download-url="pgnDownloadUrl"
         @update:white-player-type="updatePlayerType('white', $event)"
         @update:black-player-type="updatePlayerType('black', $event)"
         @update:white-think-time="updateThinkTime('white', $event)"
@@ -60,6 +61,7 @@
         @open-replay="openReplay"
         @toggle-flip="flipped = !flipped"
         @edit-position="enterEditMode"
+        @load-pgn="loadPgn"
       />
 
       <EditPanel
@@ -160,6 +162,7 @@ const canEditPosition = computed(() => {
   if (!state.value) return false;
   return state.value.white_user_id === null || state.value.black_user_id === null;
 });
+const pgnDownloadUrl = computed(() => api.pgnDownloadUrl(props.id));
 const editMode = ref(false);
 const editBoard = ref<(string | null)[][] | null>(null);
 const editPalette = ref('P');
@@ -656,6 +659,21 @@ const editStartPos = () => {
   editBoard.value = parseBoard('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR');
   editTurn.value = 'w';
   editCastling.value = { K: true, Q: true, k: true, q: true };
+};
+
+const loadPgn = async (pgn: string) => {
+  try {
+    const snap = await api.loadPgn(props.id, pgn);
+    lastSoundedHistoryLen = snap.history?.length ?? 0;
+    prevFenForSound = snap.fen;
+    updateState(snap);
+    selected.value = null;
+    hint.value = null;
+    hintInfo.value = '';
+    toastStore.success('PGN loaded');
+  } catch (e: any) {
+    toastStore.error('Failed to load PGN: ' + (e?.message || e));
+  }
 };
 
 const editApply = async () => {
