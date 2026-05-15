@@ -114,6 +114,55 @@ on JoinQueue so a 1200 player can't queue as 2400.
 
 ---
 
+## Scale design notes (10k concurrent pairs)
+
+Recorded 2026-05-15 from a deliberate "what fails at 20k users / 10k
+games?" walk-through. Three immediate wins shipped that day; the
+rest are deferred with reasons.
+
+**Shipped:**
+- ✅ **Per-channel SUBSCRIBE in the gateway hub.** Was
+      `PSUBSCRIBE game.evt.*`, so every pod received every event.
+      Now the hub `SUBSCRIBE`s `game.evt.{id}` on first local-client
+      register and `UNSUBSCRIBE`s on last unregister. Cross-pod
+      fan-out cost is now proportional to "pods with a live local
+      subscriber" rather than "every pod".
+- ✅ **Postgres indices.** `games.white_user_id`,
+      `games.black_user_id`, `games.updated_at DESC`, `games.status`,
+      and partial indices on `invites` for pending / per-user lookups.
+      Idempotent in `pkg/db/schema.sql`.
+- ✅ **Env-tunable connection pool.** `PG_MAX_OPEN_CONNS` /
+      `PG_MAX_IDLE_CONNS` so ops can move the 25-per-pod default
+      without a code change.
+
+**Deliberately deferred (real bottlenecks at 10k pair scale, but not
+worth pre-building):**
+- 🟰 **Redis Sentinel + multi-node.** Today's single Redis is the
+      hot path for streams, locks, cache, pub/sub. It's a SPOF and a
+      vertical scale ceiling, but failover semantics need a real
+      second node — meaningful only after the cluster grows past one
+      VM.
+- 🟰 **KEDA on engine:requests stream depth** (already on the
+      hardening list).
+- 🟰 **PG read replicas** for `ListGames` / search / replay.
+- 🟰 **Matchmaker sharding per TC.** Current single-leader pairing
+      handles low-thousands queue depth comfortably; sharding only
+      pays back past that.
+- 🟰 **Pgbouncer.** Tried during the 6→3 work; Docker Hub tag flakes
+      cost four deploy cycles. Bumping `max_connections=500` + the
+      env-tunable per-pod pool covers us to mid-low-thousands of
+      backends.
+
+**Real anti-patterns I checked for and didn't find:**
+- No in-process game state (would break multi-replica).
+- No `runtime.NumCPU()` (would oversubscribe under cgroups —
+  uses `GOMAXPROCS` instead).
+- No JWT-style trust of client-supplied identity for game ownership.
+- No per-game leader election needed — every mutation path holds the
+  per-game Redis SETNX lock.
+
+---
+
 ## Queued — Production hardening
 
 ### ⬜ Prometheus + Grafana install

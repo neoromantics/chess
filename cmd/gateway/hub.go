@@ -1,15 +1,34 @@
 package main
 
+// Per-game and per-user WebSocket fan-out. Each gateway pod runs one
+// Hub; clients register themselves with their game_id / user_id and
+// the hub forwards every game.evt.{id} / user.evt.{id} message arriving
+// from Redis to the matching local clients.
+//
+// Scale design note: the obvious "PSUBSCRIBE game.evt.*" pattern means
+// every pod receives every game event, regardless of whether it has
+// any subscribers for that game. With N gateway pods and M events/sec,
+// inbound Redis bandwidth and per-pod parse work both grow N×M. We
+// instead SUBSCRIBE per-channel on demand: when the first client for
+// game G registers, the hub SUBSCRIBEs game.evt.G; when the last one
+// leaves, it UNSUBSCRIBEs. Cross-pod fan-out cost becomes proportional
+// to (active games) + (gateway pods with at least one local client per
+// game), which converges on the optimal "1 pod gets each event" once
+// game ownership becomes sticky to a pod (sticky LBs / consistent hash).
+//
+// user.evt uses the same pattern. Per-user channels usually have just
+// one connected tab, so the unsubscribed-pods savings are even bigger.
+
 import (
 	"context"
 	"log/slog"
 	"strconv"
-	"strings"
 	"sync"
 
 	"github.com/gorilla/websocket"
 	"github.com/neoromantics/chess/pkg/eventbus"
 	"github.com/neoromantics/chess/pkg/metrics"
+	"github.com/redis/go-redis/v9"
 )
 
 type Hub struct {
@@ -21,6 +40,12 @@ type Hub struct {
 
 	register   chan *Client
 	unregister chan *Client
+
+	// One PubSub per kind; both started in Run() and survive the hub's
+	// lifetime. Subscribe / Unsubscribe calls are serialized through
+	// the hub event loop, so we don't need a lock around the PubSubs.
+	gamePubSub *redis.PubSub
+	userPubSub *redis.PubSub
 }
 
 type Client struct {
@@ -43,56 +68,59 @@ func NewHub(b *eventbus.Client) *Hub {
 }
 
 func (h *Hub) Run(ctx context.Context) {
-	// Cross-pod fan-out: every Gateway pod PSUBSCRIBEs to all event patterns.
-	// When any service emits an event via EmitEvent() or PublishUserEvent(),
-	// every Gateway pod receives it and delivers it to its locally attached clients.
-	go h.listenToRedis(ctx, "game.evt.*", kindGame)
-	go h.listenToRedis(ctx, "user.evt.*", kindUser)
+	// Open one PubSub per kind with no initial channels; Subscribe is
+	// driven on demand by client (un)registration. Closing either also
+	// closes its goroutine.
+	h.gamePubSub = h.bus.Rdb().Subscribe(ctx)
+	h.userPubSub = h.bus.Rdb().Subscribe(ctx)
+	defer h.gamePubSub.Close()
+	defer h.userPubSub.Close()
+
+	go h.forward(ctx, h.gamePubSub, "game.evt.", kindGame)
+	go h.forward(ctx, h.userPubSub, "user.evt.", kindUser)
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case c := <-h.register:
-			h.add(c)
+			h.add(ctx, c)
 		case c := <-h.unregister:
-			h.remove(c)
+			h.remove(ctx, c)
 		}
 	}
 }
 
-func (h *Hub) listenToRedis(ctx context.Context, pattern string, kind channelKind) {
-	pubsub := h.bus.Rdb().PSubscribe(ctx, pattern)
-	defer pubsub.Close()
-
+func (h *Hub) forward(ctx context.Context, pubsub *redis.PubSub, prefix string, kind channelKind) {
 	ch := pubsub.Channel()
-	prefix := ""
-	if kind == kindGame {
-		prefix = "game.evt."
-	} else {
-		prefix = "user.evt."
-	}
-
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case msg := <-ch:
-			if msg == nil {
+		case msg, ok := <-ch:
+			if !ok || msg == nil {
 				return
 			}
-			key := strings.TrimPrefix(msg.Channel, prefix)
+			key := msg.Channel
+			if len(key) >= len(prefix) {
+				key = key[len(prefix):]
+			}
 			h.deliver(kind, key, []byte(msg.Payload))
 		}
 	}
 }
 
-func (h *Hub) add(c *Client) {
+// add registers a client. When a game/user transitions from "no local
+// subscribers" to "one local subscriber", the hub SUBSCRIBEs the
+// matching Redis channel; subsequent registrations for the same key
+// are a no-op on Redis.
+func (h *Hub) add(ctx context.Context, c *Client) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
+	var newGameKey, newUserKey string
 	if c.gameID != "" {
 		if h.gameSubs[c.gameID] == nil {
 			h.gameSubs[c.gameID] = make(map[*Client]bool)
+			newGameKey = "game.evt." + c.gameID
 		}
 		h.gameSubs[c.gameID][c] = true
 		metrics.WSConnectionsActive.WithLabelValues("gateway", "game").Inc()
@@ -101,16 +129,33 @@ func (h *Hub) add(c *Client) {
 		uidStr := strconv.FormatInt(c.userID, 10)
 		if h.userSubs[uidStr] == nil {
 			h.userSubs[uidStr] = make(map[*Client]bool)
+			newUserKey = "user.evt." + uidStr
 		}
 		h.userSubs[uidStr][c] = true
 		metrics.WSConnectionsActive.WithLabelValues("gateway", "user").Inc()
 	}
+	h.mu.Unlock()
+	// Subscribe calls block on a Redis round-trip; do them outside the
+	// lock so a slow Redis doesn't stall other registers/unregisters.
+	if newGameKey != "" {
+		if err := h.gamePubSub.Subscribe(ctx, newGameKey); err != nil {
+			slog.Warn("hub: subscribe failed", "channel", newGameKey, "error", err)
+		}
+	}
+	if newUserKey != "" {
+		if err := h.userPubSub.Subscribe(ctx, newUserKey); err != nil {
+			slog.Warn("hub: subscribe failed", "channel", newUserKey, "error", err)
+		}
+	}
 	slog.Info("ws client registered", "game_id", c.gameID, "user_id", c.userID)
 }
 
-func (h *Hub) remove(c *Client) {
+// remove tears down a client. When a game/user transitions to "no
+// local subscribers", the hub UNSUBSCRIBEs so other pods stop sending
+// those events here.
+func (h *Hub) remove(ctx context.Context, c *Client) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
+	var dropGameKey, dropUserKey string
 	if c.gameID != "" {
 		if clients, ok := h.gameSubs[c.gameID]; ok {
 			if _, present := clients[c]; present {
@@ -119,6 +164,7 @@ func (h *Hub) remove(c *Client) {
 			}
 			if len(clients) == 0 {
 				delete(h.gameSubs, c.gameID)
+				dropGameKey = "game.evt." + c.gameID
 			}
 		}
 	}
@@ -131,10 +177,22 @@ func (h *Hub) remove(c *Client) {
 			}
 			if len(clients) == 0 {
 				delete(h.userSubs, uidStr)
+				dropUserKey = "user.evt." + uidStr
 			}
 		}
 	}
+	h.mu.Unlock()
 	close(c.send)
+	if dropGameKey != "" {
+		if err := h.gamePubSub.Unsubscribe(ctx, dropGameKey); err != nil {
+			slog.Warn("hub: unsubscribe failed", "channel", dropGameKey, "error", err)
+		}
+	}
+	if dropUserKey != "" {
+		if err := h.userPubSub.Unsubscribe(ctx, dropUserKey); err != nil {
+			slog.Warn("hub: unsubscribe failed", "channel", dropUserKey, "error", err)
+		}
+	}
 	slog.Info("ws client unregistered", "game_id", c.gameID, "user_id", c.userID)
 }
 

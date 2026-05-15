@@ -80,6 +80,8 @@ All Command/Event types live in `pkg/eventbus/eventbus.go`. Adding a new type is
 - **`pkg/core` is zero-dependency, pure Go.** The chess engine search is the core IP; do not introduce deps there.
 - **Postgres is durable truth; Redis is the hot cache.** Game rows live in `game:state:{id}` as a Redis hash, write-through to PG. Reads go Redis-first with PG fallback. Don't store game state in process memory — that breaks multi-replica. See `cmd/game/cache.go`.
 - **Any HTTP middleware that wraps `http.ResponseWriter` MUST forward `Hijack()` and `Flush()`.** `gorilla/websocket` needs `Hijack()` to take over the TCP connection during Upgrade; SSE/streaming responses need `Flush()`. Forgetting this is silent at compile time and breaks every WebSocket handler at runtime with `websocket: response does not implement http.Hijacker`. See `pkg/metrics/metrics.go:statusRecorder` for the canonical pattern.
+- **Gateway hub uses per-channel SUBSCRIBE, not PSUBSCRIBE.** When the first local WS client for game G connects, the hub `SUBSCRIBE`s `game.evt.G`; on the last disconnect it `UNSUBSCRIBE`s. This keeps cross-pod fan-out cost proportional to "pods with a live subscriber" instead of "every pod gets every event". A regression to PSUBSCRIBE wildcards would silently work but blow up the bandwidth bill at scale. See `cmd/gateway/hub.go`.
+- **Gateway pulls the matchmaker rating from the DB, never from the request body.** `handleJoinQueue` looks up `dbUser.Rating` so a 1200 player can't queue as 2400. The SPA's `api.joinQueue` no longer sends a rating field.
 
 ## Common operations
 

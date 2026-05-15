@@ -6,6 +6,8 @@ import (
 	_ "embed"
 	"fmt"
 	"log/slog"
+	"os"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -13,6 +15,15 @@ import (
 
 	"github.com/neoromantics/chess/pkg/db/gen"
 )
+
+func envInt(key string, fallback int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return fallback
+}
 
 // schemaSQL is the canonical schema, embedded into the binary at build
 // time. Applied on every OpenPostgres() call under a Postgres advisory
@@ -40,17 +51,19 @@ type PostgresStore struct {
 //
 // Pool sizing here matters for distributed deployments: many small API
 // pods sharing one Postgres mean we must cap each pod's open connections
-// or we'll DoS the database under load.
+// or we'll DoS the database under load. With chess-db raised to
+// max_connections=500 and 3 services * up-to-6 replicas via HPA, the
+// safe ceiling per pod is roughly 500 / 18 ≈ 27. The defaults below
+// leave headroom; PG_MAX_OPEN_CONNS / PG_MAX_IDLE_CONNS lets ops tune
+// without a code change when the topology shifts.
 func OpenPostgres(dsn string) (Store, error) {
 	sqlDB, err := sql.Open("postgres", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open postgres: %w", err)
 	}
 
-	// Reasonable defaults for an API pod under load. Tune via env later
-	// if/when we have observability to point us at a different number.
-	sqlDB.SetMaxOpenConns(25)
-	sqlDB.SetMaxIdleConns(5)
+	sqlDB.SetMaxOpenConns(envInt("PG_MAX_OPEN_CONNS", 25))
+	sqlDB.SetMaxIdleConns(envInt("PG_MAX_IDLE_CONNS", 5))
 	sqlDB.SetConnMaxLifetime(30 * time.Minute)
 	sqlDB.SetConnMaxIdleTime(5 * time.Minute)
 
