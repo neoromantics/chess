@@ -33,6 +33,7 @@
         :white-think-time="whiteThinkTime"
         :black-think-time="blackThinkTime"
         :sound-enabled="soundEnabled"
+        :touch-move="touchMove"
         :hint-info="hintInfo"
         :history-pairs="historyPairs"
         :can-offer-draw="canOfferDraw"
@@ -48,6 +49,7 @@
         @update:white-think-time="updateThinkTime('white', $event)"
         @update:black-think-time="updateThinkTime('black', $event)"
         @update:sound-enabled="setSoundEnabled"
+        @update:touch-move="setTouchMove"
         @new-game="newGame"
         @get-hint="getHint"
         @undo="undoMove"
@@ -120,6 +122,7 @@ const error = ref<string | null>(null);
 const selected = ref<string | null>(null);
 const flipped = ref(localStorage.getItem('chess-flipped') === '1');
 const soundEnabled = ref(localStorage.getItem('chess-muted') !== '1');
+const touchMove = ref(localStorage.getItem('chess-touch-move') === '1');
 const hint = ref<{ from: string; to: string } | null>(null);
 const hintInfo = ref('');
 const pendingPromo = ref<{ from: string; to: string } | null>(null);
@@ -505,8 +508,29 @@ const onSquare = async (sq: Square) => {
     if (state.value.turn !== myFirst) return;
   }
 
-  if (selected.value === sq.name) { selected.value = null; return; }
-  if (state.value.legal_moves.some(m => m.startsWith(sq.name))) { selected.value = sq.name; return; }
+  // Touch-move (FIDE 4.3): if a piece on your side is touched and has
+  // at least one legal move, you must move it. We enforce this on the
+  // client: once selected, ignore clicks on anything that isn't one of
+  // its legal destinations. The first click can still pick a different
+  // piece because nothing's been "touched" yet — selection is the
+  // committing action. There's no take-back: hit Undo if you fluffed.
+  const hasLegalMoves = (from: string) => state.value!.legal_moves.some(m => m.startsWith(from));
+  const isDestOfSelected = (from: string, to: string) =>
+    state.value!.legal_moves.some(m => m.substring(0,2) === from && m.substring(2,4) === to);
+
+  if (selected.value === sq.name) {
+    if (touchMove.value) return; // can't unselect a touched piece under FIDE rules
+    selected.value = null; return;
+  }
+  if (state.value.legal_moves.some(m => m.startsWith(sq.name))) {
+    // Trying to switch pieces while one is already touched — not allowed
+    // under touch-move. Without the rule, this is the normal "change
+    // your mind" path.
+    if (touchMove.value && selected.value && hasLegalMoves(selected.value) && !isDestOfSelected(selected.value, sq.name)) {
+      return;
+    }
+    selected.value = sq.name; return;
+  }
   if (selected.value) {
     const cands = state.value.legal_moves.filter(m => m.substring(0,2) === selected.value && m.substring(2,4) === sq.name);
     if (cands.length === 1 && cands[0].length === 4) {
@@ -516,7 +540,9 @@ const onSquare = async (sq: Square) => {
     } else if (cands.length > 1) {
       pendingPromo.value = { from: selected.value, to: sq.name };
       selected.value = null;
-    } else {
+    } else if (!touchMove.value) {
+      // Under touch-move, an illegal-destination click is a no-op so
+      // the touched piece stays selected and must still be moved.
       selected.value = null;
     }
   }
@@ -621,6 +647,14 @@ const updateThinkTime = async (side: 'white' | 'black', time: number) => {
 const setSoundEnabled = (val: boolean) => {
   soundEnabled.value = val;
   localStorage.setItem('chess-muted', val ? '0' : '1');
+};
+
+const setTouchMove = (val: boolean) => {
+  touchMove.value = val;
+  localStorage.setItem('chess-touch-move', val ? '1' : '0');
+  // If the rule was just enabled mid-think and the user already had a
+  // piece selected (touched), keep that selection — it's now locked
+  // per the new rule. No corrective action needed.
 };
 
 const openReplay = () => { window.open(`/api/replay.html?game_id=${props.id}`, '_blank'); };

@@ -58,8 +58,11 @@ at a time with a fresh design pass each — don't `git revert`. The
 full removal list is in `pkg/wire/CONTRACT.md` Section 5; the most
 likely-to-return ones:
 
-- ⬜ **Touch-move rule** — chess.com/lichess parity. Re-add as a
-      session-level toggle, not a per-game mutation.
+- ✅ **Touch-move rule** (2026-05-15) — session-level client toggle in
+      SidePanel toolbar. When ON, a selected ("touched") piece is locked
+      until it makes a legal move; can't switch to a different piece or
+      deselect. localStorage-persisted, applies to PvP + engine games.
+      Pure SPA — no backend churn.
 - ⬜ **Move assessment** — engine-graded annotations on the move list,
       pushed via WS instead of the old request/response dance.
 - ✅ **Bullet/blitz/classical time controls** (2026-05-15) — restored

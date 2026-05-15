@@ -19,6 +19,10 @@
         <span aria-hidden="true">✎</span>
         <span class="tool-label">Setup</span>
       </button>
+      <button class="tool" :class="{ on: touchMove }" @click="$emit('update:touch-move', !touchMove)" :title="touchMove ? 'Touch-move ON: a touched piece must move (FIDE rule)' : 'Touch-move OFF (default)'">
+        <span aria-hidden="true">☝</span>
+        <span class="tool-label">{{ touchMove ? 'Touch-move' : 'Free' }}</span>
+      </button>
     </div>
 
     <!-- Draw / takeback prompts. Render before the action row so
@@ -150,6 +154,7 @@ const props = defineProps<{
   whiteThinkTime: number;
   blackThinkTime: number;
   soundEnabled: boolean;
+  touchMove?: boolean;
   hintInfo: string;
   historyPairs: any[];
   canOfferDraw?: boolean;
@@ -168,6 +173,7 @@ const emit = defineEmits<{
   (e: 'update:white-think-time', val: number): void;
   (e: 'update:black-think-time', val: number): void;
   (e: 'update:sound-enabled', val: boolean): void;
+  (e: 'update:touch-move', val: boolean): void;
   (e: 'new-game'): void;
   (e: 'get-hint'): void;
   (e: 'undo'): void;
