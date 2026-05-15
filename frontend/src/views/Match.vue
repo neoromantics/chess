@@ -34,13 +34,13 @@
       </div>
     </section>
 
-    <section v-if="games.length > 0" class="card recents">
+    <section v-if="activeGames.length > 0" class="card recents">
       <div class="card-header">
         <h2>Your active games</h2>
-        <span class="muted">{{ games.length }}</span>
+        <span class="muted">{{ activeGames.length }}</span>
       </div>
       <ul class="game-list">
-        <li v-for="g in games" :key="g.id">
+        <li v-for="g in activeGames" :key="g.id">
           <router-link :to="`/game/${g.id}`" class="game-link">
             <span class="game-type">{{ g.white_user_id && g.black_user_id ? 'PvP' : 'Engine' }}</span>
             <span class="game-id">{{ shortId(g.id) }}</span>
@@ -51,11 +51,29 @@
         </li>
       </ul>
     </section>
+
+    <section v-if="finishedGames.length > 0" class="card recents">
+      <div class="card-header">
+        <h2>Past games</h2>
+        <span class="muted">{{ finishedGames.length }}</span>
+      </div>
+      <ul class="game-list">
+        <li v-for="g in finishedGames" :key="g.id">
+          <a :href="`/api/replay.html?game_id=${g.id}`" target="_blank" class="game-link past">
+            <span class="game-type">{{ g.white_user_id && g.black_user_id ? 'PvP' : 'Engine' }}</span>
+            <span class="game-result" :class="resultClass(g)">{{ resultLabel(g) }}</span>
+            <span class="game-when">{{ formatDate(g.updated_at) }}</span>
+            <span class="game-status">{{ formatStatus(g.status) }}</span>
+          </a>
+          <button class="btn-delete" :title="'Delete ' + g.id" @click="deleteGame(g.id)">×</button>
+        </li>
+      </ul>
+    </section>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { api } from '../api';
 import { useAuthStore } from '../stores/auth';
@@ -91,10 +109,37 @@ const timeControls = [
 const loadGames = async () => {
   try {
     const res = await api.listGames();
-    games.value = (res || []).filter((g: any) => g.status === 'ongoing');
+    games.value = res || [];
   } catch {
     // non-fatal; just hide the section
   }
+};
+
+const activeGames = computed(() => games.value.filter((g: any) => g.status === 'ongoing'));
+// listGames returns updated_at DESC, so freshly-finished games sit at
+// the top of this list — exactly what a "past games" view wants.
+const finishedGames = computed(() => games.value.filter((g: any) => g.status !== 'ongoing').slice(0, 50));
+
+const resultLabel = (g: any): string => {
+  const me = authStore.user?.id;
+  if (!me) return g.result || '*';
+  if (g.result === '1/2-1/2') return 'Draw';
+  if (g.result === '*' || !g.result) return '–';
+  const winnerWhite = g.result === '1-0';
+  const userIsWhite = g.white_user_id === me;
+  const userIsBlack = g.black_user_id === me;
+  if ((winnerWhite && userIsWhite) || (!winnerWhite && userIsBlack)) return 'Won';
+  if (userIsWhite || userIsBlack) return 'Lost';
+  return g.result;
+};
+
+const resultClass = (g: any): string => {
+  const me = authStore.user?.id;
+  if (!me || !g.result || g.result === '*') return '';
+  if (g.result === '1/2-1/2') return 'draw';
+  const winnerWhite = g.result === '1-0';
+  if ((winnerWhite && g.white_user_id === me) || (!winnerWhite && g.black_user_id === me)) return 'won';
+  return 'lost';
 };
 
 const joinQueue = async () => {
@@ -260,6 +305,11 @@ onUnmounted(() => {
 .game-id { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: #888; }
 .game-when { color: #888; font-size: 12px; }
 .game-status { color: #aaa; font-size: 12px; text-align: right; }
+.game-link.past { grid-template-columns: 60px 70px 1fr 120px; }
+.game-result { font-weight: 700; font-size: 12px; }
+.game-result.won { color: #6ec77a; }
+.game-result.lost { color: #d4544c; }
+.game-result.draw { color: #aaa; }
 
 .btn-delete {
   background: transparent;
