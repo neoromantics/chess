@@ -14,9 +14,8 @@
           v-for="tc in timeControls"
           :key="tc.id"
           @click="!searching && (selectedTC = tc.id)"
-          :class="['tc-pill', { active: selectedTC === tc.id, disabled: tc.disabled }]"
-          :disabled="searching || tc.disabled"
-          :title="tc.disabled ? 'Coming back when bullet/blitz restore lands' : ''"
+          :class="['tc-pill', { active: selectedTC === tc.id }]"
+          :disabled="searching"
         >
           <span class="tc-name">{{ tc.label }}</span>
           <span class="tc-desc">{{ tc.desc }}</span>
@@ -72,15 +71,21 @@ const selectedTC = ref('15+10');
 const searching = ref(false);
 const games = ref<any[]>([]);
 
-// Single rapid time control for now. Bullet/blitz come back with the
-// time-control restore (server clocks already shipped, so this is just
-// SPA + validTimeControl in cmd/game/invites.go). The disabled chips
-// telegraph that we know they're missing rather than hiding them.
+// Time controls grouped by category. Each must also be in
+// validTimeControl + supportedTCs on the backend (cmd/game/invites.go,
+// cmd/game/matchmaker.go). One Redis matchmaking queue per TC, so
+// fragmenting the list dilutes the pool — keep the menu opinionated.
 const timeControls = [
-  { id: '15+10', label: '15+10', desc: 'Rapid', disabled: false },
-  { id: '5+0',   label: '5+0',   desc: 'Blitz (soon)', disabled: true },
-  { id: '3+2',   label: '3+2',   desc: 'Blitz (soon)', disabled: true },
-  { id: '1+0',   label: '1+0',   desc: 'Bullet (soon)', disabled: true },
+  { id: '1+0',   label: '1+0',   desc: 'Bullet' },
+  { id: '2+1',   label: '2+1',   desc: 'Bullet' },
+  { id: '3+0',   label: '3+0',   desc: 'Blitz' },
+  { id: '3+2',   label: '3+2',   desc: 'Blitz' },
+  { id: '5+0',   label: '5+0',   desc: 'Blitz' },
+  { id: '5+3',   label: '5+3',   desc: 'Blitz' },
+  { id: '10+0',  label: '10+0',  desc: 'Rapid' },
+  { id: '10+5',  label: '10+5',  desc: 'Rapid' },
+  { id: '15+10', label: '15+10', desc: 'Rapid' },
+  { id: '30+0',  label: '30+0',  desc: 'Classical' },
 ];
 
 const loadGames = async () => {
@@ -204,7 +209,7 @@ onUnmounted(() => {
 }
 .tc-pill:hover:not(:disabled) { border-color: #4a6b8a; background: #252525; }
 .tc-pill.active { border-color: #4a6b8a; background: rgba(74,107,138,0.12); box-shadow: inset 0 0 0 1px #4a6b8a; }
-.tc-pill.disabled, .tc-pill:disabled { opacity: 0.45; cursor: not-allowed; }
+.tc-pill:disabled { opacity: 0.45; cursor: not-allowed; }
 .tc-name { font-weight: 700; font-size: 17px; color: #fff; }
 .tc-desc { font-size: 11px; color: #888; }
 

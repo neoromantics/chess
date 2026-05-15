@@ -397,10 +397,16 @@ func (s *GameService) runInviteSweeper(ctx context.Context) {
 // ===== helpers =====
 
 func validTimeControl(tc string) bool {
-	// Single rapid time control while we land core multiplayer
-	// correctness; bullet/blitz/correspondence come back later.
-	// See ROADMAP.md and the chess-paused-features memory.
-	return tc == "15+10"
+	// Server clocks parse any "M+S" string (cmd/game/clocks.go
+	// parseTimeControl), but matchmaking is gated to a curated
+	// whitelist so we get matchmaking-pool concentration. Add new
+	// entries here AND to supportedTCs in matchmaker.go (one queue
+	// per TC).
+	switch tc {
+	case "1+0", "2+1", "3+0", "3+2", "5+0", "5+3", "10+0", "10+5", "15+10", "30+0":
+		return true
+	}
+	return false
 }
 
 func parseInviteID(r *http.Request) (uuid.UUID, error) {

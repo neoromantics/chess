@@ -62,9 +62,10 @@ likely-to-return ones:
       session-level toggle, not a per-game mutation.
 - ⬜ **Move assessment** — engine-graded annotations on the move list,
       pushed via WS instead of the old request/response dance.
-- ⬜ **Bullet/blitz time controls** (1+0, 3+2, 5+0, 10+5…) — server
-      clocks already shipped; just need to allow more strings through
-      `validTimeControl` and add the SPA pickers.
+- ✅ **Bullet/blitz/classical time controls** (2026-05-15) — restored
+      `1+0, 2+1, 3+0, 3+2, 5+0, 5+3, 10+0, 10+5, 15+10, 30+0` via
+      `validTimeControl` + `supportedTCs`. Match page exposes the
+      pills grouped by category (bullet/blitz/rapid/classical).
 - ⬜ **Save / load PGN** — proper PGN this time, not the JSON dump.
 - ⬜ **Board editor + FEN paste** — a small standalone view, not
       bolted into GameView.
