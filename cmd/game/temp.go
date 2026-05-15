@@ -31,10 +31,12 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/neoromantics/chess/pkg/core"
+	"github.com/neoromantics/chess/pkg/db"
 	"github.com/neoromantics/chess/pkg/eventbus"
 	"github.com/neoromantics/chess/pkg/game"
 	"github.com/redis/go-redis/v9"
@@ -533,6 +535,114 @@ func (s *GameService) handleTempSetPlayers(w http.ResponseWriter, r *http.Reques
 	snapshot := s.tempSnapshot(r.Context(), rec)
 	s.publishTempState(r.Context(), rec.ID, snapshot)
 	writeJSON(w, snapshot)
+}
+
+// handleTempUpgrade copies an anonymous temp game into a durable
+// games row owned by a freshly-signed-up user, then tears down the
+// temp record. Internal-only — the gateway calls this after signup
+// when the request carried a chess-anon cookie. Returns the new
+// game_id so the gateway can hand it back to the SPA for redirect.
+//
+// Idempotency: if the temp game is already gone (expired, or this
+// is a retry), returns 200 with empty game_id so the gateway can
+// degrade gracefully.
+func (s *GameService) handleTempUpgrade(w http.ResponseWriter, r *http.Request) {
+	anonID := r.URL.Query().Get("anon_id")
+	userIDStr := r.URL.Query().Get("user_id")
+	if anonID == "" || userIDStr == "" {
+		http.Error(w, "missing anon_id or user_id", http.StatusBadRequest)
+		return
+	}
+	userID, err := strconv.ParseInt(userIDStr, 10, 64)
+	if err != nil || userID <= 0 {
+		http.Error(w, "bad user_id", http.StatusBadRequest)
+		return
+	}
+	store := newTempStore(s.bus.Rdb())
+	gameID, err := store.sessionGameID(r.Context(), anonID)
+	if err != nil || gameID == "" {
+		// No active temp session for this cookie. Not an error —
+		// signup just proceeds without a carryover game.
+		writeJSON(w, map[string]string{"game_id": ""})
+		return
+	}
+	rec, err := store.get(r.Context(), gameID)
+	if err != nil || rec == nil {
+		writeJSON(w, map[string]string{"game_id": ""})
+		return
+	}
+	// Hold the temp lock so applyTempEngineMove can't race us mid-copy.
+	lock, err := acquireGameLock(r.Context(), s.bus.Rdb(), gameID, gameLockTTL)
+	if err != nil || lock == nil {
+		http.Error(w, "lock contention", http.StatusConflict)
+		return
+	}
+	defer lock.release(context.Background())
+	rec, err = store.get(r.Context(), gameID)
+	if err != nil || rec == nil {
+		writeJSON(w, map[string]string{"game_id": ""})
+		return
+	}
+
+	// Replay so HistorySAN is populated correctly on the durable row.
+	gm := game.NewGame()
+	gm.Load("", rec.History, rec.EngineWhite, rec.EngineBlack)
+
+	// Decide which side the user plays. Defaults follow the temp-game
+	// landing convention (human=white, engine=black). If the user
+	// flipped engine assignment, we put them on the human side.
+	var whiteUID, blackUID *int64
+	switch {
+	case rec.EngineWhite && !rec.EngineBlack:
+		blackUID = &userID
+	case !rec.EngineWhite && rec.EngineBlack:
+		whiteUID = &userID
+	case rec.EngineWhite && rec.EngineBlack:
+		// Engine-vs-engine: stitch the user onto white as the
+		// "owner" so the row appears in their /api/games list. They
+		// can still toggle players from the SidePanel later.
+		whiteUID = &userID
+	default:
+		// Both human in temp shouldn't happen (newTempRec forces
+		// engineBlack=true if both flags are false), but be safe.
+		whiteUID = &userID
+	}
+
+	histJSON, _ := json.Marshal(gm.History)
+	sanJSON, _ := json.Marshal(gm.HistorySAN)
+	newRec := &db.GameRecord{
+		ID:             "g-" + uuid.New().String(),
+		WhiteUserID:    whiteUID,
+		BlackUserID:    blackUID,
+		FEN:            gm.Board.FEN(),
+		History:        string(histJSON),
+		HistorySAN:     string(sanJSON),
+		EngineWhite:    rec.EngineWhite,
+		EngineBlack:    rec.EngineBlack,
+		WhiteThinkTime: int(rec.thinkForSide(core.White) / time.Millisecond),
+		BlackThinkTime: int(rec.thinkForSide(core.Black) / time.Millisecond),
+		TimeControl:    "engine",
+		Rated:          false,
+		Status:         rec.Status,
+		Result:         rec.Result,
+		Assessments:    "[]",
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
+	}
+	if err := s.saveGameCached(r.Context(), newRec); err != nil {
+		slog.Error("temp upgrade save failed", "error", err)
+		http.Error(w, "save failed", http.StatusInternalServerError)
+		return
+	}
+
+	// Tear down the temp record so the cookie no longer points at
+	// it. The cookie itself stays (harmless) and is overwritten on
+	// the next anon visit.
+	_ = s.bus.Rdb().Del(r.Context(), tempStateKey+gameID).Err()
+	_ = s.bus.Rdb().Del(r.Context(), tempSessionKey+anonID).Err()
+
+	slog.Info("temp game upgraded", "anon_id", anonID, "user_id", userID, "old_id", gameID, "new_id", newRec.ID)
+	writeJSON(w, map[string]string{"game_id": newRec.ID})
 }
 
 func (s *GameService) handleTempHint(w http.ResponseWriter, r *http.Request) {

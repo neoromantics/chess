@@ -20,10 +20,15 @@ package main
 //   GET    /api/users/search
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
+	"time"
 
 	"github.com/neoromantics/chess/pkg/auth"
 )
@@ -58,7 +63,51 @@ func (gw *Gateway) handleSignup(w http.ResponseWriter, r *http.Request) {
 	}
 	token, _ := auth.GenerateToken(user.ID, user.Username)
 	http.SetCookie(w, secureCookie("token", token))
-	writeJSONGW(w, map[string]any{"user": user, "token": token})
+
+	// Carry-over: if the signup request came from an anonymous tab
+	// with a live temp game, upgrade it into a durable game owned by
+	// the new user and return the new game_id so the SPA can land
+	// the user back in their game (not on a fresh dashboard).
+	upgradedGameID := ""
+	if anonID := readAnonCookie(r); anonID != "" {
+		if gid, err := gw.upgradeAnonGame(r.Context(), anonID, user.ID); err != nil {
+			slog.Warn("anon→user upgrade failed", "anon_id", anonID, "user_id", user.ID, "error", err)
+		} else {
+			upgradedGameID = gid
+		}
+	}
+
+	writeJSONGW(w, map[string]any{"user": user, "token": token, "upgraded_game_id": upgradedGameID})
+}
+
+// upgradeAnonGame asks game-service to copy the temp game tied to
+// this anon cookie into a durable row for the freshly-signed-up
+// user. Errors are non-fatal — we'd rather succeed signup without
+// the carry-over than fail signup over a Redis hiccup.
+func (gw *Gateway) upgradeAnonGame(ctx context.Context, anonID string, userID int64) (string, error) {
+	target := fmt.Sprintf("%s/api/temp/upgrade?anon_id=%s&user_id=%s",
+		gw.gameSvcURL.String(), anonID, strconv.FormatInt(userID, 10))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, nil)
+	if err != nil {
+		return "", err
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("upgrade returned %d: %s", resp.StatusCode, string(body))
+	}
+	var out struct {
+		GameID string `json:"game_id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return "", err
+	}
+	return out.GameID, nil
 }
 
 func (gw *Gateway) handleLogin(w http.ResponseWriter, r *http.Request) {

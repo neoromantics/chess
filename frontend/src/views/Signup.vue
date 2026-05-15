@@ -53,6 +53,14 @@ const handleSubmit = async () => {
   try {
     const res = await api.signup(username.value, password.value);
     authStore.setUser(res.user);
+    // Carry-over: if the user signed up while playing an anonymous
+    // temp game, the gateway upgrades it into a durable game and
+    // returns its new id. Land the user back in their game so the
+    // signup feels seamless.
+    if (res.upgraded_game_id) {
+      router.push(`/game/${res.upgraded_game_id}`);
+      return;
+    }
     const next = (route.query.next as string) || '/';
     router.push(next);
   } catch (e: any) {

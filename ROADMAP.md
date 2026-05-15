@@ -36,6 +36,7 @@ The session that produced this roadmap shipped ~40 commits restructuring the pla
 - ✅ Postgres `max_connections=500` (instead of an external pooler — pgbouncer image-tag situation on Docker Hub was unreliable).
 - ✅ Anonymous **temp games** (2026-05-15). Redis-only game with 10-minute sliding TTL. `chess-anon` HttpOnly cookie binds the session. Engine-only, no PvP. See `pkg/wire/CONTRACT.md` Section 6.
 - ✅ Landing-page mode chooser (2026-05-15). `/` shows two cards: "Play vs Engine" (anon → temp `/play/<id>`, signed-in → durable `/game/<id>`) and "Match a Player" (anon → signup with `?next=/dashboard`, signed-in → dashboard). Board-editor card is a soon-disabled placeholder until the editor is restored.
+- ✅ Anonymous → signed-in upgrade (2026-05-15). When `POST /api/auth/signup` carries a `chess-anon` cookie, the gateway calls internal `POST /api/temp/upgrade` on game-service to copy the temp game into a durable row owned by the new user; the signup response carries `upgraded_game_id` and the SPA lands the user back in their game.
 - ✅ Server-authoritative clocks for PvP (2026-05-15). `clock:{id}` Redis hash holds the bank state; `clock:fallschedule` sorted-set drives a 500ms-tick flag-fall sweeper. PvP games initialize from `time_control` ("M+S"). SPA's `ClockDisplay` extrapolates locally between snapshots for smoothness; the server's number is always authoritative.
 - ✅ Draw offer / accept / decline (2026-05-15). PvP only. SETNX-protected ephemeral key `draw-offer:{game_id}` holds the offerer; only the opposite participant can accept (status=`draw_agreement`, result=`1/2-1/2`) or decline. WS events `DrawOffered` / `DrawAccepted` / `DrawDeclined` round-trip both sides.
 - ✅ Takeback request / accept (2026-05-15). PvP casual only (rated games never take back). Same SETNX pattern as draws; accept pops 1 or 2 plies depending on whose turn it is, so the requester ends up on move. Unilateral `/api/undo` now rejects PvP — Takeback is the only path.
@@ -81,9 +82,6 @@ In priority order. Each is independent; ship one at a time.
 
 ### ⬜ Spectator mode
 Read-only WS subscription for public games. Need to relax `userMayWatchGame` for games flagged public, and a new `is_public` schema column.
-
-### ⬜ Anonymous → signed-in upgrade
-A visitor playing a temp game who signs up mid-session loses their game today (the temp record is dropped on the floor; they get a fresh durable game). To preserve it, copy the `tempGameRec` into a `games` row owned by the new user inside the signup handler and redirect to `/game/<new-id>`. Single-session UX win; not blocking anyone yet.
 
 ### ⬜ Matchmaker expanding rating window
 Today `ZRange 0 1` takes the two lowest-rated queue entries. Real platforms grow the rating window over time (start at ±50, expand by +50 every 2s up to ±400) so similar-rated players prefer each other on first pass.

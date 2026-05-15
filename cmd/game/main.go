@@ -99,6 +99,10 @@ func main() {
 		mux.HandleFunc("POST /api/temp/undo", s.handleTempUndo)
 		mux.HandleFunc("POST /api/temp/hint", s.handleTempHint)
 		mux.HandleFunc("POST /api/temp/set_players", s.handleTempSetPlayers)
+		// Internal-only — gateway calls this from handleSignup when
+		// the signup request carried a chess-anon cookie. Not in the
+		// public proxy table.
+		mux.HandleFunc("POST /api/temp/upgrade", s.handleTempUpgrade)
 
 		mux.Handle("/metrics", metrics.Handler())
 

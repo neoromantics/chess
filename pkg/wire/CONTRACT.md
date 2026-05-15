@@ -326,11 +326,17 @@ the engine's next move without a New Game.
 browser session. Resigning ends the game; the cookie still points at
 it until expiry, so a refresh re-renders the resigned position.
 
-**Sign-up upgrade.** Not yet implemented — when an anonymous player
-signs up mid-game, the temp record is dropped on the floor and they
-get a fresh durable game. To carry it over, copy the `tempGameRec`
-into a `games` row owned by the new user inside the signup handler
-and redirect to `/game/<new-id>`.
+**Sign-up upgrade.** Implemented 2026-05-15. When `POST /api/auth/signup`
+sees a `chess-anon` cookie, the gateway calls game-service's internal
+`POST /api/temp/upgrade?anon_id=X&user_id=Y` after the user is created.
+That handler copies the `tempGameRec` into a durable `games` row owned
+by the new user (carrying FEN, history, engine assignment, per-side
+think times), then deletes both `tempgame:state:{old_id}` and
+`tempgame:session:{anon_id}`. The signup response gains an
+`upgraded_game_id` field; the SPA navigates to `/game/<new-id>` if
+present so the carry-over is invisible to the user. Failures are
+non-fatal (signup still succeeds, the user just lands on the next
+route as usual).
 
 ## Section 6 — How to add a new wire surface
 
