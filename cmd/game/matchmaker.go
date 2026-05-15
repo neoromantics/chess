@@ -44,22 +44,40 @@ var supportedTCs = []string{
 // CmdLeaveQueue intents. Idempotent so re-delivery (Streams provide
 // at-least-once) is safe.
 
+// Rating-window pairing constants. Window starts tight (so similar-
+// rated players prefer each other on the first pass) and grows over
+// time so a long-waiting user eventually gets *some* match. Tuned to
+// match the chess.com / lichess behaviour roughly.
+const (
+	mmWindowInitial = 50.0  // rating points each side of the target
+	mmWindowGrowth  = 50.0  // per growthEvery
+	mmGrowthEvery   = 2     // seconds — every 2s, window grows by mmWindowGrowth
+	mmWindowMax     = 400.0 // hard cap regardless of wait time
+)
+
+// queueKey / joinedKey return the per-TC Redis keys. `queue` is a
+// sorted set scored by rating; `joined` is a hash mapping user_id →
+// unix-seconds enqueue time, used to size the expanding rating window.
+func queueKey(tc string) string  { return "mm:queue:" + tc }
+func joinedKey(tc string) string { return "mm:joined:" + tc }
+
 func (s *GameService) handleJoinQueue(ctx context.Context, cmd eventbus.Command) {
 	var payload eventbus.JoinQueueCmd
 	_ = json.Unmarshal(cmd.Payload, &payload)
-	key := "mm:queue:" + payload.TimeControl
-	s.bus.Rdb().ZAdd(ctx, key, redis.Z{
-		Score:  float64(payload.Rating),
-		Member: fmt.Sprintf("%d", cmd.UserID),
+	uid := fmt.Sprintf("%d", cmd.UserID)
+	s.bus.Rdb().ZAdd(ctx, queueKey(payload.TimeControl), redis.Z{
+		Score: float64(payload.Rating), Member: uid,
 	})
-	slog.Info("user joined queue", "user_id", cmd.UserID, "tc", payload.TimeControl)
+	s.bus.Rdb().HSet(ctx, joinedKey(payload.TimeControl), uid, time.Now().Unix())
+	slog.Info("user joined queue", "user_id", cmd.UserID, "tc", payload.TimeControl, "rating", payload.Rating)
 }
 
 func (s *GameService) handleLeaveQueue(ctx context.Context, cmd eventbus.Command) {
 	var payload eventbus.LeaveQueueCmd
 	_ = json.Unmarshal(cmd.Payload, &payload)
-	key := "mm:queue:" + payload.TimeControl
-	s.bus.Rdb().ZRem(ctx, key, fmt.Sprintf("%d", cmd.UserID))
+	uid := fmt.Sprintf("%d", cmd.UserID)
+	s.bus.Rdb().ZRem(ctx, queueKey(payload.TimeControl), uid)
+	s.bus.Rdb().HDel(ctx, joinedKey(payload.TimeControl), uid)
 	slog.Info("user left queue", "user_id", cmd.UserID, "tc", payload.TimeControl)
 }
 
@@ -111,20 +129,88 @@ func (s *GameService) holdAndPair(ctx context.Context, hostname string) {
 	}
 }
 
-// tryPair takes the two lowest-rated entries in a time-control queue
-// (no Glicko rating-bucket logic yet — see TODO in CLAUDE.md), removes
-// them atomically, dispatches a CreatePvPGame command, and notifies
-// both users via their personal user.evt channels with their color.
+// tryPair walks one TC's queue ordered by rating and pairs each user
+// with the closest neighbour whose rating falls inside the user's
+// current rating window. The window starts tight (±mmWindowInitial)
+// and expands the longer a user has waited, so brand-new entries
+// prefer similar-rated opponents but a stranded high-Elo user still
+// gets *some* match within a few minutes.
+//
+// Pairs as many couples as it can in a single tick. Each successful
+// pairing atomically removes both users from the queue + joined hash;
+// the loop then advances past them.
 func (s *GameService) tryPair(ctx context.Context, tc string) {
-	key := "mm:queue:" + tc
-	res, err := s.bus.Rdb().ZRange(ctx, key, 0, 1).Result()
-	if err != nil || len(res) < 2 {
-		return
-	}
-	u1, _ := strconv.ParseInt(res[0], 10, 64)
-	u2, _ := strconv.ParseInt(res[1], 10, 64)
-	s.bus.Rdb().ZRem(ctx, key, res[0], res[1])
+	rdb := s.bus.Rdb()
+	now := time.Now().Unix()
 
+	for {
+		// Pull everyone with their score (rating). For tens-of-thousands
+		// scale we'd page or shard per rating bucket; at our current
+		// scale a single ZRangeWithScores per tick is fine.
+		entries, err := rdb.ZRangeWithScores(ctx, queueKey(tc), 0, -1).Result()
+		if err != nil || len(entries) < 2 {
+			return
+		}
+		joined, _ := rdb.HGetAll(ctx, joinedKey(tc)).Result()
+
+		pairedThisRound := false
+		for i := 0; i < len(entries)-1; i++ {
+			a := entries[i]
+			aID, _ := a.Member.(string)
+			win := currentRatingWindow(now, joined[aID])
+
+			// Look at the next neighbour; if they fall within both A's
+			// and their own window, pair them. (Symmetric check so the
+			// younger entry doesn't get matched outside its tighter
+			// window just because A waited long enough.)
+			b := entries[i+1]
+			bID, _ := b.Member.(string)
+			bwin := currentRatingWindow(now, joined[bID])
+			gap := b.Score - a.Score
+			if gap <= win && gap <= bwin {
+				// Atomic remove from both structures; on conflict (another
+				// leader paired them first) skip silently.
+				removed, err := rdb.ZRem(ctx, queueKey(tc), aID, bID).Result()
+				if err != nil || removed < 2 {
+					continue
+				}
+				rdb.HDel(ctx, joinedKey(tc), aID, bID)
+				u1, _ := strconv.ParseInt(aID, 10, 64)
+				u2, _ := strconv.ParseInt(bID, 10, 64)
+				s.dispatchPaired(ctx, u1, u2, tc)
+				pairedThisRound = true
+				i++ // skip past the paired-with neighbour
+			}
+		}
+		if !pairedThisRound {
+			return
+		}
+	}
+}
+
+// currentRatingWindow returns the rating tolerance a user currently
+// allows, growing from mmWindowInitial → mmWindowMax over the time
+// they've been queued.
+func currentRatingWindow(nowSec int64, joinedAt string) float64 {
+	if joinedAt == "" {
+		return mmWindowInitial
+	}
+	t, err := strconv.ParseInt(joinedAt, 10, 64)
+	if err != nil {
+		return mmWindowInitial
+	}
+	elapsed := nowSec - t
+	if elapsed < 0 {
+		elapsed = 0
+	}
+	win := mmWindowInitial + float64(elapsed/int64(mmGrowthEvery))*mmWindowGrowth
+	if win > mmWindowMax {
+		win = mmWindowMax
+	}
+	return win
+}
+
+func (s *GameService) dispatchPaired(ctx context.Context, u1, u2 int64, tc string) {
 	gameID := uuid.New().String()
 	slog.Info("match found", "u1", u1, "u2", u2, "game_id", gameID, "tc", tc)
 

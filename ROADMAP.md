@@ -83,12 +83,17 @@ likely-to-return ones:
       Apply; backend validates the FEN, wipes history, stores it as
       `start_fen`, and kicks the engine if it's the engine's turn.
       PvP rejected server-side. FEN paste still queued.
-- ⬜ **Elo / Glicko-2 ratings** — paused 2026-05-15. The Glicko-2 math
-      lives in `pkg/rating` and the DB columns are still on `users`;
-      what was deleted was the consumer goroutine + every UI surface.
-      When it returns, verify against the paper's worked example
-      (was never numerically tested) and rebuild the matchmaker queue
-      to use rating windows.
+- ✅ **Elo / Glicko-2 ratings** (2026-05-15) — `pkg/rating` numerically
+      verified against the paper's worked example
+      (`TestUpdateAgainstPaperExample`: r=1500/RD=200/σ=0.06 +
+      W/L/L → r≈1464.06, RD≈151.52, σ≈0.05999). `runRatingUpdater`
+      goroutine re-armed, consumes `game:events` (rating-updater-group),
+      one-game-per-period update on every rated `GameFinished`.
+      Pushes `rating_updated` user-events; SPA `authStore` updates the
+      live rating chip on the profile. Matchmaker now uses an expanding
+      rating window: starts at ±50, grows by +50 every 2s, capped at
+      ±400. Gateway looks up the user's authoritative rating instead of
+      trusting the client.
 
 ---
 
@@ -99,8 +104,13 @@ In priority order. Each is independent; ship one at a time.
 ### ⬜ Spectator mode
 Read-only WS subscription for public games. Need to relax `userMayWatchGame` for games flagged public, and a new `is_public` schema column.
 
-### ⬜ Matchmaker expanding rating window
-Today `ZRange 0 1` takes the two lowest-rated queue entries. Real platforms grow the rating window over time (start at ±50, expand by +50 every 2s up to ±400) so similar-rated players prefer each other on first pass.
+### ✅ Matchmaker expanding rating window (2026-05-15)
+Shipped with the rating restoration. Each queue entry carries an
+enqueue timestamp in `mm:joined:{tc}`; per-tick `tryPair` walks the
+ZSet and pairs adjacent users only when the rating gap fits inside
+*both* parties' currently-allowed window (initial ±50, +50 every 2s,
+capped at ±400). Gateway pulls the authoritative rating from the DB
+on JoinQueue so a 1200 player can't queue as 2400.
 
 ---
 

@@ -128,9 +128,11 @@ func main() {
 	// across replicas — no leader election needed at this scale. See
 	// cmd/game/clocks.go.
 	go s.runClockFallSweeper(ctx)
-	// Rating updater paused with the rest of the Elo surface in the
-	// 2026-05-15 cleanup. Stream events still emit GameFinished; nothing
-	// consumes them today. See ROADMAP.md "Restore deleted features".
+	// Glicko-2 rating updater. Consumes game:events (rating-updater-group)
+	// and applies a one-game-per-period update on every rated GameFinished.
+	// pkg/rating is numerically verified against the paper's worked
+	// example — see pkg/rating/glicko2_test.go.
+	go s.runRatingUpdater(ctx)
 	s.Run(ctx)
 }
 

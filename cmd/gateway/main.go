@@ -307,7 +307,6 @@ func (gw *Gateway) handleJoinQueue(w http.ResponseWriter, r *http.Request) {
 	}
 	var req struct {
 		TimeControl string `json:"time_control"`
-		Rating      int    `json:"rating"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid body", 400)
@@ -317,7 +316,14 @@ func (gw *Gateway) handleJoinQueue(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing time_control", 400)
 		return
 	}
-	payload, _ := json.Marshal(eventbus.JoinQueueCmd{TimeControl: req.TimeControl, Rating: req.Rating})
+	// Pull the authoritative rating from the row — never trust a
+	// client-supplied number, or a 1200 player could queue as "2400"
+	// and farm wins from real high-Elo opponents.
+	rating := 1500
+	if dbUser, err := gw.db.GetUserByID(user.UserID); err == nil && dbUser != nil {
+		rating = int(dbUser.Rating)
+	}
+	payload, _ := json.Marshal(eventbus.JoinQueueCmd{TimeControl: req.TimeControl, Rating: rating})
 	cmd := eventbus.Command{
 		Type:    eventbus.CmdJoinQueue,
 		UserID:  user.UserID,

@@ -48,6 +48,14 @@ export const useAuthStore = defineStore('auth', {
       // Seed the invite cache so reconnects don't drop pending state.
       const invites = useInviteStore();
       invites.init();
+
+      // Live rating refresh — backend publishes 'rating_updated' on
+      // user.evt.{id} after every rated game finalizes.
+      events.on('rating_updated', (payload: any) => {
+        if (this.user && typeof payload?.rating === 'number') {
+          this.user.rating = payload.rating;
+        }
+      });
     },
     async logout() {
       try {

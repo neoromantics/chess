@@ -7,6 +7,10 @@
           <h1>{{ authStore.user.username }}</h1>
           <p class="bio" v-if="authStore.user.bio">{{ authStore.user.bio }}</p>
           <span class="badge premium" v-if="authStore.user.is_premium">PREMIUM</span>
+          <span class="badge rating" v-if="authStore.user.rating != null">
+            {{ Math.round(authStore.user.rating) }}
+            <span class="rd" :title="`Rating deviation ${Math.round(authStore.user.rd)}`">±{{ Math.round(authStore.user.rd) }}</span>
+          </span>
         </div>
       </div>
 
@@ -80,6 +84,8 @@ onMounted(async () => {
 .bio { margin: 0 0 12px; color: #aaa; font-style: italic; }
 
 .badge.premium { background: #d4af37; color: #1e1e1e; font-size: 10px; font-weight: 800; padding: 2px 8px; border-radius: 4px; letter-spacing: 1px; }
+.badge.rating { background: #2a3340; color: #cfe1f5; border: 1px solid #3a4754; font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 4px; margin-left: 6px; display: inline-flex; align-items: center; gap: 6px; }
+.badge.rating .rd { color: #8a9bad; font-weight: 500; font-size: 11px; }
 
 .stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-bottom: 40px; border-top: 1px solid #3d3d3d; border-bottom: 1px solid #3d3d3d; padding: 30px 0; }
 
