@@ -1,19 +1,20 @@
 import { createRouter, createWebHistory, RouteRecordRaw } from 'vue-router';
-import Dashboard from './views/Dashboard.vue';
 import Profile from './views/Profile.vue';
 import Login from './views/Login.vue';
 import Signup from './views/Signup.vue';
 import GameView from './views/GameView.vue';
 import Invites from './views/Invites.vue';
 import Landing from './views/Landing.vue';
+import Match from './views/Match.vue';
 import { useAuthStore } from './stores/auth';
 
 const routes: RouteRecordRaw[] = [
-  // Landing decides between dashboard (signed-in) and a fresh anonymous
-  // temp game (visitor). The Dashboard route is now explicit so
-  // signed-in users still have a stable URL to bookmark.
+  // / is the mode chooser (Play vs Engine / Match a Player). /match
+  // is the dedicated PvP matchmaking page that the chooser links to.
+  // The old /dashboard route is gone; any bookmarks redirect here.
   { path: '/', component: Landing },
-  { path: '/dashboard', component: Dashboard, meta: { requiresAuth: true } },
+  { path: '/match', component: Match, meta: { requiresAuth: true } },
+  { path: '/dashboard', redirect: '/match' },
   { path: '/profile', component: Profile, meta: { requiresAuth: true } },
   { path: '/invites', component: Invites, meta: { requiresAuth: true } },
   { path: '/login', component: Login, meta: { guestOnly: true } },
@@ -42,7 +43,7 @@ router.beforeEach(async (to) => {
     return { path: '/login', query: { next: to.fullPath } };
   }
   if (to.meta.guestOnly && auth.user) {
-    return { path: '/dashboard' };
+    return { path: '/match' };
   }
 });
 

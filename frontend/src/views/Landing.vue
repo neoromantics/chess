@@ -32,10 +32,10 @@
           <div class="mode-title">Match a Player</div>
           <div class="mode-sub">
             Get paired with another human via matchmaking, or invite a
-            friend by username from your dashboard.
+            friend by username.
           </div>
           <div class="mode-meta">
-            {{ authStore.user ? 'Open dashboard' : 'Sign in required' }}
+            {{ authStore.user ? 'Open matchmaking' : 'Sign in required' }}
           </div>
         </div>
         <div v-if="busyMode === 'match'" class="spinner"></div>
@@ -112,11 +112,11 @@ const goMatch = () => {
   if (busyMode.value !== '') return;
   busyMode.value = 'match';
   if (authStore.user) {
-    router.replace('/dashboard');
+    router.replace('/match');
   } else {
     // Stash the intent so the post-signup redirect lands on the
-    // matchmaking dashboard instead of dropping the user back on /.
-    router.replace({ path: '/signup', query: { next: '/dashboard' } });
+    // matchmaking page instead of dropping the user back on /.
+    router.replace({ path: '/signup', query: { next: '/match' } });
   }
 };
 </script>

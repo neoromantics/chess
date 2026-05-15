@@ -178,7 +178,7 @@ contract — backend emissions must match these strings exactly.
 
 | `type` | When | Payload shape | Backend constant | Frontend handler |
 |---|---|---|---|---|
-| `match_found` | matchmaker pairs two users | `MatchFoundEvt {game_id, white_user_id, black_user_id, color}` | `eventbus.EvtMatchFound` | `Dashboard.onMounted` |
+| `match_found` | matchmaker pairs two users | `MatchFoundEvt {game_id, white_user_id, black_user_id, color}` | `eventbus.EvtMatchFound` | `Match.onMounted` |
 | `invite_created` | recipient receives a new invite | `inviteWire` | `eventbus.EvtInviteCreated` | `useInviteStore` |
 | `invite_sent` | sender's confirmation echo | `inviteWire` | `eventbus.EvtInviteSent` | `useInviteStore` |
 | `invite_accepted` | invite matured into a game | `inviteWire` (includes game_id) | `eventbus.EvtInviteAccepted` | `useInviteStore` + redirect |
