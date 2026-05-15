@@ -56,11 +56,35 @@ type tempGameRec struct {
 	History     []string `json:"history"`
 	EngineWhite bool     `json:"engine_white"`
 	EngineBlack bool     `json:"engine_black"`
-	ThinkTimeMS int      `json:"think_time_ms"`
-	Status      string   `json:"status"` // "ongoing" | "checkmate" | ... | "resign"
-	Result      string   `json:"result"` // "*" | "1-0" | "0-1" | "1/2-1/2"
-	CreatedAt   int64    `json:"created_at"`
-	UpdatedAt   int64    `json:"updated_at"`
+	// Split per-side so engine-vs-engine temp games can use asymmetric
+	// think times, and so mid-game changes via /api/temp/set_players
+	// land on the right side. ThinkTimeMS stays in the JSON tag set as
+	// a fallback for in-flight Redis records written before the split.
+	WhiteThinkTimeMS int    `json:"white_think_time_ms"`
+	BlackThinkTimeMS int    `json:"black_think_time_ms"`
+	ThinkTimeMS      int    `json:"think_time_ms,omitempty"` // legacy fallback
+	Status           string `json:"status"`                  // "ongoing" | "checkmate" | ... | "resign"
+	Result           string `json:"result"`                  // "*" | "1-0" | "0-1" | "1/2-1/2"
+	CreatedAt        int64  `json:"created_at"`
+	UpdatedAt        int64  `json:"updated_at"`
+}
+
+// thinkForSide returns the engine think duration to use when the named
+// side is about to search. Reads the split fields and falls back to the
+// legacy single ThinkTimeMS so records written before the split still
+// work for the rest of their TTL window.
+func (r *tempGameRec) thinkForSide(side core.Color) time.Duration {
+	ms := r.WhiteThinkTimeMS
+	if side == core.Black {
+		ms = r.BlackThinkTimeMS
+	}
+	if ms <= 0 {
+		ms = r.ThinkTimeMS
+	}
+	if ms <= 0 {
+		ms = 1000
+	}
+	return time.Duration(ms) * time.Millisecond
 }
 
 type tempStore struct {
@@ -167,16 +191,17 @@ func newTempRec(anonID string, thinkMS int, engineWhite, engineBlack bool) *temp
 	}
 	now := time.Now().UnixMilli()
 	return &tempGameRec{
-		ID:          "temp-" + uuid.New().String(),
-		OwnerAnonID: anonID,
-		History:     []string{},
-		EngineWhite: engineWhite,
-		EngineBlack: engineBlack,
-		ThinkTimeMS: thinkMS,
-		Status:      "ongoing",
-		Result:      "*",
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		ID:               "temp-" + uuid.New().String(),
+		OwnerAnonID:      anonID,
+		History:          []string{},
+		EngineWhite:      engineWhite,
+		EngineBlack:      engineBlack,
+		WhiteThinkTimeMS: thinkMS,
+		BlackThinkTimeMS: thinkMS,
+		Status:           "ongoing",
+		Result:           "*",
+		CreatedAt:        now,
+		UpdatedAt:        now,
 	}
 }
 
@@ -441,6 +466,75 @@ func (s *GameService) handleTempUndo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, snapshot)
 }
 
+// handleTempSetPlayers updates engine assignment and per-side think
+// times for a temp game. Mirrors handleHTTPSetPlayers but writes back
+// to the Redis tempGameRec instead of the PG row. If the change makes
+// it the engine's turn (e.g. user toggled engine_black on while it was
+// black to move), we kick off a search with the new think time so the
+// dropdown change visibly applies.
+func (s *GameService) handleTempSetPlayers(w http.ResponseWriter, r *http.Request) {
+	rec, store, ok := s.requireTempAccess(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		EngineWhite    bool `json:"engine_white"`
+		EngineBlack    bool `json:"engine_black"`
+		WhiteThinkTime int  `json:"white_think_time"`
+		BlackThinkTime int  `json:"black_think_time"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+
+	lock, err := acquireGameLock(r.Context(), s.bus.Rdb(), rec.ID, gameLockTTL)
+	if err != nil || lock == nil {
+		http.Error(w, "lock contention", http.StatusConflict)
+		return
+	}
+	defer lock.release(context.Background())
+
+	rec, err = store.get(r.Context(), rec.ID)
+	if err != nil || rec == nil {
+		http.Error(w, "temp game not found", http.StatusNotFound)
+		return
+	}
+
+	rec.EngineWhite = req.EngineWhite
+	rec.EngineBlack = req.EngineBlack
+	if req.WhiteThinkTime > 0 {
+		rec.WhiteThinkTimeMS = req.WhiteThinkTime
+	}
+	if req.BlackThinkTime > 0 {
+		rec.BlackThinkTimeMS = req.BlackThinkTime
+	}
+
+	if err := store.save(r.Context(), rec); err != nil {
+		http.Error(w, "save failed", http.StatusInternalServerError)
+		return
+	}
+	store.refreshTTL(r.Context(), rec.ID, rec.OwnerAnonID)
+
+	// If toggling engine assignment makes it the engine's turn (and the
+	// game is still going), kick off a search. Same shape as the durable
+	// withLockedMutation path: settings change can immediately produce a
+	// new engine move.
+	gm := game.NewGame()
+	gm.Load("", rec.History, rec.EngineWhite, rec.EngineBlack)
+	if rec.Status == "ongoing" && gm.EngineToMove() {
+		// Drop any stale "thinking" sentinel — the in-flight search (if
+		// any) used the OLD think time; if we're flipping sides or
+		// changing engines, the user shouldn't see lingering spinner.
+		_ = s.bus.Rdb().Del(r.Context(), "game:thinking:"+rec.ID).Err()
+		s.triggerTempEngineMove(rec, gm)
+	}
+
+	snapshot := s.tempSnapshot(r.Context(), rec)
+	s.publishTempState(r.Context(), rec.ID, snapshot)
+	writeJSON(w, snapshot)
+}
+
 func (s *GameService) handleTempHint(w http.ResponseWriter, r *http.Request) {
 	rec, _, ok := s.requireTempAccess(w, r)
 	if !ok {
@@ -478,10 +572,7 @@ func (s *GameService) handleTempHint(w http.ResponseWriter, r *http.Request) {
 // channel to mark the request as temp so processEngineResult routes
 // the response back to applyTempEngineMove instead of CmdMakeMove.
 func (s *GameService) triggerTempEngineMove(rec *tempGameRec, gm *game.Game) {
-	moveTime := time.Duration(rec.ThinkTimeMS) * time.Millisecond
-	if moveTime <= 0 {
-		moveTime = 1 * time.Second
-	}
+	moveTime := rec.thinkForSide(gm.Board.SideToMove)
 	ttl := 2*moveTime + 2*time.Second
 	_ = s.bus.Rdb().Set(context.Background(), "game:thinking:"+rec.ID, "1", ttl).Err()
 
@@ -623,8 +714,8 @@ func (s *GameService) tempSnapshot(ctx context.Context, rec *tempGameRec) stateJ
 		HistorySAN:     gm.HistorySAN,
 		LastMove:       last,
 		Thinking:       thinking,
-		WhiteThinkTime: rec.ThinkTimeMS,
-		BlackThinkTime: rec.ThinkTimeMS,
+		WhiteThinkTime: int(rec.thinkForSide(core.White) / time.Millisecond),
+		BlackThinkTime: int(rec.thinkForSide(core.Black) / time.Millisecond),
 		TimeControl:    "engine",
 		Rated:          false,
 	}

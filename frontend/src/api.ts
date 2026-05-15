@@ -86,7 +86,7 @@ export const api = {
     method: 'POST',
     body: JSON.stringify({ engine_white, engine_black })
   }),
-  setPlayers: (gameId: string, engine_white: boolean, engine_black: boolean, white_think_time: number, black_think_time: number) => request<StateJSON>(`/api/set_players?game_id=${gameId}`, {
+  setPlayers: (gameId: string, engine_white: boolean, engine_black: boolean, white_think_time: number, black_think_time: number) => request<StateJSON>(`${gameRoute(gameId, 'set_players')}?game_id=${gameId}`, {
     method: 'POST',
     body: JSON.stringify({ engine_white, engine_black, white_think_time, black_think_time })
   }),
@@ -114,6 +114,6 @@ export function isTempGameId(id: string): boolean {
 // gameRoute picks /api/temp/<verb> for temp games and /api/<verb> for
 // durable games. Centralises the "which surface owns this game" decision
 // so callers don't sprinkle isTempGameId checks everywhere.
-function gameRoute(id: string, verb: 'state' | 'move' | 'resign' | 'new' | 'hint' | 'undo'): string {
+function gameRoute(id: string, verb: 'state' | 'move' | 'resign' | 'new' | 'hint' | 'undo' | 'set_players'): string {
   return isTempGameId(id) ? `/api/temp/${verb}` : `/api/${verb}`;
 }

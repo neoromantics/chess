@@ -290,13 +290,17 @@ inspects the prefix: `temp-…` IDs go through the cookie-authenticated
 path that reads `tempgame:state:{id}` to verify ownership.
 
 **Routes.** Mirror the durable surface, prefixed `/api/temp/`:
-`session, state, move, new, undo, resign, hint`. The SPA's `api.ts`
-auto-routes by ID prefix so callers stay flavor-agnostic.
+`session, state, move, new, undo, resign, hint, set_players`. The
+SPA's `api.ts` auto-routes by ID prefix so callers stay flavor-agnostic.
+`set_players` updates engine assignment + per-side think time on the
+existing temp record (split fields `WhiteThinkTimeMS`/`BlackThinkTimeMS`)
+and immediately kicks off an engine search if the new settings make it
+the engine's turn — so a mid-game think-time change takes effect on
+the engine's next move without a New Game.
 
 **Limits.** Engine-only (no PvP, no invites, no rating). One game per
-browser session. No `set_players` (think time changes via New Game).
-Resigning ends the game; the cookie still points at it until expiry,
-so a refresh re-renders the resigned position.
+browser session. Resigning ends the game; the cookie still points at
+it until expiry, so a refresh re-renders the resigned position.
 
 **Sign-up upgrade.** Not yet implemented — when an anonymous player
 signs up mid-game, the temp record is dropped on the floor and they

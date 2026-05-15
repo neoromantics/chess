@@ -92,6 +92,7 @@ func main() {
 		mux.HandleFunc("POST /api/temp/resign", s.handleTempResign)
 		mux.HandleFunc("POST /api/temp/undo", s.handleTempUndo)
 		mux.HandleFunc("POST /api/temp/hint", s.handleTempHint)
+		mux.HandleFunc("POST /api/temp/set_players", s.handleTempSetPlayers)
 
 		mux.Handle("/metrics", metrics.Handler())
 

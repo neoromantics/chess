@@ -57,7 +57,7 @@ import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import ChessBoard from '../components/ChessBoard.vue';
 import SidePanel from '../components/SidePanel.vue';
 import PromoModal from '../components/PromoModal.vue';
-import { api, isTempGameId } from '../api';
+import { api } from '../api';
 import { useToastStore } from '../stores/toast';
 import { useAuthStore } from '../stores/auth';
 import { StateJSON, Square } from '../types';
@@ -390,11 +390,8 @@ const getHint = async () => {
 };
 
 const updateSettings = async () => {
-  // Temp games don't have a setPlayers endpoint (no PG row to update —
-  // settings live only inside the in-memory Game and are reapplied on
-  // New Game). Toggling the radio buttons updates the local refs; the
-  // chosen config takes effect on the next New Game.
-  if (isTempGameId(props.id)) return;
+  // Both /api/set_players (durable) and /api/temp/set_players take the
+  // same shape; api.setPlayers routes by ID prefix.
   try {
     updateState(await api.setPlayers(
       props.id,
