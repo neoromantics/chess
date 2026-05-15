@@ -49,8 +49,21 @@
 
     <section class="section">
       <h3>Game</h3>
+      <!-- Incoming draw offer from the opponent. Render before the
+           action row so it's the most prominent prompt while waiting. -->
+      <div v-if="incomingDraw" class="draw-prompt">
+        <span>Opponent offers a draw.</span>
+        <div class="btn-row tight">
+          <button class="btn-accept" @click="$emit('draw-accept')">Accept</button>
+          <button class="btn-secondary" @click="$emit('draw-decline')">Decline</button>
+        </div>
+      </div>
+      <div v-else-if="outgoingDraw" class="draw-prompt subtle">
+        <span>Draw offer sent — waiting…</span>
+      </div>
       <div class="btn-row" v-if="state?.status === 'ongoing'">
         <button @click="$emit('resign')" class="btn-danger">Resign</button>
+        <button v-if="canOfferDraw" @click="$emit('draw-offer')" class="btn-secondary" :disabled="outgoingDraw">Offer Draw</button>
       </div>
       <div class="btn-row">
         <button @click="$emit('new-game')" style="flex: 2; background: #2d5a2d; border-color: #3a703a; font-weight: 600;">New Game</button>
@@ -97,6 +110,13 @@ defineProps<{
   soundEnabled: boolean;
   hintInfo: string;
   historyPairs: any[];
+  // Draw-offer banner state. canOfferDraw=false hides the "Offer Draw"
+  // button (engine games, finished games). incomingDraw=true shows the
+  // accept/decline prompt; outgoingDraw=true means we already sent one
+  // and are waiting for the opponent.
+  canOfferDraw?: boolean;
+  incomingDraw?: boolean;
+  outgoingDraw?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -111,6 +131,9 @@ const emit = defineEmits<{
   (e: 'open-replay'): void;
   (e: 'toggle-flip'): void;
   (e: 'resign'): void;
+  (e: 'draw-offer'): void;
+  (e: 'draw-accept'): void;
+  (e: 'draw-decline'): void;
 }>();
 
 const thinkOptions = [
@@ -141,4 +164,13 @@ const emitThinkTime = (side: 'white' | 'black', event: Event) => {
 
 .move-span { padding: 0 3px; border-radius: 2px; }
 .hint-info { color: #9fdcb5; }
+
+.draw-prompt { background: #2a2f3a; border-left: 3px solid #4a6b8a; padding: 10px 12px; border-radius: 4px; margin-bottom: 10px; font-size: 13px; color: #d8dde6; }
+.draw-prompt.subtle { background: #2b2b2b; border-left-color: #555; color: #999; font-style: italic; }
+.draw-prompt .btn-row.tight { margin-top: 8px; gap: 8px; }
+.btn-accept { background: #2d5a2d; border-color: #3a703a; color: #fff; font-weight: 600; }
+.btn-accept:hover { background: #347a34; }
+.btn-secondary { background: #3a3a3a; border-color: #4a4a4a; color: #ddd; }
+.btn-secondary:hover { background: #444; }
+.btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
 </style>

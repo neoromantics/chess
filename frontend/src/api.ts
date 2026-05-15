@@ -96,6 +96,11 @@ export const api = {
     body: JSON.stringify({ movetime })
   }),
 
+  // ===== Draw flow (PvP only) =====
+  drawOffer: (gameId: string) => request<void>(`/api/draw_offer?game_id=${gameId}`, { method: 'POST' }),
+  drawAccept: (gameId: string) => request<StateJSON>(`/api/draw_accept?game_id=${gameId}`, { method: 'POST' }),
+  drawDecline: (gameId: string) => request<void>(`/api/draw_decline?game_id=${gameId}`, { method: 'POST' }),
+
   // ===== Anonymous temp-game session =====
   // Idempotent: returns the caller's currently-active temp game (if
   // any, refreshing TTL) or creates a fresh one. The chess-anon cookie

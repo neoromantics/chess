@@ -133,6 +133,9 @@ const (
 	EvtGameFinished = "GameFinished"
 	EvtGameStarted  = "GameStarted"
 	EvtStateUpdated = "StateUpdated"
+	EvtDrawOffered  = "DrawOffered"
+	EvtDrawAccepted = "DrawAccepted"
+	EvtDrawDeclined = "DrawDeclined"
 
 	// User-channel events (user.evt.{id}). snake_case matches what
 	// every Pinia store .on()s for. Renaming any of these is a

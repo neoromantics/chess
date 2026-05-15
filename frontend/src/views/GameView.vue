@@ -32,6 +32,9 @@
         :sound-enabled="soundEnabled"
         :hint-info="hintInfo"
         :history-pairs="historyPairs"
+        :can-offer-draw="canOfferDraw"
+        :incoming-draw="incomingDrawFrom !== null"
+        :outgoing-draw="outgoingDrawSent"
         @update:white-player-type="updatePlayerType('white', $event)"
         @update:black-player-type="updatePlayerType('black', $event)"
         @update:white-think-time="updateThinkTime('white', $event)"
@@ -41,6 +44,9 @@
         @get-hint="getHint"
         @undo="undoMove"
         @resign="resign"
+        @draw-offer="drawOffer"
+        @draw-accept="drawAccept"
+        @draw-decline="drawDecline"
         @open-replay="openReplay"
         @toggle-flip="flipped = !flipped"
       />
@@ -96,6 +102,18 @@ const whitePlayerType = ref('h');
 const blackPlayerType = ref('e');
 const whiteThinkTime = ref(1000);
 const blackThinkTime = ref(1000);
+
+// Draw-offer transient UI state. Cleared on game end, decline, or
+// accept. Server is the source of truth (ephemeral Redis key); we just
+// mirror its broadcasts here so the SPA renders the right banner.
+const incomingDrawFrom = ref<number | null>(null); // user_id of offerer
+const outgoingDrawSent = ref(false);
+const canOfferDraw = computed(() => {
+  // PvP-only, ongoing, and we're not the offerer waiting for a response.
+  if (!state.value || state.value.status !== 'ongoing') return false;
+  if (state.value.white_user_id === null || state.value.black_user_id === null) return false;
+  return true;
+});
 
 // Audio. AudioContext starts suspended until the user makes a gesture
 // inside the page (browser autoplay policy). We arm it once on the
@@ -180,7 +198,11 @@ const statusMsg = computed(() => {
     const winner = s.result === '1-0' ? 'White' : s.result === '0-1' ? 'Black' : '';
     return winner ? `${winner} wins by resignation` : 'Game ended by resignation';
   }
-  if (s.status === 'timeout') return 'Time out — game over';
+  if (s.status === 'timeout') {
+    const winner = s.result === '1-0' ? 'White' : s.result === '0-1' ? 'Black' : '';
+    return winner ? `${winner} wins on time` : 'Time out — game over';
+  }
+  if (s.status === 'draw_agreement') return 'Draw by agreement';
 
   let msg = (s.turn === 'w' ? 'White' : 'Black') + ' to move';
   if (s.thinking) msg += ' (engine thinking…)';
@@ -239,6 +261,14 @@ const updateState = (s: StateJSON) => {
   }
   lastSoundedHistoryLen = Math.max(lastSoundedHistoryLen, newLen);
   prevFenForSound = s.fen;
+
+  // Any terminal status invalidates pending draw banners — the server
+  // also deletes its draw-offer:{id} key on finish, but the SPA needs
+  // to clear its own mirrors so reload doesn't show ghost prompts.
+  if (s.status !== 'ongoing') {
+    incomingDrawFrom.value = null;
+    outgoingDrawSent.value = false;
+  }
 };
 
 const connectWS = () => {
@@ -266,6 +296,28 @@ const connectWS = () => {
         refetchState();
       } else if (data.type === 'hint') {
         onHintReceived(data.payload);
+      } else if (data.type === 'DrawOffered') {
+        // Show the prompt on the OPPONENT's view; the offerer already
+        // sees the "Draw offer sent — waiting" banner via outgoingDrawSent.
+        const fromId = data.payload?.from_user_id;
+        if (authStore.user && fromId && fromId !== authStore.user.id) {
+          incomingDrawFrom.value = fromId;
+        }
+      } else if (data.type === 'DrawDeclined') {
+        // Either we declined someone else's offer, or our outgoing
+        // offer was declined. Clear both bits and surface a toast for
+        // the declined side.
+        if (outgoingDrawSent.value) {
+          toastStore.info('Opponent declined the draw.');
+        }
+        incomingDrawFrom.value = null;
+        outgoingDrawSent.value = false;
+      } else if (data.type === 'DrawAccepted') {
+        // Game ends. StateUpdated with status=draw_agreement arrives
+        // alongside; clear local banner state and let the snapshot
+        // update render the terminal status.
+        incomingDrawFrom.value = null;
+        outgoingDrawSent.value = false;
       }
     } catch (e) {
       console.error('Failed to parse WS message', e);
@@ -294,6 +346,38 @@ const resign = async () => {
     toastStore.info('You resigned.');
   } catch (e) {
     toastStore.error('Failed to resign');
+  }
+};
+
+const drawOffer = async () => {
+  try {
+    await api.drawOffer(props.id);
+    outgoingDrawSent.value = true;
+    toastStore.info('Draw offer sent.');
+  } catch (e: any) {
+    toastStore.error('Could not offer draw: ' + (e?.message || e));
+  }
+};
+
+const drawAccept = async () => {
+  try {
+    const snap = await api.drawAccept(props.id);
+    if (snap) updateState(snap);
+    incomingDrawFrom.value = null;
+    outgoingDrawSent.value = false;
+    toastStore.success('Draw agreed.');
+  } catch (e: any) {
+    toastStore.error('Could not accept draw: ' + (e?.message || e));
+  }
+};
+
+const drawDecline = async () => {
+  try {
+    await api.drawDecline(props.id);
+    incomingDrawFrom.value = null;
+    toastStore.info('Draw declined.');
+  } catch (e: any) {
+    toastStore.error('Could not decline draw: ' + (e?.message || e));
   }
 };
 

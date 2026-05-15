@@ -36,6 +36,7 @@ The session that produced this roadmap shipped ~40 commits restructuring the pla
 - ✅ Postgres `max_connections=500` (instead of an external pooler — pgbouncer image-tag situation on Docker Hub was unreliable).
 - ✅ Anonymous **temp games** (2026-05-15). Visitor lands on `/`, gets a Redis-only game with 10-minute sliding TTL. `chess-anon` HttpOnly cookie binds the session. Engine-only, no PvP. See `pkg/wire/CONTRACT.md` Section 6.
 - ✅ Server-authoritative clocks for PvP (2026-05-15). `clock:{id}` Redis hash holds the bank state; `clock:fallschedule` sorted-set drives a 500ms-tick flag-fall sweeper. PvP games initialize from `time_control` ("M+S"). SPA's `ClockDisplay` extrapolates locally between snapshots for smoothness; the server's number is always authoritative.
+- ✅ Draw offer / accept / decline (2026-05-15). PvP only. SETNX-protected ephemeral key `draw-offer:{game_id}` holds the offerer; only the opposite participant can accept (status=`draw_agreement`, result=`1/2-1/2`) or decline. WS events `DrawOffered` / `DrawAccepted` / `DrawDeclined` round-trip both sides.
 
 ---
 
@@ -75,12 +76,6 @@ likely-to-return ones:
 ## Queued — Product / chess features
 
 In priority order. Each is independent; ship one at a time.
-
-### ⬜ Draw offer / accept / decline
-Was removed in the cleanup. Re-add as:
-- `POST /api/games/{id}/draw-offer`, `/draw-accept`, `/draw-decline` endpoints in game-service.
-- WS events `draw_offered`, `draw_accepted`, `draw_declined` on the per-game channel.
-- Pending state in a Redis ephemeral key `draw-offer:{game_id}` with TTL = remaining clock.
 
 ### ⬜ Takeback request / accept
 Same shape as draw. Casual games only — never on rated.
