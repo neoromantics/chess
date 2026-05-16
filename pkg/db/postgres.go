@@ -391,7 +391,6 @@ func (s *PostgresStore) ExpireStaleInvites() ([]Invite, error) {
 func userFromRow(r gen.User) *User {
 	return &User{
 		ID:           r.ID,
-		UserID:       r.ID,
 		Username:     r.Username,
 		PasswordHash: r.PasswordHash,
 		DisplayName:  r.DisplayName,

@@ -10,7 +10,6 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/neoromantics/chess/pkg/auth"
-	"github.com/neoromantics/chess/pkg/eventbus"
 )
 
 const (
@@ -164,48 +163,15 @@ func (c *Client) readPump() {
 		return nil
 	})
 
+	// gorilla/websocket needs an active reader to honour pong handlers
+	// and surface disconnect — but the SPA never sends WS messages
+	// (every mutation is sync HTTP per the Streams-vs-HTTP rule), so
+	// we drain reads and discard the payload. The original protocol
+	// translated `move` / `resign` / `offer_draw` etc. into Commands
+	// here; that path was deleted along with the inbound-WS surface.
 	for {
-		_, message, err := c.conn.ReadMessage()
-		if err != nil {
+		if _, _, err := c.conn.ReadMessage(); err != nil {
 			break
-		}
-
-		// Translate WS message to Command
-		var raw struct {
-			Type    string          `json:"type"`
-			Payload json.RawMessage `json:"payload"`
-		}
-		if err := json.Unmarshal(message, &raw); err != nil {
-			continue
-		}
-
-		// We only translate specific types into Commands.
-		// Others might be purely for the Gateway or discarded.
-		cmdType := ""
-		switch raw.Type {
-		case "move":
-			cmdType = eventbus.CmdMakeMove
-		case "resign":
-			cmdType = eventbus.CmdResign
-		case "offer_draw":
-			cmdType = eventbus.CmdOfferDraw
-		case "hint":
-			// We can dispatch these directly or via Command
-			cmdType = "Hint"
-		case "new_game":
-			cmdType = "NewGame"
-		}
-
-		if cmdType != "" {
-			cmd := eventbus.Command{
-				Type:    cmdType,
-				GameID:  c.gameID,
-				UserID:  c.userID,
-				Payload: raw.Payload,
-			}
-			if _, err := c.hub.bus.SendCommand(context.Background(), cmd); err != nil {
-				slog.Error("failed to dispatch command from ws", "game_id", c.gameID, "error", err)
-			}
 		}
 	}
 }

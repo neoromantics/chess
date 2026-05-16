@@ -45,7 +45,7 @@ We were briefly six pods (gateway, user-service, game-service, matchmaker, ratin
 ### Service responsibilities
 
 - **`gateway` (cmd/gateway)** — Stateless HTTP/WS entry. Validates JWT via `auth.Middleware`, serves the auth + profile surface directly (signup, login, /api/user/*, /api/users/search), reverse-proxies game endpoints to game-service with `?user_id=N` injection. For the anonymous temp-game surface, mints a `chess-anon` HttpOnly cookie on first hit and proxies `/api/temp/*` with `?anon_id=<uuid>` injected by `injectAnonID` (cookie-as-identity, mirrors the JWT-as-identity pattern). Handles intent dispatch (`POST /api/games/new`, `POST /api/matchmaking/{join,leave}`) by appending Commands to the `game:commands` stream. **Frontend SPA is embedded only here** via `go:embed all:dist`. The hub runs Redis `PSUBSCRIBE game.evt.*` and `user.evt.*` to fan messages out to locally-attached WebSocket clients. Two WS endpoints: `/ws?game_id=X` (per-game stream — branches inside `handleWSGame` on the `temp-` prefix; durable IDs use the JWT path, temp IDs use the cookie path) and `/ws/user` (per-user, for invites/match-found). Opens its own PG pool for the auth + profile reads.
-- **`game-service` (cmd/game)** — Authoritative game state machine + everything else that touches game state. Sync HTTP for the SPA contract: `/api/state`, `/api/games`, `/api/move`, `/api/resign`, `/api/new`, `/api/undo`, `/api/set_players`, `/api/hint`, `/api/replay`, `/api/games/delete`, `/api/invites/*`, plus the anonymous temp-game surface `/api/temp/*` (Redis-only, 10-minute sliding TTL — see `cmd/game/temp.go`). Stream consumers: `game:commands` (game-service-group) for engine-translated MakeMove + JoinQueue/LeaveQueue, `engine:results` for engine-worker outputs (branches on `Metadata["temp"]` to route results back to either CmdMakeMove or `applyTempEngineMove`). Goroutines started at boot: invite expiry sweeper (30s ticker), matchmaker pairing loop (2s ticker, Redis-leader-elected via `mm:leader` so only one replica pairs). Every read-modify-write on `games` rows goes through the per-game Redis lock and the hot cache; the same `game:lock:{id}` lock also serializes temp-game mutations. **Note:** `/api/touch`, `/api/touch_move`, `/api/assess`, `/api/load`, `/api/save` were removed in the 2026-05-14 cleanup; the Glicko-2 rating updater (`game:events` consumer) was paused 2026-05-15. See `pkg/wire/CONTRACT.md` Sections 5 + 6 + ROADMAP.md.
+- **`game-service` (cmd/game)** — Authoritative game state machine + everything else that touches game state. Sync HTTP for the SPA contract: `/api/state`, `/api/games`, `/api/move`, `/api/resign`, `/api/new`, `/api/undo`, `/api/set_players`, `/api/set_position`, `/api/hint`, `/api/replay`, `/api/games/delete`, `/api/draw_*`, `/api/takeback_*`, `/api/pgn`, `/api/load_pgn`, `/api/analyze`, `/api/invites/*`, plus the anonymous temp-game surface `/api/temp/*` (Redis-only, 10-minute sliding TTL — see `cmd/game/temp.go`) and the internal `/api/temp/upgrade` the gateway calls during signup. Stream consumers: `game:commands` (game-service-group) for engine-translated MakeMove + JoinQueue/LeaveQueue, `engine:results` for engine-worker outputs (branches on `resp.Context` for `move` / `hint` / `assess`, then on `Metadata["temp"]` to route results to either `CmdMakeMove` or `applyTempEngineMove`). Goroutines started at boot: invite expiry sweeper (30s ticker), matchmaker pairing loop (2s ticker, Redis-leader-elected via `mm:leader`), clock flag-fall sweeper (500ms ticker), Glicko-2 rating updater (consumes `game:events` for `GameFinished`). Every read-modify-write on `games` rows goes through the per-game Redis lock and the hot cache; the same `game:lock:{id}` lock also serializes temp-game mutations. **Note:** `/api/touch` and `/api/touch_move` from the 0.x platform stay deleted — touch-move is now a client-side session toggle. See `pkg/wire/CONTRACT.md` and `ROADMAP.md`.
 - **`engine-worker` (cmd/engine-worker)** — CPU-bound search. Reads the `engine:requests` stream (`engine-worker-group`), publishes results to the `engine:results` stream. Runs **exactly one search per pod**: concurrency caps at `runtime.GOMAXPROCS(0)` (cgroup-aware, **not** `runtime.NumCPU()`). To handle more concurrent searches, scale OUT (more pods), don't pack threads. Same binary can run as a UCI CLI via `-uci`; opt-in only, never auto-detected (that bug bit us — every k8s pod tty-check failed and silently EOF'd).
 
 ## Wire-protocol contracts (read before adding new events)
@@ -150,28 +150,17 @@ Common failure modes and where to look:
 
 ## Things explicitly left as follow-ups
 
-The full status board lives in `ROADMAP.md`. The high-impact open items at a glance:
+Full status board: `ROADMAP.md`. The high-impact open items at a glance:
 
-**Product / chess features (next):**
-- **Draw offer / accept / decline** — SidePanel already emits the events; needs backend endpoints + WS round-trip.
-- **Takeback request / accept** — same shape as draw.
+**Product:**
+- **Spectator mode** — read-only WS subscription for public games; needs an `is_public` games column.
+- **Move-assessment Phase 2** — centipawn-loss classification (today's verdicts are coarse: best / alt / only-legal).
 
 **Production hardening:**
-- **Redis Sentinel** — Single Redis is a full-platform SPOF; AOF gives durability but not failover. Requires multi-node cluster to be meaningful.
+- **Redis Sentinel** — single Redis is a full-platform SPOF; AOF gives durability but not failover. Requires a multi-node cluster to be meaningful.
 - **KEDA** on `engine:requests` stream length as the engine-worker HPA signal (currently CPU utilization, which is a proxy).
 - **PG read replicas** for ListGames / search / replay queries.
 - **Prometheus + Grafana** — metrics are emitted; nothing scrapes them yet.
 - **CI grep-check** for wire-contract drift against `pkg/wire/CONTRACT.md`.
 
-**Verification:**
-- Matchmaker uses naïve `ZRange 0 1`; needs expanding rating-window logic before serious use.
-
-**Done this session (for context — don't repeat):**
-- Hot cache for game state (`game:state:{id}` Redis hash, write-through)
-- 6 → 3 pod consolidation (user/matchmaker/rating-updater folded in)
-- WebSocket Hijacker fix in metrics middleware (root cause of every "doesn't update live" symptom)
-- Sync HTTP for all single-game mutations; SPA wire contract aligned
-- Per-game lock + ownership authz; side-to-move authz on /api/move
-- Resign endpoint; auto-flip for black player
-- `pkg/wire/CONTRACT.md` as the canonical wire-protocol doc
-- Server-authoritative clocks for PvP (`clock:{id}` hash + `clock:fallschedule` sweeper; SPA `ClockDisplay` extrapolates between snapshots)
+See `ROADMAP.md` "Scale design notes" for the 10k-pair-scale walk-through (per-channel SUBSCRIBE, PG indices, env-tunable pool already shipped; the remaining items are deliberately deferred with reasons).

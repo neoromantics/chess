@@ -952,15 +952,19 @@ func (s *GameService) applyTempEngineMove(ctx context.Context, resp eventbus.Eng
 	}
 	store.refreshTTL(ctx, rec.ID, rec.OwnerAnonID)
 
-	s.publishTempState(ctx, rec.ID, s.tempSnapshot(ctx, rec))
-
-	// Chain into the next engine search if the game is still going and
-	// the next side is also engine (engine-vs-engine continuation).
-	// Otherwise clear the sentinel so the SPA's spinner falls.
+	// Order matters: clear the sentinel BEFORE snapshotting when the
+	// next side is human, so the published snapshot shows thinking=false.
+	// If we snapshot first, the SPA receives thinking=true and the move
+	// input stays disabled until the user refreshes.
 	if gm.Status() == game.StatusOngoing && gm.EngineToMove() {
+		// Engine-vs-engine: leave the sentinel set; triggerTempEngineMove
+		// refreshes it for the next search. Snapshot here still shows
+		// thinking=true, which is correct.
+		s.publishTempState(ctx, rec.ID, s.tempSnapshot(ctx, rec))
 		s.triggerTempEngineMove(rec, gm)
 	} else {
 		clearThinking()
+		s.publishTempState(ctx, rec.ID, s.tempSnapshot(ctx, rec))
 	}
 }
 

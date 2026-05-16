@@ -38,20 +38,26 @@ Three pods scale horizontally; engine-worker has its own autoscaling profile bec
 
 ## What works today
 
-- Sign up / log in / log out with JWT cookies; profile + stats + password change.
-- Play against the engine — pick your think-time per game, engine plays back live (no refresh).
-- Play against another human — invite by username, or use **Find Game** matchmaking with the time-control picker. Board auto-flips for the black player.
-- Live move + last-move highlight + "engine thinking" spinner all push over WebSocket; never need to refresh during a game.
-- Resign at any time.
-- Replay any finished game frame-by-frame.
-- Server-side Glicko-2 rating computed on every rated game finish (verification against the reference paper is queued).
+- **Auth + profile.** Sign up / log in / log out with JWT cookies; profile + stats + password change; live Glicko-2 rating chip that updates over WS when a rated game finalizes.
+- **Anonymous play.** Land on `/`, pick "Play vs Engine" without signing in — you get a 10-minute sliding-TTL temp game. If you sign up mid-game, the gateway carries the temp game over into a durable row owned by your new account.
+- **Engine play.** Pick per-side think time, change it mid-game, swap human ↔ engine on either color, even let two engines play each other.
+- **Human vs human.** Invite by username, or **Find Game** matchmaking across ten time controls (bullet → classical). Expanding rating-window pairing (±50 grows to ±400). Board auto-flips for the black player.
+- **Server-authoritative clocks.** `clock:{id}` Redis hash + 500ms flag-fall sweeper; SPA extrapolates locally between snapshots for smooth ticks.
+- **Live everything.** Move + last-move highlight + thinking spinner + clock all push over WebSocket; no refresh during a game.
+- **Draw / takeback.** Both round-trip via short-lived SETNX-protected offers; takeback is PvP-casual only, draw is PvP-only.
+- **Resign + replay.** Resign at any time; finished games replay frame-by-frame.
+- **Board editor + PGN.** Engine games can be set up from any FEN (`/api/set_position`), downloaded as PGN, or replaced by pasting a PGN. PGN encoder/decoder is round-trip tested.
+- **Move assessment.** Click "Analyze game" — backend dispatches a per-ply engine search; per-ply ✓ / ★ / ? markers stream into the move list over WS.
+- **Touch-move rule.** Client-side session toggle in the SidePanel; enforces FIDE 4.3 when ON.
+- **Glicko-2 ratings.** Numerically verified against the paper's worked example (`pkg/rating/glicko2_test.go`).
 
 ## What's missing (see [ROADMAP.md](ROADMAP.md) for the full list)
 
-- **Game clocks.** Bullet / blitz / rapid are configured but `white_time` / `black_time` aren't yet server-authoritative — the only timer today is engine think-time. Highest-impact item.
-- Draw offers and takeback requests (SPA buttons exist; backend endpoints not yet wired).
-- Spectator mode (read-only WS subscription to public games).
-- Redis HA via Sentinel — deferred until the cluster has a second node.
+- **Spectator mode** — read-only WS subscription for public games; needs an `is_public` flag.
+- **Centipawn-loss classification** for move assessment (Phase 2). Today's verdicts are coarse: best / alt / only-legal.
+- **PG read replicas** for `ListGames` / search / replay queries.
+- **KEDA on `engine:requests` stream depth** as the engine-worker HPA signal.
+- **Redis HA via Sentinel** — deferred until the cluster has a second node.
 
 ## Wire-protocol contract
 
@@ -134,7 +140,8 @@ Common failure modes and where to look are in `CLAUDE.md`.
 │   ├── eventbus/      # Redis Streams + Pub/Sub primitives
 │   ├── game/          # Game state machine
 │   ├── metrics/       # Prometheus instrumentation
-│   ├── rating/        # Glicko-2
+│   ├── pgn/           # PGN encode + decode (Seven-Tag-Roster, SAN replay)
+│   ├── rating/        # Glicko-2 (numerically verified against the paper)
 │   ├── uci/           # UCI protocol (CLI mode)
 │   └── wire/          # CONTRACT.md — the wire-protocol source of truth
 ├── frontend/          # Vue 3 + TS SPA, embedded into gateway via //go:embed

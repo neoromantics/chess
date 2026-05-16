@@ -420,10 +420,11 @@ func (s *GameService) processEngineResult(ctx context.Context, msg redis.XMessag
 		s.applyAssessmentResult(ctx, resp)
 		return
 	}
+	if resp.Context == "hint" {
+		s.publishHint(ctx, resp)
+		return
+	}
 	if resp.Context != "move" {
-		// hint results are broadcast directly by engine-worker on the
-		// per-game channel — nothing to do here. Ack-and-drop so they
-		// don't pile up in pending.
 		return
 	}
 
@@ -449,6 +450,36 @@ func (s *GameService) processEngineResult(ctx context.Context, msg redis.XMessag
 	}
 	if _, err := s.bus.SendCommand(ctx, cmd); err != nil {
 		slog.Error("dispatch engine MakeMove failed", "game_id", resp.GameID, "error", err)
+	}
+}
+
+// publishHint fans an engine hint result out on game.evt.{id} as a
+// `hint` event. The SPA's GameView.onHintReceived expects the payload
+// shape {move, from, to, score, depth, promo?}; producing it here keeps
+// the engine-worker context-agnostic (it just returns a best_move).
+func (s *GameService) publishHint(ctx context.Context, resp eventbus.EngineResponse) {
+	uci := resp.BestMove
+	payload := map[string]any{
+		"move":  uci,
+		"score": resp.Score,
+		"depth": resp.Depth,
+	}
+	if len(uci) >= 4 {
+		payload["from"] = uci[0:2]
+		payload["to"] = uci[2:4]
+		if len(uci) >= 5 {
+			payload["promo"] = string(uci[4])
+		}
+	}
+	pb, _ := json.Marshal(payload)
+	evt := eventbus.Event{
+		Type:    "hint",
+		GameID:  resp.GameID,
+		Payload: pb,
+	}
+	data, _ := json.Marshal(evt)
+	if err := s.bus.Rdb().Publish(ctx, "game.evt."+resp.GameID, data).Err(); err != nil {
+		slog.Error("publish hint failed", "game_id", resp.GameID, "error", err)
 	}
 }
 
