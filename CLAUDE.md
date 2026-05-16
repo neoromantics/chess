@@ -153,7 +153,7 @@ Common failure modes and where to look:
 Full status board: `ROADMAP.md`. The high-impact open items at a glance:
 
 **Product:**
-- **Move-assessment Phase 3** — persist per-ply verdicts on `rec.Assessments` so reopening a finished game shows the analysis without re-running it. (Phase 2 — CP-loss classification — shipped 2026-05-16.)
+- _(no open product items right now — move-assessment phases 1–3 all shipped.)_
 
 **Production hardening:**
 - **Redis Sentinel** — single Redis is a full-platform SPOF; AOF gives durability but not failover. Requires a multi-node cluster to be meaningful.

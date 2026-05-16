@@ -80,6 +80,12 @@ type GameRecord struct {
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 	IsPublic       bool      `json:"is_public"` // spectator mode: any user (and /watch/{id}) can read
+	// Assessments is the JSON-encoded array of PlyAssessment objects,
+	// persisted at the end of an /api/analyze run so a finished game's
+	// per-ply verdicts survive across page reloads. '[]' = never
+	// analyzed (or history changed since the last analysis). See
+	// cmd/game/analysis.go.
+	Assessments string `json:"assessments"`
 }
 
 // Invite represents a direct user-to-user challenge.

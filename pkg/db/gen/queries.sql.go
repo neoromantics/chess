@@ -263,7 +263,7 @@ SELECT id, white_user_id, black_user_id,
        fen, history, history_san,
        engine_white, engine_black, white_think_time, black_think_time,
        time_control, rated, status, result,
-       created_at, updated_at, start_fen, is_public
+       created_at, updated_at, start_fen, is_public, assessments
 FROM games
 WHERE id = $1
 `
@@ -287,6 +287,7 @@ type GetGameRow struct {
 	UpdatedAt      time.Time     `json:"updated_at"`
 	StartFen       string        `json:"start_fen"`
 	IsPublic       bool          `json:"is_public"`
+	Assessments    string        `json:"assessments"`
 }
 
 func (q *Queries) GetGame(ctx context.Context, id string) (GetGameRow, error) {
@@ -311,6 +312,7 @@ func (q *Queries) GetGame(ctx context.Context, id string) (GetGameRow, error) {
 		&i.UpdatedAt,
 		&i.StartFen,
 		&i.IsPublic,
+		&i.Assessments,
 	)
 	return i, err
 }
@@ -452,7 +454,7 @@ SELECT id, white_user_id, black_user_id,
        fen, history, history_san,
        engine_white, engine_black, white_think_time, black_think_time,
        time_control, rated, status, result,
-       created_at, updated_at, start_fen, is_public
+       created_at, updated_at, start_fen, is_public, assessments
 FROM games
 WHERE (white_user_id = $1::BIGINT OR black_user_id = $1::BIGINT)
   AND updated_at < COALESCE($2::TIMESTAMPTZ, NOW())
@@ -485,6 +487,7 @@ type ListGamesRow struct {
 	UpdatedAt      time.Time     `json:"updated_at"`
 	StartFen       string        `json:"start_fen"`
 	IsPublic       bool          `json:"is_public"`
+	Assessments    string        `json:"assessments"`
 }
 
 // Games where the user is on either side. Cursor-paginated: callers pass
@@ -520,6 +523,7 @@ func (q *Queries) ListGames(ctx context.Context, arg ListGamesParams) ([]ListGam
 			&i.UpdatedAt,
 			&i.StartFen,
 			&i.IsPublic,
+			&i.Assessments,
 		); err != nil {
 			return nil, err
 		}
@@ -817,9 +821,9 @@ INSERT INTO games (
     fen, history, history_san,
     engine_white, engine_black, white_think_time, black_think_time,
     time_control, rated, status, result,
-    created_at, updated_at, start_fen, is_public
+    created_at, updated_at, start_fen, is_public, assessments
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
 ON CONFLICT (id) DO UPDATE SET
     white_user_id    = EXCLUDED.white_user_id,
     black_user_id    = EXCLUDED.black_user_id,
@@ -836,6 +840,7 @@ ON CONFLICT (id) DO UPDATE SET
     result           = EXCLUDED.result,
     start_fen        = EXCLUDED.start_fen,
     is_public        = EXCLUDED.is_public,
+    assessments      = EXCLUDED.assessments,
     updated_at       = EXCLUDED.updated_at
 `
 
@@ -858,6 +863,7 @@ type UpsertGameParams struct {
 	UpdatedAt      time.Time     `json:"updated_at"`
 	StartFen       string        `json:"start_fen"`
 	IsPublic       bool          `json:"is_public"`
+	Assessments    string        `json:"assessments"`
 }
 
 func (q *Queries) UpsertGame(ctx context.Context, arg UpsertGameParams) error {
@@ -880,6 +886,7 @@ func (q *Queries) UpsertGame(ctx context.Context, arg UpsertGameParams) error {
 		arg.UpdatedAt,
 		arg.StartFen,
 		arg.IsPublic,
+		arg.Assessments,
 	)
 	return err
 }

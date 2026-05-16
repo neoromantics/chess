@@ -63,21 +63,29 @@ CREATE TABLE IF NOT EXISTS games (
     -- /watch/{id} anonymous path) can read /api/state and subscribe
     -- to the per-game WS. Mutations still require participant ownership
     -- — userOwnsGame stays strict; only the *read* surface relaxes.
-    is_public         BOOLEAN NOT NULL DEFAULT FALSE
+    is_public         BOOLEAN NOT NULL DEFAULT FALSE,
+    -- Persisted per-ply move-assessment verdicts (JSON array of
+    -- PlyAssessment). Written once at the end of an /api/analyze run
+    -- so reopening a finished game shows the verdicts without re-
+    -- running the engine searches. Empty '[]' = "never analyzed" or
+    -- "history changed since last analysis" (cleared by the next
+    -- save that mutates rec.History). See cmd/game/analysis.go.
+    assessments       TEXT      NOT NULL DEFAULT '[]'
 );
 -- Idempotent add for clusters that predate the start_fen column.
 ALTER TABLE games ADD COLUMN IF NOT EXISTS start_fen TEXT NOT NULL DEFAULT '';
 -- Idempotent add for clusters that predate the spectator-mode column.
 ALTER TABLE games ADD COLUMN IF NOT EXISTS is_public BOOLEAN NOT NULL DEFAULT FALSE;
+-- Re-introduced 2026-05-16 (Phase 3 of move assessment). Earlier
+-- platforms had dropped this column when only the streaming Phase-1
+-- verdicts existed; persisted CP-loss verdicts now warrant bringing
+-- it back. ADD ... IF NOT EXISTS so it's safe on clusters that still
+-- have it AND on clusters that don't.
+ALTER TABLE games ADD COLUMN IF NOT EXISTS assessments TEXT NOT NULL DEFAULT '[]';
 -- Drop the pre-SPA session_id column on clusters that still have it.
 -- The column was never read or written by the current code path; this
 -- is the rare "deliberate, idempotent drop" CLAUDE.md permits.
 ALTER TABLE games DROP COLUMN IF EXISTS session_id;
--- Drop the unused assessments column. Move-assessment Phase 1 streams
--- per-ply verdicts over WS only; persisting them back to a column was
--- a Phase 2 plan that never landed. The empty '[]' default just bloats
--- the row.
-ALTER TABLE games DROP COLUMN IF EXISTS assessments;
 
 -- Index support for ListGames (WHERE white_user_id=$1 OR black_user_id=$1
 -- ORDER BY updated_at DESC). Without these, every Match-page load and
@@ -97,10 +105,12 @@ CREATE INDEX IF NOT EXISTS games_status_idx ON games (status);
 CREATE INDEX IF NOT EXISTS invites_pending_expires_idx ON invites (expires_at) WHERE status = 'pending';
 CREATE INDEX IF NOT EXISTS invites_to_user_pending_idx ON invites (to_user_id, created_at DESC) WHERE status = 'pending';
 
--- The previously-dead users.elo + games.assessments columns are dropped
--- via the ALTER TABLE DROP COLUMN IF EXISTS statements above. Adding new
--- columns: prefer ADD COLUMN IF NOT EXISTS so the apply stays
--- idempotent.
+-- The previously-dead users.elo + games.session_id columns are dropped
+-- via the ALTER TABLE DROP COLUMN IF EXISTS statements above. (The
+-- games.assessments column was dropped during Phase-1 cleanup but is
+-- back as of Phase 3 — see the ADD COLUMN IF NOT EXISTS just above.)
+-- Adding new columns: prefer ADD COLUMN IF NOT EXISTS so the apply
+-- stays idempotent.
 
 CREATE TABLE IF NOT EXISTS invites (
   id           UUID PRIMARY KEY,

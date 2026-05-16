@@ -227,6 +227,13 @@ type stateJSON struct {
 	// read-only mode when the caller isn't a participant.
 	IsPublic bool `json:"is_public"`
 
+	// Persisted per-ply move-assessment verdicts. Only populated when
+	// the count matches the move-list length — a mismatched count
+	// means the persisted assessments are stale (e.g. the user took a
+	// move back since the last /api/analyze run) and shouldn't be
+	// shown. Empty/missing on never-analyzed games. See cmd/game/analysis.go.
+	Assessments []PlyAssessment `json:"assessments,omitempty"`
+
 	// Server-authoritative clock state. Engine-only / pre-clocks games
 	// leave ClockInitial=0; the SPA hides the clock UI when initial is 0.
 	// WhiteClockMS/BlackClockMS are reduced for the mover at snapshot
@@ -434,6 +441,21 @@ func (s *GameService) snapshotFromRecord(ctx context.Context, rec *db.GameRecord
 		engineToMoveOut = false
 	}
 
+	// Hydrate persisted assessments only when they match the current
+	// move list. A mismatch means the row mutated since the last
+	// /api/analyze (a move, an undo, a takeback…) and the stored
+	// verdicts no longer point at the right plies. Dropping them here
+	// keeps the SPA from rendering nonsense markers; a fresh
+	// /api/analyze regenerates and overwrites.
+	var assessmentsOut []PlyAssessment
+	if rec.Assessments != "" && rec.Assessments != "[]" {
+		var parsed []PlyAssessment
+		if err := json.Unmarshal([]byte(rec.Assessments), &parsed); err == nil &&
+			len(parsed) == len(gm.History) {
+			assessmentsOut = parsed
+		}
+	}
+
 	snap := stateJSON{
 		FEN:            gm.Board.FEN(),
 		Turn:           turn,
@@ -455,6 +477,7 @@ func (s *GameService) snapshotFromRecord(ctx context.Context, rec *db.GameRecord
 		TimeControl:    rec.TimeControl,
 		Rated:          rec.Rated,
 		IsPublic:       rec.IsPublic,
+		Assessments:    assessmentsOut,
 	}
 
 	// Clock projection: read the live hash, deduct mid-turn elapsed for

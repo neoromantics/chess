@@ -155,7 +155,7 @@ likely-to-return ones:
       until it makes a legal move; can't switch to a different piece or
       deselect. localStorage-persisted, applies to PvP + engine games.
       Pure SPA — no backend churn.
-- ✅ **Move assessment** (2026-05-15 phase 1; 2026-05-16 phase 2) —
+- ✅ **Move assessment** (2026-05-15 phase 1; 2026-05-16 phases 2+3) —
       `POST /api/analyze` replays the game ply-by-ply and dispatches a
       200ms engine search per pre-move position PLUS one terminal
       anchor at the post-last-move position. cp_loss is computed from
@@ -165,8 +165,15 @@ likely-to-return ones:
       Per-ply `EvtAssessment` streams over the per-game WS channel;
       multi-replica dedupe via `analyze:emitted:{game_id}:{ply}`
       SETNX. SidePanel decorates the move list with ✓ / ★ / ! / !? /
-      ? / ?? glyphs + color spectrum + cp-loss tooltips. Stored
-      `rec.Assessments` persistence still queued.
+      ? / ?? glyphs + color spectrum + cp-loss tooltips. **Phase 3**:
+      classified payloads accumulate in `analyze:emits:{game_id}` and,
+      once HLEN == ply count, a single SETNX-deduped bulk write
+      persists the array to `games.assessments`. Snapshot drops it
+      again if the count doesn't match the live history length (so a
+      subsequent move/undo doesn't leave stale verdicts on the board).
+      The SPA hydrates `assessments.value` from the snapshot, so
+      reopening a finished game shows its analysis without re-running
+      the engine.
 - ✅ **Time controls** (2026-05-15, 2026-05-16) — restored as
       `1+0, 2+1, 3+0, 3+2, 5+0, 5+3, 10+0, 10+5, 15+10, 30+0`, then
       trimmed back to `3+0` + `10+0` on 2026-05-16 because the

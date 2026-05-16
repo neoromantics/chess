@@ -313,6 +313,7 @@ func (s *PostgresStore) SaveGame(g *GameRecord) error {
 		UpdatedAt:      g.UpdatedAt,
 		StartFen:       g.StartFEN,
 		IsPublic:       g.IsPublic,
+		Assessments:    defaultString(g.Assessments, "[]"),
 	})
 }
 
@@ -349,6 +350,7 @@ func (s *PostgresStore) ListGames(userID int64, cursor time.Time, limit int) ([]
 			CreatedAt:      r.CreatedAt,
 			UpdatedAt:      r.UpdatedAt,
 			IsPublic:       r.IsPublic,
+			Assessments:    r.Assessments,
 		}
 	}
 	return out, nil
@@ -378,6 +380,7 @@ func (s *PostgresStore) GetGame(id string) (*GameRecord, error) {
 		CreatedAt:      r.CreatedAt,
 		UpdatedAt:      r.UpdatedAt,
 		IsPublic:       r.IsPublic,
+		Assessments:    r.Assessments,
 	}, nil
 }
 
@@ -474,6 +477,7 @@ func (s *PostgresStore) AcceptInviteWithGame(inviteID uuid.UUID, toUserID int64,
 		UpdatedAt:      g.UpdatedAt,
 		StartFen:       g.StartFEN,
 		IsPublic:       g.IsPublic,
+		Assessments:    defaultString(g.Assessments, "[]"),
 	}); err != nil {
 		return 0, err
 	}

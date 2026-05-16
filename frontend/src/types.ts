@@ -49,6 +49,24 @@ export interface StateJSON {
   clock_inc_ms: number;
   clock_mover: '' | 'w' | 'b';
   clock_server_ms: number;
+
+  // Persisted per-ply move-assessment verdicts. Backend hydrates this
+  // only when the count matches history.length (stale persisted rows
+  // are dropped server-side); the SPA can populate its `assessments`
+  // map straight from here on initial load without waiting for the
+  // user to click Analyze again.
+  assessments?: PlyAssessment[];
+}
+
+export interface PlyAssessment {
+  ply: number;
+  played: string;
+  best: string;
+  score: number;
+  depth: number;
+  cp_loss: number;
+  // 'best' | 'only' | 'great' | 'good' | 'inaccuracy' | 'mistake' | 'blunder'
+  class: string;
 }
 
 export interface HintMove {

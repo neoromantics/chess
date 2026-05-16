@@ -60,6 +60,15 @@ const assessMoveTime = 200 * time.Millisecond
 // of a long (>200-ply) game plus headroom for slow engine bursts.
 const assessScoresKey = "analyze:scores:"
 const assessEmittedKey = "analyze:emitted:"
+
+// assessEmitsHashKey accumulates the *final* PlyAssessment payloads
+// (post-classification) keyed by ply, so the last-emit pod can gather
+// the whole array and bulk-write it to rec.Assessments.
+const assessEmitsHashKey = "analyze:emits:"
+
+// assessFinalKey is the SETNX-dedupe sentinel for the bulk persist —
+// many pods will see "all plies are emitted now"; only one persists.
+const assessFinalKey = "analyze:final:"
 const assessKeyTTL = 30 * time.Minute
 
 // cpLossCap clamps absurdly large losses (most commonly: best move was
@@ -140,6 +149,8 @@ func (s *GameService) dispatchAssessmentJobs(ctx context.Context, gameID, startF
 	// plies that hadn't changed.
 	rdb := s.bus.Rdb()
 	_ = rdb.Del(ctx, assessScoresKey+gameID).Err()
+	_ = rdb.Del(ctx, assessEmitsHashKey+gameID).Err()
+	_ = rdb.Del(ctx, assessFinalKey+gameID).Err()
 	// Per-ply emitted sentinels we Del lazily — they have their own TTL
 	// and the ply-suffix means a new analyze for the same game keeps
 	// them disjoint as long as len(history) hasn't shrunk. For shrinking
@@ -324,6 +335,102 @@ func (s *GameService) maybeEmitAssessment(ctx context.Context, gameID string, pl
 	}); err != nil {
 		slog.Error("assess emit failed", "game_id", gameID, "ply", ply, "error", err)
 	}
+
+	// Stash the classified payload for the bulk persist below. The
+	// emits hash mirrors the ply count of the move list, and HLEN ==
+	// total marks "analysis run is complete on the result-fan-in side".
+	emitsKey := assessEmitsHashKey + gameID
+	if err := rdb.HSet(ctx, emitsKey, strconv.Itoa(ply), string(payload)).Err(); err == nil {
+		_ = rdb.Expire(ctx, emitsKey, assessKeyTTL).Err()
+	}
+	s.maybePersistAssessments(ctx, gameID, total)
+}
+
+// maybePersistAssessments writes the full assessments array to
+// rec.Assessments once every ply has been emitted. Multi-replica safe
+// via SETNX on assessFinalKey — every pod that classifies the last
+// ply will check, but only the first wins the lock and persists.
+//
+// Why we do this once-and-only-once at the end (not per-ply): each
+// per-ply write would need acquireGameLock + saveGameCached, multiplied
+// by N plies (up to a few hundred in long games). A single batched
+// write at the end is N× cheaper and serializes correctly against
+// concurrent moves (the lock acquire here will lose to an active mover,
+// and the assessments stay in the emits hash until the next /analyze).
+//
+// Idempotency note: if the persist itself fails (PG down, lock lost),
+// the emits hash and SETNX sentinel are NOT rolled back — the user can
+// re-trigger /analyze, which Dels everything and re-runs. Not optimal
+// but simpler than a retry queue at this scale.
+func (s *GameService) maybePersistAssessments(ctx context.Context, gameID string, total int) {
+	rdb := s.bus.Rdb()
+	emitsKey := assessEmitsHashKey + gameID
+	cnt, err := rdb.HLen(ctx, emitsKey).Result()
+	if err != nil || int(cnt) < total {
+		return
+	}
+
+	finalKey := assessFinalKey + gameID
+	won, err := rdb.SetNX(ctx, finalKey, "1", assessKeyTTL).Result()
+	if err != nil || !won {
+		return
+	}
+
+	// Gather + sort the emitted PlyAssessment payloads by ply index.
+	entries := rdb.HGetAll(ctx, emitsKey)
+	all, err := entries.Result()
+	if err != nil {
+		slog.Error("assess persist: hgetall failed", "game_id", gameID, "error", err)
+		return
+	}
+	full := make([]PlyAssessment, total)
+	for k, v := range all {
+		idx, err := strconv.Atoi(k)
+		if err != nil || idx < 0 || idx >= total {
+			continue
+		}
+		var pa PlyAssessment
+		if err := json.Unmarshal([]byte(v), &pa); err != nil {
+			continue
+		}
+		full[idx] = pa
+	}
+	blob, _ := json.Marshal(full)
+
+	// Acquire the game lock for the bulk write so we don't trample a
+	// concurrent move-save. Temp games don't have this lock infrastructure
+	// (they're Redis-only and route through tempStore.save), so for the
+	// temp path we hit the Redis-cache only and skip the durable write.
+	lock, err := acquireGameLock(ctx, rdb, gameID, gameLockTTL)
+	if err != nil {
+		slog.Warn("assess persist: lock error", "game_id", gameID, "error", err)
+		return
+	}
+	if lock == nil {
+		slog.Warn("assess persist: lock unavailable; another writer is active", "game_id", gameID)
+		// Don't clear the SETNX sentinel; the next analyze run Dels it
+		// and re-tries. Leaving it set blocks duplicate writes during
+		// this analysis only — the user can re-click Analyze if they
+		// want.
+		return
+	}
+	defer lock.release(context.Background())
+
+	// Durable path: hydrate the row, overwrite Assessments, save.
+	if rec, err := s.getGameCached(ctx, gameID); err == nil && rec != nil {
+		rec.Assessments = string(blob)
+		rec.UpdatedAt = time.Now()
+		if err := s.saveGameCached(ctx, rec); err != nil {
+			slog.Error("assess persist: save failed", "game_id", gameID, "error", err)
+			return
+		}
+		slog.Info("assess persisted", "game_id", gameID, "plies", total)
+		return
+	}
+	// Temp game path: nothing durable to save; the SPA's in-memory
+	// assessments live for the page session, which matches the temp
+	// game's own ephemerality.
+	slog.Info("assess persisted (temp game; skipping durable write)", "game_id", gameID, "plies", total)
 }
 
 // classifyPly computes the cp_loss verdict for one move given the

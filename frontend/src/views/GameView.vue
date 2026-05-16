@@ -367,6 +367,20 @@ const updateState = (s: StateJSON) => {
   whiteThinkTime.value = s.white_think_time;
   blackThinkTime.value = s.black_think_time;
 
+  // Hydrate persisted assessments. Backend only sends `s.assessments`
+  // when its length matches the move list (stale rows are filtered
+  // server-side), so we can blindly overwrite — a missing field means
+  // "no analysis on file" and we leave the in-memory map alone for
+  // the user to refresh via the Analyze button. The user-triggered
+  // analyze flow always clears assessments.value first (see resetters
+  // below), so we won't merge stale streaming results into hydrated
+  // persisted ones.
+  if (s.assessments && s.assessments.length > 0) {
+    const next: Record<number, Assessment> = {};
+    for (const a of s.assessments) next[a.ply] = a;
+    assessments.value = next;
+  }
+
   // First payload after mount: figure out which color the current user
   // is playing (if any) and flip the board so their pieces are on the
   // near side. After this we leave 'flipped' alone — the manual Flip

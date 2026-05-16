@@ -30,6 +30,7 @@ type Game struct {
 	Result         string        `json:"result"`
 	StartFen       string        `json:"start_fen"`
 	IsPublic       bool          `json:"is_public"`
+	Assessments    string        `json:"assessments"`
 }
 
 type Invite struct {
