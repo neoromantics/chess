@@ -10,10 +10,10 @@ permissions:
   packages: write
 
 # Backstop for any JS action that still targets Node 20 (Sept-2026
-# deprecation). The two named offenders — actions/checkout and
-# actions/setup-node — are pinned to @v5 below, which is native Node 24;
-# this env var only kicks in if a transitive update regresses or a new
-# Node-20 action sneaks in.
+# deprecation). actions/checkout, actions/setup-node, and
+# actions/setup-go are pinned to native-Node-24 majors below; this env
+# var only kicks in if a transitive update regresses or a new Node-20
+# action sneaks in.
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: '1.25'
           cache: true
