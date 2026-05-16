@@ -422,11 +422,13 @@ func (s *GameService) runInviteSweeper(ctx context.Context) {
 func validTimeControl(tc string) bool {
 	// Server clocks parse any "M+S" string (cmd/game/clocks.go
 	// parseTimeControl), but matchmaking is gated to a curated
-	// whitelist so we get matchmaking-pool concentration. Add new
+	// whitelist so we get matchmaking-pool concentration. Trimmed
+	// to the modal Blitz + Rapid pair — fragmenting the list across
+	// 10 buckets meant most queues were always empty. Add new
 	// entries here AND to supportedTCs in matchmaker.go (one queue
 	// per TC).
 	switch tc {
-	case "1+0", "2+1", "3+0", "3+2", "5+0", "5+3", "10+0", "10+5", "15+10", "30+0":
+	case "3+0", "10+0":
 		return true
 	}
 	return false

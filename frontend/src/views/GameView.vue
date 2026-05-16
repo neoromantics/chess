@@ -103,6 +103,7 @@ import { api } from '../api';
 import { parseBoard } from '../constants';
 import { useToastStore } from '../stores/toast';
 import { useAuthStore } from '../stores/auth';
+import { useUserEventsStore } from '../stores/userEvents';
 import { StateJSON, Square } from '../types';
 
 const props = defineProps<{
@@ -111,6 +112,7 @@ const props = defineProps<{
 
 const toastStore = useToastStore();
 const authStore = useAuthStore();
+const userEventsStore = useUserEventsStore();
 
 // True once we've auto-oriented the board for the current user. Without
 // this guard the orientation would re-flip on every state update,
@@ -835,6 +837,13 @@ const onKeyDown = (e: KeyboardEvent) => {
   if (e.key === 'f' || e.key === 'F') flipped.value = !flipped.value;
 };
 
+// Hints fan out on the requester's user.evt channel — never on
+// game.evt — so the opponent in a PvP game doesn't see them. Engine
+// and temp games still work because the requester is always also a
+// participant. unsubscribeHint is set after register so onUnmounted
+// can detach it cleanly.
+let unsubscribeHint: (() => void) | null = null;
+
 onMounted(async () => {
   try {
     const s = await api.getState(props.id);
@@ -846,6 +855,10 @@ onMounted(async () => {
     error.value = e.message || 'Unknown error';
   }
 
+  unsubscribeHint = userEventsStore.on('hint', (payload) => {
+    onHintReceived(payload);
+  });
+
   window.addEventListener('keydown', onKeyDown);
   window.addEventListener('pointerdown', primeAudio);
   window.addEventListener('touchstart', primeAudio);
@@ -855,6 +868,10 @@ onUnmounted(() => {
   if (ws) {
     ws.onclose = null;
     ws.close();
+  }
+  if (unsubscribeHint) {
+    unsubscribeHint();
+    unsubscribeHint = null;
   }
   window.removeEventListener('keydown', onKeyDown);
   window.removeEventListener('pointerdown', primeAudio);

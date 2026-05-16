@@ -25,6 +25,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/neoromantics/chess/pkg/core"
@@ -533,6 +534,13 @@ func (s *GameService) handleHTTPHint(w http.ResponseWriter, r *http.Request) {
 		History:  game.CopyHistory(gm.HistoryHash()),
 		MoveTime: moveTime,
 		Context:  "hint",
+	}
+	// Tag the hint with the requester so the result fans out only to
+	// that user's private channel — not game.evt.{id}, which the
+	// opponent in a PvP game also subscribes to. Without this, asking
+	// for a hint in a rated game shows it on the opponent's board too.
+	if uid, hasUID := authedUserID(r); hasUID {
+		er.Metadata = map[string]string{"requester_id": strconv.FormatInt(uid, 10)}
 	}
 	if _, err := s.bus.SendEngineRequest(r.Context(), er); err != nil {
 		http.Error(w, "dispatch failed", http.StatusInternalServerError)

@@ -30,7 +30,8 @@
           <label class="field">
             <span>Time control</span>
             <select v-model="form.timeControl">
-              <option value="15+10">Rapid · 15+10</option>
+              <option value="3+0">Blitz · 3+0</option>
+              <option value="10+0">Rapid · 10+0</option>
             </select>
           </label>
         </div>
@@ -93,7 +94,7 @@ const toast = useToastStore();
 
 const form = ref({
   toUsername: '',
-  timeControl: '15+10',
+  timeControl: '10+0',
 });
 const sending = ref(false);
 const busyId = ref<string | null>(null);

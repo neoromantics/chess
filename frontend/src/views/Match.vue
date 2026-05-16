@@ -85,25 +85,19 @@ const authStore = useAuthStore();
 const toastStore = useToastStore();
 const userEvents = useUserEventsStore();
 
-const selectedTC = ref('15+10');
+const selectedTC = ref('10+0');
 const searching = ref(false);
 const games = ref<any[]>([]);
 
-// Time controls grouped by category. Each must also be in
-// validTimeControl + supportedTCs on the backend (cmd/game/invites.go,
-// cmd/game/matchmaker.go). One Redis matchmaking queue per TC, so
-// fragmenting the list dilutes the pool — keep the menu opinionated.
+// Trimmed to the modal Blitz + Rapid pair so the matchmaking pool
+// stays concentrated. Every extra TC is a separate Redis queue, and
+// with our active-player count splitting 10 ways meant most queues
+// were always empty. Add entries back here AND to validTimeControl
+// + supportedTCs (cmd/game/invites.go, matchmaker.go) when the
+// playerbase justifies it.
 const timeControls = [
-  { id: '1+0',   label: '1+0',   desc: 'Bullet' },
-  { id: '2+1',   label: '2+1',   desc: 'Bullet' },
-  { id: '3+0',   label: '3+0',   desc: 'Blitz' },
-  { id: '3+2',   label: '3+2',   desc: 'Blitz' },
-  { id: '5+0',   label: '5+0',   desc: 'Blitz' },
-  { id: '5+3',   label: '5+3',   desc: 'Blitz' },
-  { id: '10+0',  label: '10+0',  desc: 'Rapid' },
-  { id: '10+5',  label: '10+5',  desc: 'Rapid' },
-  { id: '15+10', label: '15+10', desc: 'Rapid' },
-  { id: '30+0',  label: '30+0',  desc: 'Classical' },
+  { id: '3+0',  label: '3+0',  desc: 'Blitz' },
+  { id: '10+0', label: '10+0', desc: 'Rapid' },
 ];
 
 const loadGames = async () => {

@@ -518,10 +518,16 @@ func (s *GameService) processEngineResult(ctx context.Context, msg redis.XMessag
 	}
 }
 
-// publishHint fans an engine hint result out on game.evt.{id} as a
-// `hint` event. The SPA's GameView.onHintReceived expects the payload
-// shape {move, from, to, score, depth, promo?}; producing it here keeps
-// the engine-worker context-agnostic (it just returns a best_move).
+// publishHint delivers the engine hint result to the requester.
+// Routing is private: if the request carried Metadata["requester_id"]
+// (set by handleHTTPHint with the authed user), we publish on the
+// caller's user.evt.{id} channel — the opponent in a PvP game must
+// not see the hint. Falls back to game.evt.{id} only for temp games
+// (single-player) and any legacy path without a requester tag.
+//
+// Payload shape {move, from, to, score, depth, promo?} matches
+// GameView.onHintReceived; keeping that synthesis here lets the
+// engine-worker stay context-agnostic.
 func (s *GameService) publishHint(ctx context.Context, resp eventbus.EngineResponse) {
 	uci := resp.BestMove
 	payload := map[string]any{
@@ -542,6 +548,17 @@ func (s *GameService) publishHint(ctx context.Context, resp eventbus.EngineRespo
 		GameID:  resp.GameID,
 		Payload: pb,
 	}
+
+	if rid := resp.Metadata["requester_id"]; rid != "" {
+		uid, err := strconv.ParseInt(rid, 10, 64)
+		if err == nil && uid > 0 {
+			if err := s.bus.PublishUserEvent(ctx, uid, evt); err != nil {
+				slog.Error("publish hint to user failed", "user_id", uid, "game_id", resp.GameID, "error", err)
+			}
+			return
+		}
+	}
+
 	data, _ := json.Marshal(evt)
 	if err := s.bus.Rdb().Publish(ctx, "game.evt."+resp.GameID, data).Err(); err != nil {
 		slog.Error("publish hint failed", "game_id", resp.GameID, "error", err)
