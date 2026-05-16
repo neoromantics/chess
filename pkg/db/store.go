@@ -79,6 +79,7 @@ type GameRecord struct {
 	Result         string    `json:"result"` // "*" | "1-0" | "0-1" | "1/2-1/2"
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
+	IsPublic       bool      `json:"is_public"` // spectator mode: any user (and /watch/{id}) can read
 }
 
 // Invite represents a direct user-to-user challenge.
@@ -137,6 +138,10 @@ type Store interface {
 	// DeleteGame returns the number of rows removed; callers should treat 0
 	// as a missing record (or one that was already deleted).
 	DeleteGame(id string) (int64, error)
+	// SetGameVisibility toggles the spectator-mode flag. Handler is
+	// responsible for enforcing that the caller is a participant before
+	// invoking this — the query itself scopes by row id only.
+	SetGameVisibility(id string, isPublic bool) (int64, error)
 
 	// Invites — the durable side of the per-user notification system.
 	// Realtime push is via Redis user.evt.{id}; these endpoints serve the

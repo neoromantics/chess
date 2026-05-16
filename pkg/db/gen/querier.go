@@ -52,6 +52,10 @@ type Querier interface {
 	ListPendingInvitesFromUser(ctx context.Context, fromUserID int64) ([]Invite, error)
 	// For invite autocomplete. Case-insensitive prefix match, capped.
 	SearchUsersByPrefix(ctx context.Context, username string) ([]SearchUsersByPrefixRow, error)
+	// Owner-gated spectator toggle. Handler validates the caller is a
+	// participant before invoking this; we still scope by id alone because
+	// the predicate is row-id, not row-id+user.
+	SetGameVisibility(ctx context.Context, arg SetGameVisibilityParams) (int64, error)
 	UpdateLastLogin(ctx context.Context, id int64) error
 	UpdatePassword(ctx context.Context, arg UpdatePasswordParams) error
 	UpdateUserProfile(ctx context.Context, arg UpdateUserProfileParams) error

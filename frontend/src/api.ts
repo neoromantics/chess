@@ -123,6 +123,17 @@ export const api = {
   takebackAccept: (gameId: string) => request<StateJSON>(`/api/takeback_accept?game_id=${gameId}`, { method: 'POST' }),
   takebackDecline: (gameId: string) => request<void>(`/api/takeback_decline?game_id=${gameId}`, { method: 'POST' }),
 
+  // ===== Spectator (durable games only) =====
+  // Owner-only toggle. Backend rejects with 404 if the caller isn't a
+  // participant. When true, /watch/{id} works and any signed-in user can
+  // /api/state the row.
+  setVisibility: (gameId: string, is_public: boolean) =>
+    request<{ is_public: boolean }>(`/api/visibility?game_id=${gameId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ is_public }),
+    }),
+
   // ===== Anonymous temp-game session =====
   // Idempotent: returns the caller's currently-active temp game (if
   // any, refreshing TTL) or creates a fresh one. The chess-anon cookie

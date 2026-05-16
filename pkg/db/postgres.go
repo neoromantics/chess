@@ -284,6 +284,7 @@ func (s *PostgresStore) SaveGame(g *GameRecord) error {
 		CreatedAt:      g.CreatedAt,
 		UpdatedAt:      g.UpdatedAt,
 		StartFen:       g.StartFEN,
+		IsPublic:       g.IsPublic,
 	})
 }
 
@@ -319,6 +320,7 @@ func (s *PostgresStore) ListGames(userID int64, cursor time.Time, limit int) ([]
 			Result:         r.Result,
 			CreatedAt:      r.CreatedAt,
 			UpdatedAt:      r.UpdatedAt,
+			IsPublic:       r.IsPublic,
 		}
 	}
 	return out, nil
@@ -347,11 +349,19 @@ func (s *PostgresStore) GetGame(id string) (*GameRecord, error) {
 		Result:         r.Result,
 		CreatedAt:      r.CreatedAt,
 		UpdatedAt:      r.UpdatedAt,
+		IsPublic:       r.IsPublic,
 	}, nil
 }
 
 func (s *PostgresStore) DeleteGame(id string) (int64, error) {
 	return s.q.DeleteGame(context.Background(), id)
+}
+
+func (s *PostgresStore) SetGameVisibility(id string, isPublic bool) (int64, error) {
+	return s.q.SetGameVisibility(context.Background(), gen.SetGameVisibilityParams{
+		ID:       id,
+		IsPublic: isPublic,
+	})
 }
 
 // === INVITES ===
@@ -435,6 +445,7 @@ func (s *PostgresStore) AcceptInviteWithGame(inviteID uuid.UUID, toUserID int64,
 		CreatedAt:      g.CreatedAt,
 		UpdatedAt:      g.UpdatedAt,
 		StartFen:       g.StartFEN,
+		IsPublic:       g.IsPublic,
 	}); err != nil {
 		return 0, err
 	}

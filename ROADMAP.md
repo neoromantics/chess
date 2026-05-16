@@ -155,8 +155,24 @@ likely-to-return ones:
 
 In priority order. Each is independent; ship one at a time.
 
-### ⬜ Spectator mode
-Read-only WS subscription for public games. Need to relax `userMayWatchGame` for games flagged public, and a new `is_public` schema column.
+### ✅ Spectator mode (2026-05-16)
+Read-only WS subscription for public games. Shipped:
+- `games.is_public BOOLEAN NOT NULL DEFAULT FALSE` column with
+  idempotent `ADD COLUMN IF NOT EXISTS` for clusters mid-rollout.
+- Backend split: `userOwnsGame` stays strict (mutations require
+  participation); new `userMayRead` allows anyone on public rows.
+- `POST /api/visibility?game_id=X` (owner-only) flips the flag.
+- `/api/state` and `/api/can_watch` made auth-optional via the new
+  `injectAuthedUserOptional` middleware; anonymous viewers pass the
+  preflight only on public games.
+- New SPA route `/watch/:id` loads `GameView` with `spectator: true`.
+  GameView also auto-detects read-only mode when a signed-in user
+  lands on someone else's public game.
+- SidePanel: visibility toggle for owners (with a "copy spectator
+  link" button); spectator banner + button suppression for viewers.
+- Click handlers short-circuit for spectators (the backend rejects
+  too via `userOwnsGame`, but suppressing the phantom selection is
+  the friendlier UX).
 
 ### ✅ Matchmaker expanding rating window (2026-05-15)
 Shipped with the rating restoration. Each queue entry carries an

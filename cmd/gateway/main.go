@@ -117,8 +117,12 @@ func main() {
 	// frontend has no business knowing it (and shouldn't be trusted to
 	// send it — that would let any caller list any user's games).
 	gameProxy := httputil.NewSingleHostReverseProxy(gameSvcURL)
-	mux.Handle("GET /api/state", gw.injectAuthedUser(gameProxy))
+	// /api/state is auth-optional so anonymous spectator links work for
+	// public games. Game-service's handleState uses the spectator-aware
+	// userMayRead predicate — private games still 404 for non-owners.
+	mux.Handle("GET /api/state", gw.injectAuthedUserOptional(gameProxy))
 	mux.Handle("GET /api/games", gw.injectAuthedUser(gameProxy))
+	mux.Handle("POST /api/visibility", gw.injectAuthedUser(gameProxy))
 
 	// All single-game mutations now route through game-service over
 	// sync HTTP. Gateway only authenticates + injects user_id; game-
@@ -297,6 +301,25 @@ func (gw *Gateway) injectAuthedUser(next http.Handler) http.Handler {
 	})
 }
 
+// injectAuthedUserOptional is the spectator-aware variant of
+// injectAuthedUser. If the caller is signed in, injects X-User-ID
+// (so participant + private-game reads keep working); otherwise lets
+// the request through with no identity attached. The downstream
+// handler's userMayRead predicate decides whether to serve the
+// snapshot (always for public, participant-only for private).
+func (gw *Gateway) injectAuthedUserOptional(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if user, ok := auth.GetUser(r.Context()); ok {
+			idStr := strconv.FormatInt(user.UserID, 10)
+			r.Header.Set("X-User-ID", idStr)
+			q := r.URL.Query()
+			q.Set("user_id", idStr)
+			r.URL.RawQuery = q.Encode()
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // anonCookieName is the HttpOnly cookie identifying an anonymous
 // browser session. Value is an opaque UUID; the gateway is the only
 // component that mints it. Game-service receives it as ?anon_id=...
@@ -393,10 +416,10 @@ func (gw *Gateway) handleJoinQueue(w http.ResponseWriter, r *http.Request) {
 }
 
 // userMayWatchGame is the WS upgrade pre-flight that asks game-service
-// "is userID a participant on gameID?". Hits /api/can_watch which is
-// a bare ownership check — no snapshot synthesis. With WS opens
-// otherwise costing a full /api/state read on every reconnect, this
-// matters under load.
+// "may userID read gameID?". Hits /api/can_watch — a bare ownership
+// check, no snapshot synthesis. The game-service handler is spectator-
+// aware: signed-in participants pass on every game; anyone passes on
+// public games. Pass userID=0 for anonymous viewers.
 func (gw *Gateway) userMayWatchGame(ctx context.Context, userID int64, gameID string) bool {
 	u := *gw.gameSvcURL
 	u.Path = "/api/can_watch"
@@ -404,7 +427,9 @@ func (gw *Gateway) userMayWatchGame(ctx context.Context, userID int64, gameID st
 	q.Set("game_id", gameID)
 	u.RawQuery = q.Encode()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
-	req.Header.Set("X-User-ID", strconv.FormatInt(userID, 10))
+	if userID > 0 {
+		req.Header.Set("X-User-ID", strconv.FormatInt(userID, 10))
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		slog.Warn("ws authz preflight failed", "error", err)

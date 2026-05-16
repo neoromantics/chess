@@ -42,18 +42,17 @@ func (gw *Gateway) handleWSGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, ok := auth.GetUser(r.Context())
-	if !ok {
-		http.Error(w, "unauthorized", 401)
-		return
+	// Spectator-aware auth: signed-in users always pass the can_watch
+	// preflight for their own games + every public game; anonymous
+	// viewers pass only for public games (the gate returns 404 for
+	// private ones, mirroring the existence-leak rule). Allowing the
+	// unauthenticated path is what makes shareable spectator links work
+	// without forcing a signup.
+	var userID int64
+	if user, ok := auth.GetUser(r.Context()); ok {
+		userID = user.UserID
 	}
-
-	// Per-game authorization at upgrade time. Without this any signed-in
-	// user could subscribe to anyone's game.evt.{id} stream by guessing
-	// UUIDs. Pre-flight: hit game-service /api/state with the user_id
-	// injected; 200 = participant, 404 = not (or game doesn't exist).
-	// One ~1ms internal RTT per upgrade, negligible.
-	if !gw.userMayWatchGame(r.Context(), user.UserID, gameID) {
+	if !gw.userMayWatchGame(r.Context(), userID, gameID) {
 		http.Error(w, "game not found", http.StatusNotFound)
 		return
 	}
@@ -69,7 +68,7 @@ func (gw *Gateway) handleWSGame(w http.ResponseWriter, r *http.Request) {
 		conn:   conn,
 		send:   make(chan []byte, 256),
 		gameID: gameID,
-		userID: user.UserID,
+		userID: userID,
 	}
 
 	gw.hub.register <- client

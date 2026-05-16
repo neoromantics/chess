@@ -19,9 +19,35 @@
       </button>
     </div>
 
+    <!-- Spectator banner: present whenever the caller isn't a
+         participant. Hidden during normal play. -->
+    <div v-if="spectator" class="prompt subtle">
+      <span class="prompt-text">Spectating — read-only view.</span>
+    </div>
+
+    <!-- Visibility toggle: owner-only. When ON, anyone can read the
+         game (signed in or anonymous via /watch/{id}). PvP games only
+         really benefit from this; engine games can flip too. -->
+    <div v-if="owner && state" class="visibility">
+      <label class="vis-row">
+        <input
+          type="checkbox"
+          :checked="state.is_public"
+          @change="$emit('set-visibility', ($event.target as HTMLInputElement).checked)"
+        />
+        <span>Public — anyone can watch</span>
+      </label>
+      <button
+        v-if="state.is_public && gameId"
+        class="btn ghost vis-link"
+        @click="copyWatchLink"
+        title="Click to copy the spectator link"
+      >Copy spectator link</button>
+    </div>
+
     <!-- Draw / takeback prompts. Render before the action row so
          they're the most prominent prompt while waiting. -->
-    <div v-if="incomingDraw" class="prompt">
+    <div v-if="!spectator && incomingDraw" class="prompt">
       <div class="prompt-text">Opponent offers a draw.</div>
       <div class="prompt-actions">
         <button class="btn primary" @click="$emit('draw-accept')">Accept</button>
@@ -163,6 +189,17 @@ import { StateJSON } from '../types';
 
 const props = defineProps<{
   state: StateJSON | null;
+  // Durable game ID from the route. SidePanel uses it to build the
+  // spectator link without depending on whether snapshot.id is set
+  // (which only happens for temp games).
+  gameId?: string;
+  // Read-only spectator view: hides all action buttons and shows a
+  // "Spectating" banner instead. GameView still passes the live state
+  // so the board/clock/history all render normally.
+  spectator?: boolean;
+  // True iff caller is a participant (used to gate the visibility
+  // toggle separately — only the game's owner sets is_public).
+  owner?: boolean;
   whitePlayerType: string;
   blackPlayerType: string;
   whiteThinkTime: number;
@@ -205,6 +242,7 @@ const emit = defineEmits<{
   (e: 'edit-position'): void;
   (e: 'load-pgn', pgn: string): void;
   (e: 'analyze'): void;
+  (e: 'set-visibility', isPublic: boolean): void;
 }>();
 
 const isPvP = computed(() => !!(props.state && props.state.white_user_id !== null && props.state.black_user_id !== null));
@@ -285,6 +323,17 @@ const pgnFilename = computed(() => {
   const dd = String(d.getDate()).padStart(2, '0');
   return `chess-${yyyy}${mm}${dd}.pgn`;
 });
+
+const copyWatchLink = async () => {
+  if (!props.gameId) return;
+  const url = `${location.origin}/watch/${props.gameId}`;
+  try {
+    await navigator.clipboard.writeText(url);
+  } catch {
+    // Fallback: open the link so the user can copy it from the address bar.
+    window.open(url, '_blank');
+  }
+};
 </script>
 
 <style scoped>
@@ -335,6 +384,21 @@ const pgnFilename = computed(() => {
 }
 .prompt-text { margin-bottom: 8px; }
 .prompt-actions { display: flex; gap: 8px; }
+
+/* Visibility toggle row */
+.visibility {
+  background: #262b32;
+  border-left: 3px solid #4a6b8a;
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.vis-row { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.vis-row input { margin: 0; }
+.vis-link { align-self: flex-start; padding: 4px 10px; font-size: 12px; }
 
 /* Primary action row */
 .actions { display: flex; flex-wrap: wrap; gap: 6px; }

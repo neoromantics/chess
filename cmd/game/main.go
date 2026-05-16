@@ -66,6 +66,7 @@ func main() {
 	mux.HandleFunc("GET /api/can_watch", s.handleCanWatch)
 	mux.HandleFunc("GET /api/games", s.handleListGames)
 	mux.HandleFunc("GET /api/replay", s.handleReplayData)
+	mux.HandleFunc("POST /api/visibility", s.handleSetVisibility)
 
 	// Sync game-mutation HTTP. See cmd/game/handlers.go for the
 	// shared lock + ownership pattern. These are the contract the
@@ -215,6 +216,11 @@ type stateJSON struct {
 	BlackUserID *int64 `json:"black_user_id"`
 	TimeControl string `json:"time_control"`
 	Rated       bool   `json:"rated"`
+	// Spectator-mode opt-in. True means /watch/{id} works and any
+	// signed-in user can read the snapshot. The SPA mirrors this in
+	// the SidePanel toggle (owner-only) and uses it to enter
+	// read-only mode when the caller isn't a participant.
+	IsPublic bool `json:"is_public"`
 
 	// Server-authoritative clock state. Engine-only / pre-clocks games
 	// leave ClockInitial=0; the SPA hides the clock UI when initial is 0.
@@ -244,23 +250,22 @@ func (s *GameService) handleState(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "game not found", 404)
 		return
 	}
-	// Per-game authorization. Without this any signed-in user could
-	// read any game's state by guessing UUIDs. Don't leak existence
-	// to non-participants — return 404, not 403.
-	if uid, ok := authedUserID(r); ok {
-		if !userOwnsGame(uid, rec) {
-			http.Error(w, "game not found", 404)
-			return
-		}
+	// Per-game read authorization. Spectator-aware: public games are
+	// readable by anyone; private games are participant-only. Return
+	// 404 (not 403) so existence doesn't leak.
+	uid, _ := authedUserID(r)
+	if !userMayRead(uid, rec) {
+		http.Error(w, "game not found", 404)
+		return
 	}
 	writeJSON(w, s.snapshotFromRecord(r.Context(), rec))
 }
 
 // handleCanWatch is the cheap WS upgrade preflight: it returns 200 if
-// the caller is a participant of the game (or 404 otherwise). Skips
-// the full snapshot synthesis that /api/state does. Used by the
-// gateway's WS upgrade gate before promoting an HTTP connection — at
-// scale we burn enough CPU on WS opens to matter.
+// the caller may read the game (participant on private, anyone on
+// public). Skips the full snapshot synthesis that /api/state does.
+// Used by the gateway's WS upgrade gate before promoting an HTTP
+// connection — at scale we burn enough CPU on WS opens to matter.
 func (s *GameService) handleCanWatch(w http.ResponseWriter, r *http.Request) {
 	gameID := r.URL.Query().Get("game_id")
 	if gameID == "" {
@@ -272,12 +277,70 @@ func (s *GameService) handleCanWatch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "game not found", 404)
 		return
 	}
-	uid, ok := authedUserID(r)
-	if !ok || !userOwnsGame(uid, rec) {
+	uid, _ := authedUserID(r)
+	if !userMayRead(uid, rec) {
 		http.Error(w, "game not found", 404)
 		return
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+// handleSetVisibility flips the spectator-mode flag on a game.
+// Participant-only — userOwnsGame guards both the read and the write
+// so a non-owner can neither discover the flag's current value nor
+// flip it. Body: {"is_public": true|false}. Returns the updated row's
+// is_public for the SPA to reflect immediately.
+func (s *GameService) handleSetVisibility(w http.ResponseWriter, r *http.Request) {
+	gameID := r.URL.Query().Get("game_id")
+	if gameID == "" {
+		http.Error(w, "missing game_id", 400)
+		return
+	}
+	uid, ok := authedUserID(r)
+	if !ok {
+		http.Error(w, "unauthorized", 401)
+		return
+	}
+	rec, err := s.getGameCached(r.Context(), gameID)
+	if err != nil {
+		http.Error(w, "game not found", 404)
+		return
+	}
+	if !userOwnsGame(uid, rec) {
+		// 404 (not 403) for the same existence-leak reason as everywhere else.
+		http.Error(w, "game not found", 404)
+		return
+	}
+
+	var body struct {
+		IsPublic bool `json:"is_public"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid body", 400)
+		return
+	}
+
+	// Lock for the read-modify-write so a concurrent SaveGame doesn't
+	// overwrite this with a stale is_public.
+	lock, lockErr := acquireGameLock(r.Context(), s.bus.Rdb(), gameID, gameLockTTL)
+	if lockErr != nil || lock == nil {
+		http.Error(w, "game busy", http.StatusConflict)
+		return
+	}
+	defer lock.release(context.Background())
+
+	rec, err = s.getGameCached(r.Context(), gameID)
+	if err != nil {
+		http.Error(w, "game not found", 404)
+		return
+	}
+	rec.IsPublic = body.IsPublic
+	rec.UpdatedAt = time.Now()
+	if err := s.saveGameCached(r.Context(), rec); err != nil {
+		http.Error(w, "save failed", 500)
+		return
+	}
+	writeJSON(w, map[string]bool{"is_public": rec.IsPublic})
 }
 
 // snapshotFromRecord builds the wire-protocol StateJSON the SPA
@@ -369,6 +432,7 @@ func (s *GameService) snapshotFromRecord(ctx context.Context, rec *db.GameRecord
 		BlackUserID:    rec.BlackUserID,
 		TimeControl:    rec.TimeControl,
 		Rated:          rec.Rated,
+		IsPublic:       rec.IsPublic,
 	}
 
 	// Clock projection: read the live hash, deduct mid-turn elapsed for

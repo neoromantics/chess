@@ -28,6 +28,9 @@
       <SidePanel
         v-if="!editMode"
         :state="state"
+        :game-id="id"
+        :spectator="isSpectator"
+        :owner="isOwner"
         :white-player-type="whitePlayerType"
         :black-player-type="blackPlayerType"
         :white-think-time="whiteThinkTime"
@@ -36,13 +39,13 @@
         :touch-move="touchMove"
         :hint-info="hintInfo"
         :history-pairs="historyPairs"
-        :can-offer-draw="canOfferDraw"
+        :can-offer-draw="canOfferDraw && !isSpectator"
         :incoming-draw="incomingDrawFrom !== null"
         :outgoing-draw="outgoingDrawSent"
-        :can-request-takeback="canRequestTakeback"
+        :can-request-takeback="canRequestTakeback && !isSpectator"
         :incoming-takeback="incomingTakebackFrom !== null"
         :outgoing-takeback="outgoingTakebackSent"
-        :can-edit-position="canEditPosition"
+        :can-edit-position="canEditPosition && !isSpectator"
         :pgn-download-url="pgnDownloadUrl"
         :assessments="assessments"
         :analyzing="analyzing"
@@ -67,6 +70,7 @@
         @edit-position="enterEditMode"
         @load-pgn="loadPgn"
         @analyze="analyze"
+        @set-visibility="setVisibility"
       />
 
       <EditPanel
@@ -108,6 +112,14 @@ import { StateJSON, Square } from '../types';
 
 const props = defineProps<{
   id: string;
+  // True when the route is /watch/:id. The board is read-only and
+  // all mutation calls are short-circuited client-side (backend
+  // enforces the same via userOwnsGame, but suppressing the buttons
+  // is the friendlier UX). Also enabled at runtime when we land on
+  // /game/:id and discover the caller isn't a participant — that's
+  // possible if a logged-in user opens a friend's public game by
+  // typing the URL.
+  spectator?: boolean;
 }>();
 
 const toastStore = useToastStore();
@@ -122,6 +134,22 @@ let didAutoOrient = false;
 // User's color in this game, or null in engine-only / spectator views.
 // Computed once we've seen the first StateJSON.
 const myColor = ref<'white' | 'black' | null>(null);
+
+// True for /watch/:id and for signed-in users who happen to load a
+// public game where they aren't a participant. Drives the read-only
+// UI: no action buttons, no click handlers, no input modals. Backend
+// enforces the same via userOwnsGame on every mutation endpoint, so
+// this is purely a UX layer.
+const isSpectator = computed(() => {
+  if (props.spectator) return true;
+  if (!state.value) return false;
+  const me = authStore.user?.id;
+  if (!me) return state.value.white_user_id !== null || state.value.black_user_id !== null;
+  return state.value.white_user_id !== me && state.value.black_user_id !== me;
+});
+// Owner-only controls (visibility toggle, settings) gate on this.
+// Spectators can see the snapshot but can't change the game.
+const isOwner = computed(() => !isSpectator.value && (state.value?.white_user_id !== null || state.value?.black_user_id !== null));
 const state = ref<StateJSON | null>(null);
 const error = ref<string | null>(null);
 const selected = ref<string | null>(null);
@@ -550,6 +578,10 @@ const onSquare = async (sq: Square) => {
     }
     return;
   }
+  // Spectators can hover and inspect but never move. Backend rejects
+  // mutations from non-participants too; this just keeps the click
+  // silent instead of showing a phantom selection.
+  if (isSpectator.value) return;
   if (!state.value || state.value.thinking || state.value.engine_to_move || state.value.status !== 'ongoing') return;
   // In a PvP game, ignore clicks while it's the opponent's turn. The
   // backend rejects mismatched moves with 409 "it is not your turn"
@@ -711,6 +743,19 @@ const setTouchMove = (val: boolean) => {
 };
 
 const openReplay = () => { window.open(`/api/replay.html?game_id=${props.id}`, '_blank'); };
+
+const setVisibility = async (isPublic: boolean) => {
+  if (!state.value || isSpectator.value) return;
+  try {
+    const res = await api.setVisibility(props.id, isPublic);
+    state.value = { ...state.value, is_public: res.is_public };
+    toastStore.info(res.is_public
+      ? 'Game is now public — share /watch/' + props.id
+      : 'Game is now private');
+  } catch (e: any) {
+    toastStore.error(e.message || 'Failed to update visibility');
+  }
+};
 
 // ===== Board editor =====
 

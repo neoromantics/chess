@@ -25,6 +25,12 @@ const routes: RouteRecordRaw[] = [
   // by ID prefix so it doesn't need to know which it is.
   { path: '/play/:id', component: GameView, props: true },
   { path: '/game/:id', component: GameView, props: true, meta: { requiresAuth: true } },
+  // /watch/:id is the spectator entry point — no auth required.
+  // GameView detects spectator mode when the snapshot's user IDs
+  // don't include the caller and is_public=true. Backend enforces:
+  // /api/state on a private game still 404s, so a guessed UUID here
+  // is harmless.
+  { path: '/watch/:id', component: GameView, props: (route) => ({ id: route.params.id, spectator: true }) },
   { path: '/:pathMatch(.*)*', component: { template: '<div style="padding: 50px; text-align: center;"><h2>404 Page Not Found</h2><router-link to="/">Go Home</router-link></div>' } },
 ];
 

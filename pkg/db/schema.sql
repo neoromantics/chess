@@ -49,10 +49,17 @@ CREATE TABLE IF NOT EXISTS games (
     -- and history replays from there. Required for the editor feature
     -- because rec.FEN is the *current* position; without start_fen we
     -- can't replay subsequent moves correctly.
-    start_fen         TEXT    NOT NULL DEFAULT ''
+    start_fen         TEXT    NOT NULL DEFAULT '',
+    -- Spectator mode opt-in. When TRUE, any signed-in user (and the
+    -- /watch/{id} anonymous path) can read /api/state and subscribe
+    -- to the per-game WS. Mutations still require participant ownership
+    -- — userOwnsGame stays strict; only the *read* surface relaxes.
+    is_public         BOOLEAN NOT NULL DEFAULT FALSE
 );
 -- Idempotent add for clusters that predate the start_fen column.
 ALTER TABLE games ADD COLUMN IF NOT EXISTS start_fen TEXT NOT NULL DEFAULT '';
+-- Idempotent add for clusters that predate the spectator-mode column.
+ALTER TABLE games ADD COLUMN IF NOT EXISTS is_public BOOLEAN NOT NULL DEFAULT FALSE;
 -- Drop the pre-SPA session_id column on clusters that still have it.
 -- The column was never read or written by the current code path; this
 -- is the rare "deliberate, idempotent drop" CLAUDE.md permits.

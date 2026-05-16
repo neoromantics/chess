@@ -30,6 +30,11 @@ export interface StateJSON {
   black_user_id: number | null;
   time_control: string;
   rated: boolean;
+  // Spectator-mode opt-in. The owner controls this via the SidePanel
+  // toggle; everyone (including anonymous /watch/{id}) can read public
+  // games. SPA uses this to enter read-only mode when the caller isn't
+  // a participant.
+  is_public: boolean;
 
   // Server-authoritative clock projection. clock_initial_ms === 0 means
   // this game has no clock (engine games, pre-clock games). Otherwise:

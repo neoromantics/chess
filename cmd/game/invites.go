@@ -77,8 +77,9 @@ func authedAnonID(r *http.Request) string {
 }
 
 // userOwnsGame returns true if userID is a participant of the game
-// record. Used at every game-keyed endpoint so a signed-in user can't
-// read or write someone else's games via guessable UUIDs.
+// record. Used at every game-MUTATION endpoint so a signed-in user
+// can't write someone else's games via guessable UUIDs. Reads of
+// public-flagged games should use userMayRead instead.
 func userOwnsGame(userID int64, rec *db.GameRecord) bool {
 	if rec == nil || userID == 0 {
 		return false
@@ -90,6 +91,21 @@ func userOwnsGame(userID int64, rec *db.GameRecord) bool {
 		return true
 	}
 	return false
+}
+
+// userMayRead is the spectator-aware authorization predicate for read
+// paths (/api/state, /api/can_watch, /api/replay, WS upgrade). Allows
+// the participant + anyone (including anonymous) when the row's
+// is_public flag is set. Mutations always go through userOwnsGame —
+// spectators can watch but can't act.
+func userMayRead(userID int64, rec *db.GameRecord) bool {
+	if rec == nil {
+		return false
+	}
+	if rec.IsPublic {
+		return true
+	}
+	return userOwnsGame(userID, rec)
 }
 
 func (s *GameService) wireInvite(inv *db.Invite) inviteWire {

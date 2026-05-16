@@ -50,8 +50,9 @@ game row.
 ### Games (state)
 | Method | Path | Auth | Owner | Frontend caller |
 |---|---|---|---|---|
-| GET | `/api/state?game_id=X` | 🔐+game | gateway → game-svc | `api.getState` |
-| GET | `/api/can_watch?game_id=X` | 🔐+game | gateway → game-svc | gateway WS-upgrade preflight (no SPA caller) |
+| GET | `/api/state?game_id=X` | 🔐?+game | gateway → game-svc | `api.getState` (auth-optional — public games readable by anyone) |
+| GET | `/api/can_watch?game_id=X` | 🔐?+game | gateway → game-svc | gateway WS-upgrade preflight (no SPA caller; anonymous viewers allowed on public games) |
+| POST | `/api/visibility?game_id=X` | 🔐+owner | gateway → game-svc | `api.setVisibility` (toggle `is_public`) |
 | POST | `/api/move?game_id=X` | 🔐+game | gateway → game-svc | `api.move` |
 | POST | `/api/resign?game_id=X` | 🔐+game | gateway → game-svc | `api.resign` |
 | POST | `/api/new?game_id=X` | 🔐+game | gateway → game-svc | `api.newGame` |

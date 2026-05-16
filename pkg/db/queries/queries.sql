@@ -81,9 +81,9 @@ INSERT INTO games (
     fen, history, history_san,
     engine_white, engine_black, white_think_time, black_think_time,
     time_control, rated, status, result,
-    created_at, updated_at, start_fen
+    created_at, updated_at, start_fen, is_public
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 ON CONFLICT (id) DO UPDATE SET
     white_user_id    = EXCLUDED.white_user_id,
     black_user_id    = EXCLUDED.black_user_id,
@@ -99,6 +99,7 @@ ON CONFLICT (id) DO UPDATE SET
     status           = EXCLUDED.status,
     result           = EXCLUDED.result,
     start_fen        = EXCLUDED.start_fen,
+    is_public        = EXCLUDED.is_public,
     updated_at       = EXCLUDED.updated_at;
 
 -- name: ListGames :many
@@ -111,7 +112,7 @@ SELECT id, white_user_id, black_user_id,
        fen, history, history_san,
        engine_white, engine_black, white_think_time, black_think_time,
        time_control, rated, status, result,
-       created_at, updated_at, start_fen
+       created_at, updated_at, start_fen, is_public
 FROM games
 WHERE (white_user_id = $1::BIGINT OR black_user_id = $1::BIGINT)
   AND updated_at < COALESCE($2::TIMESTAMPTZ, NOW())
@@ -123,9 +124,15 @@ SELECT id, white_user_id, black_user_id,
        fen, history, history_san,
        engine_white, engine_black, white_think_time, black_think_time,
        time_control, rated, status, result,
-       created_at, updated_at, start_fen
+       created_at, updated_at, start_fen, is_public
 FROM games
 WHERE id = $1;
+
+-- name: SetGameVisibility :execrows
+-- Owner-gated spectator toggle. Handler validates the caller is a
+-- participant before invoking this; we still scope by id alone because
+-- the predicate is row-id, not row-id+user.
+UPDATE games SET is_public = $2 WHERE id = $1;
 
 -- name: DeleteGame :execrows
 -- Authorization is enforced by the handler via getGame() before this runs,
