@@ -39,6 +39,15 @@ game row.
 | POST | `/api/user/password` | 🔐 | gateway | `api.changePassword` |
 | GET | `/api/user/stats` | 🔐 | gateway | `api.getUserStats` |
 | GET | `/api/users/search?q=…` | 🔐 | gateway | `api.searchUsers` |
+| GET | `/api/auth/check-username?username=…` | 🔓 | gateway | `api.checkUsername` (live signup availability probe) |
+
+### Admin (is_admin=TRUE gated; non-admins get 404)
+Bootstrap the first admin via SQL: `UPDATE users SET is_admin = TRUE WHERE username = '<you>';`. The flag is echoed on `/api/user/me` so the SPA can render the navbar link conditionally; the server re-checks on every call so a stale SPA flag can't reach the data.
+
+| Method | Path | Auth | Owner | Frontend caller |
+|---|---|---|---|---|
+| GET | `/api/admin/overview` | 🔐+admin | gateway | `api.adminOverview` (user count, signups 24h/7d, active games, queue depth per TC) |
+| GET | `/api/admin/signups` | 🔐+admin | gateway | `api.adminSignups` (20 most recent non-bot signups) |
 
 ### Games (lifecycle)
 | Method | Path | Auth | Owner | Frontend caller |

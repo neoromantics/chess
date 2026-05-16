@@ -12,14 +12,18 @@ import { useInviteStore } from './invites';
 
 export const useAuthStore = defineStore('auth', {
   state: () => ({
-    user: null as { 
-      id: number; 
+    user: null as {
+      id: number;
       username: string;
       rating: number;
       rd: number;
       volatility: number;
       is_premium: boolean;
       bio: string;
+      // Flipped manually by SQL (no signup path sets it); gates the
+      // /admin route + the conditional navbar link. Backend re-checks
+      // on every /api/admin/* call, so the SPA flag is UX, not auth.
+      is_admin?: boolean;
     } | null,
     initialized: false,
   }),

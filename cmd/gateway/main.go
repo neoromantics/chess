@@ -114,6 +114,13 @@ func main() {
 	// flow that's itself auth-free. See cmd/gateway/user_handlers.go.
 	mux.HandleFunc("GET /api/auth/check-username", gw.handleCheckUsername)
 
+	// Admin dashboard (read-only). adminOnly inside each handler
+	// 404s for callers without is_admin=TRUE on their users row.
+	// Bootstrap the first admin via SQL (one-off):
+	//   UPDATE users SET is_admin = TRUE WHERE username = '<you>';
+	mux.HandleFunc("GET /api/admin/overview", gw.handleAdminOverview)
+	mux.HandleFunc("GET /api/admin/signups", gw.handleAdminSignups)
+
 	// 3. Reverse proxy to Game Service. Wrapped in injectAuthedUser so
 	// downstream services don't have to re-validate the JWT — they
 	// trust the gateway-injected ?user_id=X. Without this, /api/games

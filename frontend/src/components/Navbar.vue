@@ -7,6 +7,7 @@
       
       <div class="nav-links">
         <template v-if="authStore.user">
+          <router-link v-if="authStore.user.is_admin" to="/admin" class="btn-text">Admin</router-link>
           <router-link to="/invites" class="btn-text invites-link">
             Invites
             <span v-if="inviteStore.pendingCount > 0" class="badge">{{ inviteStore.pendingCount }}</span>

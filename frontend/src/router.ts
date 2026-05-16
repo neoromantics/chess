@@ -6,6 +6,7 @@ import GameView from './views/GameView.vue';
 import Invites from './views/Invites.vue';
 import Landing from './views/Landing.vue';
 import Match from './views/Match.vue';
+import Admin from './views/Admin.vue';
 import { useAuthStore } from './stores/auth';
 
 const routes: RouteRecordRaw[] = [
@@ -17,6 +18,10 @@ const routes: RouteRecordRaw[] = [
   { path: '/dashboard', redirect: '/match' },
   { path: '/profile', component: Profile, meta: { requiresAuth: true } },
   { path: '/invites', component: Invites, meta: { requiresAuth: true } },
+  // /admin gated by both auth AND user.is_admin. Backend re-checks on
+  // every /api/admin/* call (404s non-admins) so this guard is purely
+  // UX — server is the actual auth boundary.
+  { path: '/admin', component: Admin, meta: { requiresAuth: true, requiresAdmin: true } },
   { path: '/login', component: Login, meta: { guestOnly: true } },
   { path: '/signup', component: Signup, meta: { guestOnly: true } },
   // Game routes share the same component. /play/:id is the anonymous
@@ -50,6 +55,12 @@ router.beforeEach(async (to) => {
   }
   if (to.meta.guestOnly && auth.user) {
     return { path: '/match' };
+  }
+  // 404-shaped redirect (not a hard error) for non-admins poking at
+  // /admin. Server returns 404 on the matching endpoints anyway; this
+  // keeps the SPA's behaviour consistent with that.
+  if (to.meta.requiresAdmin && !auth.user?.is_admin) {
+    return { path: '/' };
   }
 });
 

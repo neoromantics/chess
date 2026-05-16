@@ -3,19 +3,19 @@ INSERT INTO users (username, password_hash, created_at, last_login)
 VALUES ($1, $2, NOW(), NOW())
 RETURNING id, username, password_hash, display_name, avatar_url, country,
           is_premium, bio, last_login, created_at,
-          rating, rd, volatility, games_played, wins, losses, draws, is_bot;
+          rating, rd, volatility, games_played, wins, losses, draws, is_bot, is_admin;
 
 -- name: GetUserByUsername :one
 SELECT id, username, password_hash, display_name, avatar_url, country,
        is_premium, bio, last_login, created_at,
-       rating, rd, volatility, games_played, wins, losses, draws, is_bot
+       rating, rd, volatility, games_played, wins, losses, draws, is_bot, is_admin
 FROM users
 WHERE username = $1;
 
 -- name: GetUserByID :one
 SELECT id, username, password_hash, display_name, avatar_url, country,
        is_premium, bio, last_login, created_at,
-       rating, rd, volatility, games_played, wins, losses, draws, is_bot
+       rating, rd, volatility, games_played, wins, losses, draws, is_bot, is_admin
 FROM users
 WHERE id = $1;
 
@@ -231,3 +231,41 @@ SET status      = 'expired',
 WHERE status = 'pending' AND expires_at <= NOW()
 RETURNING id, from_user_id, to_user_id, time_control, rated, status, game_id,
           created_at, expires_at, resolved_at;
+
+-- name: CountUsers :one
+-- Total users across the whole table, bots and admins included. The
+-- /api/admin/overview endpoint surfaces this as the headline number;
+-- bot exclusion would mislead since they ARE users from a "rows in
+-- the table" perspective.
+SELECT COUNT(*)::BIGINT AS total
+FROM users;
+
+-- name: CountRecentSignups :one
+-- Two windows in one trip: signups in the last 24h and last 7d. The
+-- FILTER clauses share the scan so this is cheaper than two separate
+-- COUNTs and keeps the dashboard responsive even as users grows.
+-- Excludes bots so the count reflects real product signups.
+SELECT
+  COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours')::BIGINT AS day,
+  COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '7 days')::BIGINT  AS week
+FROM users
+WHERE is_bot = FALSE;
+
+-- name: ListRecentSignups :many
+-- The 20 most recent non-bot signups for the admin dashboard's
+-- "Recent signups" panel. Returning rating so we can sanity-check
+-- that the default 1500 didn't get scribbled in by an early-edit bug.
+SELECT id, username, display_name, country, created_at, rating
+FROM users
+WHERE is_bot = FALSE
+ORDER BY created_at DESC
+LIMIT 20;
+
+-- name: CountActiveGames :one
+-- Games currently in flight. Used by the admin overview to spot a
+-- regression where everything's "ongoing" because the finish-status
+-- write path broke. Bot games count as active for this purpose —
+-- they're a real load on engine-worker.
+SELECT COUNT(*)::BIGINT AS active
+FROM games
+WHERE status = 'ongoing';

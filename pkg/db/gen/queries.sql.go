@@ -58,6 +58,47 @@ func (q *Queries) CancelInvite(ctx context.Context, arg CancelInviteParams) (int
 	return result.RowsAffected()
 }
 
+const countActiveGames = `-- name: CountActiveGames :one
+SELECT COUNT(*)::BIGINT AS active
+FROM games
+WHERE status = 'ongoing'
+`
+
+// Games currently in flight. Used by the admin overview to spot a
+// regression where everything's "ongoing" because the finish-status
+// write path broke. Bot games count as active for this purpose —
+// they're a real load on engine-worker.
+func (q *Queries) CountActiveGames(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countActiveGames)
+	var active int64
+	err := row.Scan(&active)
+	return active, err
+}
+
+const countRecentSignups = `-- name: CountRecentSignups :one
+SELECT
+  COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours')::BIGINT AS day,
+  COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '7 days')::BIGINT  AS week
+FROM users
+WHERE is_bot = FALSE
+`
+
+type CountRecentSignupsRow struct {
+	Day  int64 `json:"day"`
+	Week int64 `json:"week"`
+}
+
+// Two windows in one trip: signups in the last 24h and last 7d. The
+// FILTER clauses share the scan so this is cheaper than two separate
+// COUNTs and keeps the dashboard responsive even as users grows.
+// Excludes bots so the count reflects real product signups.
+func (q *Queries) CountRecentSignups(ctx context.Context) (CountRecentSignupsRow, error) {
+	row := q.db.QueryRowContext(ctx, countRecentSignups)
+	var i CountRecentSignupsRow
+	err := row.Scan(&i.Day, &i.Week)
+	return i, err
+}
+
 const countUserGameStats = `-- name: CountUserGameStats :one
 SELECT
   COUNT(*) AS played,
@@ -90,6 +131,22 @@ func (q *Queries) CountUserGameStats(ctx context.Context, dollar_1 int64) (Count
 	var i CountUserGameStatsRow
 	err := row.Scan(&i.Played, &i.Wins, &i.Draws)
 	return i, err
+}
+
+const countUsers = `-- name: CountUsers :one
+SELECT COUNT(*)::BIGINT AS total
+FROM users
+`
+
+// Total users across the whole table, bots and admins included. The
+// /api/admin/overview endpoint surfaces this as the headline number;
+// bot exclusion would mislead since they ARE users from a "rows in
+// the table" perspective.
+func (q *Queries) CountUsers(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countUsers)
+	var total int64
+	err := row.Scan(&total)
+	return total, err
 }
 
 const createInvite = `-- name: CreateInvite :one
@@ -143,7 +200,7 @@ INSERT INTO users (username, password_hash, created_at, last_login)
 VALUES ($1, $2, NOW(), NOW())
 RETURNING id, username, password_hash, display_name, avatar_url, country,
           is_premium, bio, last_login, created_at,
-          rating, rd, volatility, games_played, wins, losses, draws, is_bot
+          rating, rd, volatility, games_played, wins, losses, draws, is_bot, is_admin
 `
 
 type CreateUserParams struct {
@@ -173,6 +230,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.Losses,
 		&i.Draws,
 		&i.IsBot,
+		&i.IsAdmin,
 	)
 	return i, err
 }
@@ -345,7 +403,7 @@ func (q *Queries) GetInvite(ctx context.Context, id uuid.UUID) (Invite, error) {
 const getUserByID = `-- name: GetUserByID :one
 SELECT id, username, password_hash, display_name, avatar_url, country,
        is_premium, bio, last_login, created_at,
-       rating, rd, volatility, games_played, wins, losses, draws, is_bot
+       rating, rd, volatility, games_played, wins, losses, draws, is_bot, is_admin
 FROM users
 WHERE id = $1
 `
@@ -372,6 +430,7 @@ func (q *Queries) GetUserByID(ctx context.Context, id int64) (User, error) {
 		&i.Losses,
 		&i.Draws,
 		&i.IsBot,
+		&i.IsAdmin,
 	)
 	return i, err
 }
@@ -379,7 +438,7 @@ func (q *Queries) GetUserByID(ctx context.Context, id int64) (User, error) {
 const getUserByUsername = `-- name: GetUserByUsername :one
 SELECT id, username, password_hash, display_name, avatar_url, country,
        is_premium, bio, last_login, created_at,
-       rating, rd, volatility, games_played, wins, losses, draws, is_bot
+       rating, rd, volatility, games_played, wins, losses, draws, is_bot, is_admin
 FROM users
 WHERE username = $1
 `
@@ -406,6 +465,7 @@ func (q *Queries) GetUserByUsername(ctx context.Context, username string) (User,
 		&i.Losses,
 		&i.Draws,
 		&i.IsBot,
+		&i.IsAdmin,
 	)
 	return i, err
 }
@@ -610,6 +670,56 @@ func (q *Queries) ListPendingInvitesFromUser(ctx context.Context, fromUserID int
 			&i.CreatedAt,
 			&i.ExpiresAt,
 			&i.ResolvedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRecentSignups = `-- name: ListRecentSignups :many
+SELECT id, username, display_name, country, created_at, rating
+FROM users
+WHERE is_bot = FALSE
+ORDER BY created_at DESC
+LIMIT 20
+`
+
+type ListRecentSignupsRow struct {
+	ID          int64     `json:"id"`
+	Username    string    `json:"username"`
+	DisplayName string    `json:"display_name"`
+	Country     string    `json:"country"`
+	CreatedAt   time.Time `json:"created_at"`
+	Rating      float32   `json:"rating"`
+}
+
+// The 20 most recent non-bot signups for the admin dashboard's
+// "Recent signups" panel. Returning rating so we can sanity-check
+// that the default 1500 didn't get scribbled in by an early-edit bug.
+func (q *Queries) ListRecentSignups(ctx context.Context) ([]ListRecentSignupsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listRecentSignups)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListRecentSignupsRow{}
+	for rows.Next() {
+		var i ListRecentSignupsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Username,
+			&i.DisplayName,
+			&i.Country,
+			&i.CreatedAt,
+			&i.Rating,
 		); err != nil {
 			return nil, err
 		}

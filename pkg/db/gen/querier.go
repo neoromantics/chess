@@ -16,12 +16,27 @@ type Querier interface {
 	AcceptInvite(ctx context.Context, arg AcceptInviteParams) (int64, error)
 	// Sender-initiated cancel; e.g. they closed the tab or sent by mistake.
 	CancelInvite(ctx context.Context, arg CancelInviteParams) (int64, error)
+	// Games currently in flight. Used by the admin overview to spot a
+	// regression where everything's "ongoing" because the finish-status
+	// write path broke. Bot games count as active for this purpose —
+	// they're a real load on engine-worker.
+	CountActiveGames(ctx context.Context) (int64, error)
+	// Two windows in one trip: signups in the last 24h and last 7d. The
+	// FILTER clauses share the scan so this is cheaper than two separate
+	// COUNTs and keeps the dashboard responsive even as users grows.
+	// Excludes bots so the count reflects real product signups.
+	CountRecentSignups(ctx context.Context) (CountRecentSignupsRow, error)
 	// Single-trip stats aggregation. Replaces the prior three separate COUNT
 	// queries (played / wins / draws). FILTER clauses run inside the same
 	// table scan, so the planner reads the games rows once and emits four
 	// counters; losses are derived on the Go side as played-(wins+draws).
 	// Explicit BIGINT casts so sqlc infers int64 (not sql.NullInt64).
 	CountUserGameStats(ctx context.Context, dollar_1 int64) (CountUserGameStatsRow, error)
+	// Total users across the whole table, bots and admins included. The
+	// /api/admin/overview endpoint surfaces this as the headline number;
+	// bot exclusion would mislead since they ARE users from a "rows in
+	// the table" perspective.
+	CountUsers(ctx context.Context) (int64, error)
 	// === INVITES ===
 	// Direct user-to-user challenges. PG row is the durable record so a
 	// recipient who's offline sees the invite when they reconnect; Redis
@@ -54,6 +69,10 @@ type Querier interface {
 	// yet acted on, newest first.
 	ListPendingInvitesForUser(ctx context.Context, toUserID int64) ([]Invite, error)
 	ListPendingInvitesFromUser(ctx context.Context, fromUserID int64) ([]Invite, error)
+	// The 20 most recent non-bot signups for the admin dashboard's
+	// "Recent signups" panel. Returning rating so we can sanity-check
+	// that the default 1500 didn't get scribbled in by an early-edit bug.
+	ListRecentSignups(ctx context.Context) ([]ListRecentSignupsRow, error)
 	// For invite autocomplete. Case-insensitive prefix match, capped.
 	// Bot users (is_bot=true) are excluded — they're internal stand-ins
 	// for the engine-fallback matchmaker and shouldn't appear in invite

@@ -285,6 +285,43 @@ func (s *PostgresStore) ListBots() ([]BotUser, error) {
 	return out, nil
 }
 
+// === ADMIN DASHBOARD ===
+
+func (s *PostgresStore) CountUsers() (int64, error) {
+	return s.q.CountUsers(context.Background())
+}
+
+func (s *PostgresStore) CountRecentSignups() (int64, int64, error) {
+	row, err := s.q.CountRecentSignups(context.Background())
+	if err != nil {
+		return 0, 0, err
+	}
+	return row.Day, row.Week, nil
+}
+
+func (s *PostgresStore) ListRecentSignups() ([]AdminSignup, error) {
+	rows, err := s.q.ListRecentSignups(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	out := make([]AdminSignup, len(rows))
+	for i, r := range rows {
+		out[i] = AdminSignup{
+			ID:          r.ID,
+			Username:    r.Username,
+			DisplayName: r.DisplayName,
+			Country:     r.Country,
+			Rating:      int(r.Rating),
+			CreatedAt:   r.CreatedAt,
+		}
+	}
+	return out, nil
+}
+
+func (s *PostgresStore) CountActiveGames() (int64, error) {
+	return s.q.CountActiveGames(context.Background())
+}
+
 // === GAMES ===
 
 // defaultListGamesLimit is the per-page cap when the caller doesn't
@@ -546,6 +583,7 @@ func userFromRow(r gen.User) *User {
 		Wins:         int(r.Wins),
 		Losses:       int(r.Losses),
 		Draws:        int(r.Draws),
+		IsAdmin:      r.IsAdmin,
 	}
 }
 

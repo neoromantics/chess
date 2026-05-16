@@ -65,4 +65,5 @@ type User struct {
 	Losses       int32     `json:"losses"`
 	Draws        int32     `json:"draws"`
 	IsBot        bool      `json:"is_bot"`
+	IsAdmin      bool      `json:"is_admin"`
 }

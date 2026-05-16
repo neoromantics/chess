@@ -28,13 +28,22 @@ CREATE TABLE IF NOT EXISTS users (
     -- and are filtered out of invite search. See cmd/game/bots.go.
     -- TODO(matchmaker-engine-fallback): drop column when the fallback
     -- is removed (tagged in matchmaker.go).
-    is_bot          BOOLEAN NOT NULL DEFAULT FALSE
+    is_bot          BOOLEAN NOT NULL DEFAULT FALSE,
+    -- Operator account flag. Read at /api/user/me so the SPA can show
+    -- the /admin link, and gated on every /api/admin/* endpoint.
+    -- Bootstrap by SQL (one-off):
+    --   UPDATE users SET is_admin = TRUE WHERE username = '<you>';
+    -- See infra/README + the ADMIN bootstrap note. Default FALSE so a
+    -- fresh signup is never an admin.
+    is_admin        BOOLEAN NOT NULL DEFAULT FALSE
 );
 -- Drop the pre-Glicko-2 elo column on clusters that still have it.
 -- Never read by current code; superseded by rating/rd/volatility.
 ALTER TABLE users DROP COLUMN IF EXISTS elo;
 -- Idempotent add for clusters that predate the bot-pool column.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS is_bot BOOLEAN NOT NULL DEFAULT FALSE;
+-- Idempotent add for clusters that predate the admin flag.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT FALSE;
 
 CREATE TABLE IF NOT EXISTS games (
     id                TEXT      PRIMARY KEY,

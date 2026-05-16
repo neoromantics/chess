@@ -137,6 +137,23 @@ export const api = {
   rematchAccept: (gameId: string) => request<{ game_id: string }>(`/api/rematch_accept?game_id=${gameId}`, { method: 'POST' }),
   rematchDecline: (gameId: string) => request<void>(`/api/rematch_decline?game_id=${gameId}`, { method: 'POST' }),
 
+  // ===== Admin (is_admin gated; non-admins get 404) =====
+  adminOverview: () => request<{
+    users: number;
+    signups_24h: number;
+    signups_7d: number;
+    active_games: number;
+    queue_depth: Record<string, number>;
+  }>('/api/admin/overview'),
+  adminSignups: () => request<Array<{
+    id: number;
+    username: string;
+    display_name: string;
+    country: string;
+    rating: number;
+    created_at: string;
+  }>>('/api/admin/signups'),
+
   // ===== Spectator (durable games only) =====
   // Owner-only toggle. Backend rejects with 404 if the caller isn't a
   // participant. When true, /watch/{id} works and any signed-in user can

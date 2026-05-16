@@ -29,6 +29,33 @@ type User struct {
 	Wins        int     `json:"wins"`
 	Losses      int     `json:"losses"`
 	Draws       int     `json:"draws"`
+
+	// IsAdmin gates the /api/admin/* surface. Flipped manually by SQL
+	// (no signup path sets it). Echoed in /api/user/me so the SPA can
+	// render the /admin nav link conditionally.
+	IsAdmin bool `json:"is_admin"`
+}
+
+// AdminOverview is the dashboard's headline counter set: total users,
+// recent signups, in-flight games. Cheap to compute (1–2 queries) and
+// the snapshot a small-cluster operator wants at a glance.
+type AdminOverview struct {
+	Users         int64            `json:"users"`
+	SignupsDay    int64            `json:"signups_24h"`
+	SignupsWeek   int64            `json:"signups_7d"`
+	ActiveGames   int64            `json:"active_games"`
+	QueueDepthMap map[string]int64 `json:"queue_depth"` // tc → ZCARD
+}
+
+// AdminSignup is one row of the "Recent signups" panel — no PII beyond
+// what the public user-search already exposes.
+type AdminSignup struct {
+	ID          int64     `json:"id"`
+	Username    string    `json:"username"`
+	DisplayName string    `json:"display_name"`
+	Country     string    `json:"country"`
+	Rating      int       `json:"rating"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // UserSummary is the public view of another user (no PII, no hash).
@@ -150,6 +177,14 @@ type Store interface {
 	UpsertBot(username, passwordHash string, rating int) (BotUser, error)
 	// ListBots returns the seeded bot pool ordered by rating ASC.
 	ListBots() ([]BotUser, error)
+
+	// Admin dashboard (read-only). Cheap aggregate queries that power
+	// /api/admin/overview and /api/admin/signups. Queue-depth Redis
+	// reads live on the gateway, not here.
+	CountUsers() (int64, error)
+	CountRecentSignups() (day int64, week int64, err error)
+	ListRecentSignups() ([]AdminSignup, error)
+	CountActiveGames() (int64, error)
 
 	// Game management
 	SaveGame(g *GameRecord) error
