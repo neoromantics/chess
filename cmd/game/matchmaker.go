@@ -27,7 +27,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/neoromantics/chess/pkg/db"
 	"github.com/neoromantics/chess/pkg/eventbus"
+	"github.com/neoromantics/chess/pkg/game"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -55,6 +57,36 @@ const (
 	mmGrowthEvery   = 2     // seconds — every 2s, window grows by mmWindowGrowth
 	mmWindowMax     = 400.0 // hard cap regardless of wait time
 )
+
+// Engine fallback (TODO(matchmaker-engine-fallback): phased-out).
+//
+// While the playerbase is small enough that the queue is regularly
+// empty, we silently route long-waiting matchmaking requests to a
+// game-vs-engine rather than letting the user stare at "Looking for an
+// opponent…" forever and bounce. The user is matched into a normal
+// engine game (BlackUserID=nil, EngineBlack=true, Rated=false) and
+// receives the same MatchFoundEvt a real pairing would have produced,
+// so the SPA redirect/UX is identical. The opponent surface still
+// reads as "Engine" once they land in the game — we don't lie about
+// that, since (a) doing so would require a fake-username sidecar and
+// SPA-state divergence we'd then have to unwind, and (b) the game is
+// non-rated, which is the only invariant that has to hold for the Elo
+// system. Engagement > deception.
+//
+// Remove this whole block (mmEngineFallbackAfter, the engineFallback
+// pass in holdAndPair, and dispatchEngineFallback) once real-pairing
+// volume sustains itself. Search for the TODO tag above.
+const (
+	mmEngineFallbackAfter = 10 * time.Second
+)
+
+// engineFallbackThinkMS maps a queue's time control to the engine's
+// per-move think budget. Roughly proportional to the human's clock so
+// the game feels paced. Defaults to 1000ms for any TC not enumerated.
+var engineFallbackThinkMS = map[string]int{
+	"3+0":  600,
+	"10+0": 1500,
+}
 
 // queueKey / joinedKey return the per-TC Redis keys. `queue` is a
 // sorted set scored by rating; `joined` is a hash mapping user_id →
@@ -125,6 +157,7 @@ func (s *GameService) holdAndPair(ctx context.Context, hostname string) {
 		case <-pair.C:
 			for _, tc := range supportedTCs {
 				s.tryPair(ctx, tc)
+				s.tryEngineFallback(ctx, tc)
 			}
 		}
 	}
@@ -209,6 +242,100 @@ func currentRatingWindow(nowSec int64, joinedAt string) float64 {
 		win = mmWindowMax
 	}
 	return win
+}
+
+// tryEngineFallback runs after tryPair on each tick and picks up
+// anyone who has been queued for >= mmEngineFallbackAfter without
+// finding a real opponent. Each such user is dispatched into an
+// engine game. See the "Engine fallback" comment block at the top.
+func (s *GameService) tryEngineFallback(ctx context.Context, tc string) {
+	rdb := s.bus.Rdb()
+	joined, err := rdb.HGetAll(ctx, joinedKey(tc)).Result()
+	if err != nil || len(joined) == 0 {
+		return
+	}
+	now := time.Now().Unix()
+	cutoff := int64(mmEngineFallbackAfter.Seconds())
+	for uidStr, joinedAt := range joined {
+		t, err := strconv.ParseInt(joinedAt, 10, 64)
+		if err != nil {
+			continue
+		}
+		if now-t < cutoff {
+			continue
+		}
+		// Atomic remove-then-handle. If ZRem reports 0 the user was
+		// already paired (race with tryPair on another tick) — skip.
+		removed, err := rdb.ZRem(ctx, queueKey(tc), uidStr).Result()
+		if err != nil || removed == 0 {
+			continue
+		}
+		rdb.HDel(ctx, joinedKey(tc), uidStr)
+		uid, err := strconv.ParseInt(uidStr, 10, 64)
+		if err != nil {
+			continue
+		}
+		s.dispatchEngineFallback(ctx, uid, tc)
+	}
+}
+
+// dispatchEngineFallback creates a brand-new engine-vs-human game for
+// `uid` and emits the same MatchFoundEvt a real pairing would have, so
+// the SPA's matchmaking UI follows its normal post-match redirect path.
+// The game is non-rated (the opponent is not a rated entity) and the
+// engine plays black with a TC-proportional think time.
+//
+// TODO(matchmaker-engine-fallback): delete once organic pairing volume
+// makes this unnecessary. See the comment block at the top.
+func (s *GameService) dispatchEngineFallback(ctx context.Context, uid int64, tc string) {
+	gameID := uuid.New().String()
+	thinkMS, ok := engineFallbackThinkMS[tc]
+	if !ok {
+		thinkMS = 1000
+	}
+
+	gm := game.NewGame()
+	white := uid
+	rec := &db.GameRecord{
+		ID:             gameID,
+		WhiteUserID:    &white,
+		BlackUserID:    nil,
+		FEN:            gm.Board.FEN(),
+		History:        "[]",
+		HistorySAN:     "[]",
+		EngineWhite:    false,
+		EngineBlack:    true,
+		WhiteThinkTime: thinkMS,
+		BlackThinkTime: thinkMS,
+		TimeControl:    tc,
+		Rated:          false,
+		Status:         "ongoing",
+		Result:         "*",
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
+	}
+	if err := s.saveGameCached(ctx, rec); err != nil {
+		slog.Error("engine fallback: save game failed", "user_id", uid, "tc", tc, "error", err)
+		return
+	}
+	if err := initClock(ctx, s.bus.Rdb(), rec); err != nil {
+		slog.Error("engine fallback: clock init failed", "game_id", gameID, "error", err)
+	}
+
+	slog.Info("matchmaker: engine fallback dispatched",
+		"user_id", uid, "tc", tc, "game_id", gameID, "wait_threshold", mmEngineFallbackAfter)
+
+	payload, _ := json.Marshal(eventbus.MatchFoundEvt{
+		GameID: gameID, WhiteUserID: uid, BlackUserID: 0, Color: "white",
+	})
+	s.bus.PublishUserEvent(ctx, uid, eventbus.Event{
+		Type: eventbus.EvtMatchFound, GameID: gameID, Payload: payload,
+	})
+
+	s.bus.EmitEvent(ctx, eventbus.Event{
+		Type:   eventbus.EvtGameStarted,
+		GameID: gameID,
+	})
 }
 
 func (s *GameService) dispatchPaired(ctx context.Context, u1, u2 int64, tc string) {
