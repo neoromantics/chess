@@ -405,13 +405,15 @@ spec:
 # 4. AUTOSCALING & DISRUPTION
 #
 # HPAs scale on CPU + memory. The "right" signals for chess workloads are:
-#   - chess-gateway:        WebSocket connection count (custom metric)
-#   - chess-engine-worker:  engine:requests stream pending depth (KEDA)
-# Gateway still uses CPU+memory (needs the Prometheus Adapter to do
-# better). Engine-worker swapped to KEDA's redis-streams trigger on
-# 2026-05-16; see infra/keda.yaml. The legacy chess-worker HPA used
-# to live in this file and was removed when KEDA took over — only one
-# scaler may own a Deployment at a time.
+#   - chess-gateway:        live WS connection count (KEDA prometheus)
+#   - chess-engine-worker:  engine:requests pending depth (KEDA redis-streams)
+# Both gateway and engine-worker moved to KEDA on 2026-05-16; see
+# infra/keda.yaml. game-service stays on a vanilla CPU+memory HPA —
+# its load is a mix of HTTP traffic and goroutine work (matchmaker
+# pairing loop, rating updater, sweepers) with no single dominant
+# signal worth pulling out of Prometheus. Only one scaler may own a
+# Deployment at a time, so the legacy gateway + worker HPAs that used
+# to live in this file are gone.
 #
 # Note on Redis HA: Sentinel-based failover requires multiple nodes.
 # This cluster is single-node today (Duke VCM), so all Redis/Sentinel
@@ -421,34 +423,13 @@ spec:
 # ==============================================================================
 
 ---
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: chess-gateway-hpa
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: chess-gateway
-  minReplicas: 2
-  maxReplicas: 8
-  metrics:
-  - type: Resource
-    resource:
-      name: cpu
-      target: {type: Utilization, averageUtilization: 70}
-  - type: Resource
-    resource:
-      name: memory
-      target: {type: Utilization, averageUtilization: 75}
-  behavior:
-    scaleUp:
-      stabilizationWindowSeconds: 30
-      policies: [{type: Percent, value: 100, periodSeconds: 30}]
-    scaleDown:
-      stabilizationWindowSeconds: 300
-      policies: [{type: Pods, value: 1, periodSeconds: 60}]
-
+# Gateway scaling moved out of this file on 2026-05-16. KEDA owns it
+# now — see infra/keda.yaml for the ScaledObject that pages off live
+# WebSocket connection count (with CPU + memory as backstops). If
+# KEDA is uninstalled, re-add a CPU+memory HPA here and drop the
+# gateway ScaledObject from keda.yaml. Operator action after this
+# lands on a cluster that still has the old HPA:
+#   kubectl -n chess delete hpa chess-gateway-hpa
 ---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler

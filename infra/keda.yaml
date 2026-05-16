@@ -102,3 +102,87 @@ spec:
     metricType: Utilization
     metadata:
       value: "70"
+
+---
+# Gateway ScaledObject. Replaces the CPU+memory HPA in deploy.yaml.
+#
+# CPU+memory were poor proxies for gateway load: a gateway pod spends
+# most of its time idle on `select` waiting for WS register/unregister
+# events. The actual scale signal is *how many live WebSocket
+# connections this pod is fanning Redis pub/sub messages to* — every
+# game.evt.{id} hop costs a per-subscriber write, regardless of CPU
+# headroom. Once a pod is fanning out to thousands of WS clients, the
+# write-loop becomes the real bottleneck.
+#
+# KEDA's prometheus trigger queries Prometheus directly (no
+# Prometheus Adapter required — that's the path the standard k8s
+# custom-metrics docs push, but it'd be a second component to install
+# alongside KEDA when KEDA already speaks PromQL). Prometheus runs
+# in-namespace at prometheus:9090 (see infra/observability.yaml).
+#
+# CPU + memory stay as backstops in case a runaway hub goroutine
+# pegs a core without growing the connection count.
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: chess-gateway-scaler
+  namespace: chess
+  labels:
+    app: chess-gateway
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: chess-gateway
+
+  minReplicaCount: 2
+  maxReplicaCount: 8
+  pollingInterval: 15
+  cooldownPeriod: 300
+
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleUp:
+          stabilizationWindowSeconds: 30
+          policies:
+          - type: Percent
+            value: 100
+            periodSeconds: 30
+        scaleDown:
+          stabilizationWindowSeconds: 300
+          policies:
+          - type: Pods
+            value: 1
+            periodSeconds: 60
+
+  triggers:
+  # Primary: live WebSocket connections, summed across the kind label
+  # (game + user channels). KEDA divides this sum by current pod count
+  # internally to compare against threshold, so threshold is the
+  # target per-pod connection count. 200 → an 8-pod cluster ceilings
+  # at ~1600 live WS clients before another pod would help (the real
+  # bottleneck on the per-pod side is the pub/sub fan-out write
+  # cadence, not memory; revisit when we have a load test).
+  - type: prometheus
+    metadata:
+      serverAddress: http://prometheus.chess.svc.cluster.local:9090
+      metricName: chess_ws_connections_active_total
+      query: sum(chess_ws_connections_active{service="gateway"})
+      threshold: "200"
+      # If Prometheus is missing the series (cold cluster, scrape not
+      # yet warm), fall through to the CPU/memory triggers instead of
+      # holding the deployment at minReplicas.
+      activationThreshold: "1"
+
+  # Backstops — same numbers as the legacy HPA. Keep these so a
+  # Prometheus outage doesn't strand the gateway at minReplicas while
+  # CPU spikes.
+  - type: cpu
+    metricType: Utilization
+    metadata:
+      value: "70"
+  - type: memory
+    metricType: Utilization
+    metadata:
+      value: "75"
