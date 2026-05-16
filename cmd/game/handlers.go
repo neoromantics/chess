@@ -497,13 +497,30 @@ func (s *GameService) handleHTTPSetPlayers(w http.ResponseWriter, r *http.Reques
 	// + the HTTP response now both carry the same post-trigger Rev, so
 	// a fast engine reply still produces a strictly-higher Rev for the
 	// next snapshot.
+	//
+	// Two reasons to re-evaluate the engine trigger here, not just on
+	// assignment change:
+	//   1. Think-time-only change with engine idle + engine-to-move
+	//      (e.g. user opened a fresh EvE row and bumped think time
+	//      before any move landed) — without a fresh trigger, the
+	//      engine never starts and the game looks stuck.
+	//   2. Assignment flip mid-search — the in-flight search will be
+	//      dropped by the UserID==0 late-reply guard in handleMakeMove,
+	//      but the `thinking` sentinel it set is still up, which would
+	//      otherwise block the new side's trigger. Clear it first.
 	engineAssignmentChanged := wasEngineWhite != rec.EngineWhite || wasEngineBlack != rec.EngineBlack
-	if engineAssignmentChanged && rec.Status == "ongoing" {
+	if rec.Status == "ongoing" {
+		if engineAssignmentChanged {
+			_ = s.bus.Rdb().Del(r.Context(), "game:thinking:"+rec.ID).Err()
+		}
 		gm := game.NewGame()
 		var history []string
 		_ = json.Unmarshal([]byte(rec.History), &history)
 		gm.Load(rec.StartFEN, history, rec.EngineWhite, rec.EngineBlack)
 		if gm.EngineToMove() {
+			// Skip if a search is already in flight (assignment unchanged
+			// case where the engine is mid-think — let it finish with the
+			// old think-time; the next move will pick up the new value).
 			if v, _ := s.bus.Rdb().Get(r.Context(), "game:thinking:"+rec.ID).Result(); v != "1" {
 				s.triggerEngineForMove(rec, gm)
 			}
