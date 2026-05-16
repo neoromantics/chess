@@ -28,7 +28,7 @@
         </button>
         <div v-else class="searching">
           <div class="spinner"></div>
-          <span>Looking for an opponent…</span>
+          <span>{{ searchingLabel }}</span>
           <button @click="leaveQueue" class="btn-cancel">Cancel</button>
         </div>
       </div>
@@ -89,6 +89,20 @@ const selectedTC = ref('10+0');
 const searching = ref(false);
 const games = ref<any[]>([]);
 
+// Wait-progress label. Backend's engine-fallback cutoff is 60s; this
+// gives the user a sense of how long they've been queued without
+// surfacing the literal "engine fallback at 60s" mechanic. ~30s is
+// long enough to feel patient, short enough that an empty queue
+// doesn't read as broken before the message arrives.
+const searchStartedAt = ref<number>(0);
+const searchElapsed = ref(0);
+let searchTickerHandle: number | undefined;
+const searchingLabel = computed(() => {
+  if (searchElapsed.value < 30) return 'Looking for an opponent…';
+  if (searchElapsed.value < 60) return 'Still searching — most pairings take a moment.';
+  return 'No opponent yet — we may match you with a practice partner shortly.';
+});
+
 // Trimmed to the modal Blitz + Rapid pair so the matchmaking pool
 // stays concentrated. Every extra TC is a separate Redis queue, and
 // with our active-player count splitting 10 ways meant most queues
@@ -139,11 +153,28 @@ const resultClass = (g: any): string => {
   return 'lost';
 };
 
+const startSearchTicker = () => {
+  searchStartedAt.value = Date.now();
+  searchElapsed.value = 0;
+  if (searchTickerHandle) clearInterval(searchTickerHandle);
+  searchTickerHandle = window.setInterval(() => {
+    searchElapsed.value = Math.floor((Date.now() - searchStartedAt.value) / 1000);
+  }, 1000);
+};
+const stopSearchTicker = () => {
+  if (searchTickerHandle) {
+    clearInterval(searchTickerHandle);
+    searchTickerHandle = undefined;
+  }
+  searchElapsed.value = 0;
+};
+
 const joinQueue = async () => {
   if (!selectedTC.value) return;
   try {
     await api.joinQueue(selectedTC.value);
     searching.value = true;
+    startSearchTicker();
     toastStore.info(`Searching for ${selectedTC.value} match…`);
   } catch (e: any) {
     toastStore.error('Failed to join queue: ' + (e?.message || e));
@@ -154,6 +185,7 @@ const leaveQueue = async () => {
   try {
     await api.leaveQueue(selectedTC.value);
     searching.value = false;
+    stopSearchTicker();
     toastStore.info('Matchmaking cancelled');
   } catch {
     toastStore.error('Failed to leave queue');
@@ -187,6 +219,7 @@ onMounted(async () => {
   userEvents.connect();
   unsubs.push(userEvents.on('match_found', (payload: any) => {
     searching.value = false;
+    stopSearchTicker();
     toastStore.success(`Match found! You are playing ${payload.color}`);
     router.push(`/game/${payload.game_id}`);
   }));
@@ -194,6 +227,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   unsubs.forEach(fn => fn());
+  stopSearchTicker();
 });
 </script>
 
