@@ -464,6 +464,15 @@ func (s *GameService) handleHTTPSetPlayers(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "game not found", http.StatusNotFound)
 		return
 	}
+	// Bot-match games render as PvP in the SPA (the SidePanel hides
+	// engine settings when both user_ids are set). The toggles aren't
+	// reachable via the standard UI, but a hand-crafted request could
+	// still land here — refuse it so the user can't accidentally rebind
+	// which side the engine drives mid-game.
+	if isBotMatch(rec) {
+		http.Error(w, "engine settings are locked for matched games", http.StatusBadRequest)
+		return
+	}
 	wasEngineWhite := rec.EngineWhite
 	wasEngineBlack := rec.EngineBlack
 	rec.EngineWhite = req.EngineWhite

@@ -138,27 +138,34 @@ func pickBot(targetRating int) (db.BotUser, bool) {
 }
 
 // isBotMatch reports whether a game record was created by the engine-
-// fallback matchmaker. The defining feature is that a side has BOTH a
-// real user_id AND an engine flag set — no other code path creates
-// that combination (PvP has both user_ids + no engine flags; PvE has
-// engine flag + nil user_id on that side).
+// fallback matchmaker. Defining feature: BOTH sides have a real user_id
+// (one of them is a seeded bot) AND at least one side has an engine
+// flag set. No other code path produces that combination:
+//   - PvP: both user_ids + no engine flags.
+//   - PvE: engine flag on one side + nil user_id on that engine side.
+//   - Engine-vs-engine owned by a signed-in user: one user_id (the owner,
+//     on whichever side they "claim"), nil on the other, both engine
+//     flags true.
 //
-// Used by snapshotFromRecord to lie about the engine flags so the SPA
-// renders the game as PvP. The server-side engine trigger still uses
-// the truthful rec.EngineWhite/EngineBlack so moves actually happen.
+// The earlier looser predicate ("any side has user_id AND engine flag")
+// false-positived on the third case, which made snapshotFromRecord lie
+// about engine_white/engine_black on a legitimate engine-vs-engine game.
+// The SPA then showed both sides as Human, but the engine kept playing —
+// and toggling the (visible-because-not-PvP) engine settings re-bound
+// which side the engine drove without changing the displayed labels.
+// Requiring both user_ids non-nil scopes the disguise to actual
+// matchmaker output.
+//
+// Used by snapshotFromRecord to render the game as PvP. The server-side
+// engine trigger still uses the truthful rec.EngineWhite/EngineBlack so
+// moves happen.
 //
 // TODO(matchmaker-engine-fallback): delete with the bot pool.
 func isBotMatch(rec *db.GameRecord) bool {
-	if rec == nil {
+	if rec == nil || rec.WhiteUserID == nil || rec.BlackUserID == nil {
 		return false
 	}
-	if rec.EngineWhite && rec.WhiteUserID != nil {
-		return true
-	}
-	if rec.EngineBlack && rec.BlackUserID != nil {
-		return true
-	}
-	return false
+	return rec.EngineWhite || rec.EngineBlack
 }
 
 // pickBotReactionDelay returns one of the configured bot reaction

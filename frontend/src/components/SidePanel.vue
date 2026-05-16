@@ -130,13 +130,16 @@
          it doesn't visually compete with action buttons. -->
     <div v-if="hintInfo" class="hint-info">{{ hintInfo }}</div>
 
-    <!-- Move list. Larger than before — most of the panel's real
-         estate goes here since it's what users actually read. -->
-    <section class="moves">
-      <header>
-        <h3>Moves</h3>
+    <!-- Move list. Collapsed by default — most users glance at the
+         board, not the SAN log, and on mobile the panel sits below the
+         board so a long open list pushes Save/Load + New Game off
+         screen. The ply count stays visible in the summary so you can
+         tell at-a-glance how deep the game is without expanding. -->
+    <details class="moves" :open="movesOpen" @toggle="onMovesToggle">
+      <summary>
+        <span class="moves-title">Moves</span>
         <span v-if="historyPairs.length" class="muted">{{ plyCount }} {{ plyCount === 1 ? 'ply' : 'plies' }}</span>
-      </header>
+      </summary>
       <div class="move-list">
         <div v-for="(pair, i) in historyPairs" :key="i" class="move-row">
           <span class="move-num">{{ i + 1 }}.</span>
@@ -157,7 +160,7 @@
           {{ analyzing ? `Analyzing… ${assessedCount}/${plyCount}` : (assessedCount > 0 ? 'Re-analyze' : 'Analyze game') }}
         </button>
       </div>
-    </section>
+    </details>
 
     <!-- Save / Load. Lifted out of a disclosure so it's discoverable
          without hunting; the standard chess export format is PGN, and
@@ -333,6 +336,16 @@ const moveTooltip = (mv: { san: string; lan: string; idx: number }) => {
 // power user who likes seeing them keeps that across reloads.
 const settingsOpen = ref(localStorage.getItem('chess-settings-open') === '1');
 watch(settingsOpen, (v) => localStorage.setItem('chess-settings-open', v ? '1' : '0'));
+
+// Moves list collapsed by default. Same localStorage-persistence
+// pattern as settings — most users glance at the board, but anyone
+// who wants the SAN log open keeps it across reloads.
+const movesOpen = ref(localStorage.getItem('chess-moves-open') === '1');
+const onMovesToggle = (e: Event) => {
+  const open = (e.target as HTMLDetailsElement).open;
+  movesOpen.value = open;
+  localStorage.setItem('chess-moves-open', open ? '1' : '0');
+};
 
 const thinkOptions = [
   { v: 100, l: '0.1s (weak)' },
@@ -523,8 +536,27 @@ const copyWatchLink = async () => {
 
 /* Move list */
 .moves { background: #232323; border: 1px solid #2f2f2f; border-radius: 6px; padding: 10px 12px 6px; }
-.moves header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 6px; }
-.moves h3 { margin: 0; font-size: 12px; color: #aaa; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
+.moves > summary {
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 2px 2px 6px;
+}
+.moves > summary::-webkit-details-marker { display: none; }
+.moves > summary::after {
+  content: '›';
+  float: right;
+  transition: transform 120ms ease;
+  color: #666;
+  margin-left: 6px;
+  font-size: 14px;
+}
+.moves[open] > summary::after { transform: rotate(90deg); }
+.moves > summary:hover .moves-title { color: #ddd; }
+.moves-title { font-size: 12px; color: #aaa; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
 .moves .muted { font-size: 11px; color: #666; }
 .move-list { font-family: ui-monospace, Menlo, monospace; font-size: 13px; max-height: 320px; overflow-y: auto; padding-right: 4px; }
 .move-row { display: flex; align-items: baseline; gap: 6px; padding: 2px 0; line-height: 1.5; }
