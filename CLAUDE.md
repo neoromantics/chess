@@ -153,14 +153,16 @@ Common failure modes and where to look:
 Full status board: `ROADMAP.md`. The high-impact open items at a glance:
 
 **Product:**
-- **Spectator mode** — read-only WS subscription for public games; needs an `is_public` games column.
 - **Move-assessment Phase 2** — centipawn-loss classification (today's verdicts are coarse: best / alt / only-legal).
 
 **Production hardening:**
 - **Redis Sentinel** — single Redis is a full-platform SPOF; AOF gives durability but not failover. Requires a multi-node cluster to be meaningful.
 - **KEDA** on `engine:requests` stream length as the engine-worker HPA signal (currently CPU utilization, which is a proxy).
 - **PG read replicas** for ListGames / search / replay queries.
-- **Prometheus + Grafana** — metrics are emitted; nothing scrapes them yet.
-- **CI grep-check** for wire-contract drift against `pkg/wire/CONTRACT.md`.
+
+**Already shipped (kept here so they're easy to find again):**
+- Spectator mode (`/watch/:id`, `is_public` column, `userMayRead` predicate).
+- Prometheus + Grafana via `infra/observability.yaml` (Grafana at `/grafana/`, admin password in `chess-secrets:GRAFANA_ADMIN_PASSWORD`).
+- Wire-contract drift check (`infra/check-wire-contract.sh` + CI job).
 
 See `ROADMAP.md` "Scale design notes" for the 10k-pair-scale walk-through (per-channel SUBSCRIBE, PG indices, env-tunable pool already shipped; the remaining items are deliberately deferred with reasons).

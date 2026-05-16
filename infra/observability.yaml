@@ -1,0 +1,423 @@
+# Standalone Prometheus + Grafana stack for the chess cluster.
+#
+# Why standalone instead of kube-prometheus-stack:
+#   - kube-prometheus-stack pulls 30+ CRDs and an operator we don't need.
+#     For a 3-service backend at <10k RPS, two pods + two PVCs is the
+#     right size.
+#   - We already emit chess-* metrics (see pkg/metrics) and have
+#     prometheus.io/scrape annotations on every Service. A plain
+#     Prometheus with kubernetes_sd_config picks them up automatically.
+#
+# Apply:    kubectl -n chess apply -f infra/observability.yaml
+# Tear down: kubectl -n chess delete -f infra/observability.yaml
+#
+# Access:
+#   - Grafana:    https://vcm-50800.vm.duke.edu/grafana/  (admin / GRAFANA_ADMIN_PASSWORD)
+#   - Prometheus: kubectl -n chess port-forward svc/prometheus 9090:9090
+#                 (intentionally not exposed — queries should go through Grafana)
+#
+# Bootstrap GRAFANA_ADMIN_PASSWORD into chess-secrets before applying:
+#   ./infra/bootstrap-secrets.sh           # mints it fresh on a new cluster
+#   kubectl -n chess edit secret chess-secrets  # add to an existing cluster
+
+# ==============================================================================
+# 1. PROMETHEUS
+# ==============================================================================
+
+---
+# Service account + RBAC so Prometheus can watch Services / Endpoints
+# across the chess namespace for kubernetes_sd_config target discovery.
+# Namespace-scoped — Prometheus has no business reading anything in
+# kube-system or other tenants.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: prometheus
+rules:
+- apiGroups: [""]
+  resources: ["services", "endpoints", "pods"]
+  verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: prometheus
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: prometheus
+subjects:
+- kind: ServiceAccount
+  name: prometheus
+
+---
+# Scrape config: one job for Services with prometheus.io/scrape=true.
+# Honors prometheus.io/port and prometheus.io/path annotations so a
+# Service can override the default :8080/metrics. The relabel_configs
+# attach the Service name as a `service` label so PromQL queries can
+# filter by chess-gateway / chess-game-service / chess-worker without
+# needing to know the pod hostname.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+      external_labels:
+        cluster: chess
+    scrape_configs:
+    - job_name: chess
+      kubernetes_sd_configs:
+      - role: endpoints
+        namespaces:
+          names: [chess]
+      relabel_configs:
+      # Only scrape endpoints whose Service is annotated.
+      - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_scrape]
+        action: keep
+        regex: "true"
+      # Honor prometheus.io/path; default /metrics.
+      - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_path]
+        action: replace
+        target_label: __metrics_path__
+        regex: (.+)
+      # Honor prometheus.io/port; rewrite the address's port to it.
+      - source_labels: [__address__, __meta_kubernetes_service_annotation_prometheus_io_port]
+        action: replace
+        regex: ([^:]+)(?::\d+)?;(\d+)
+        replacement: $1:$2
+        target_label: __address__
+      # Surface useful k8s metadata as labels.
+      - source_labels: [__meta_kubernetes_service_name]
+        target_label: service
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: pod
+    # Prometheus scrapes itself so we get TSDB + scrape-duration metrics.
+    - job_name: prometheus
+      static_configs:
+      - targets: ['localhost:9090']
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prometheus-pvc
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 10Gi
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+spec:
+  replicas: 1
+  strategy:
+    # Recreate (not RollingUpdate) because the PVC is RWO and the next
+    # Pod can't bind it until the old one releases. RollingUpdate
+    # deadlocks; Recreate accepts a brief gap in scrapes.
+    type: Recreate
+  selector:
+    matchLabels: {app: prometheus}
+  template:
+    metadata:
+      labels: {app: prometheus}
+    spec:
+      serviceAccountName: prometheus
+      containers:
+      - name: prometheus
+        image: prom/prometheus:v2.55.1
+        args:
+        - "--config.file=/etc/prometheus/prometheus.yml"
+        - "--storage.tsdb.path=/prometheus"
+        - "--storage.tsdb.retention.time=14d"
+        - "--web.enable-lifecycle"    # POST /-/reload after configmap edit
+        - "--web.listen-address=:9090"
+        ports: [{containerPort: 9090}]
+        volumeMounts:
+        - {name: config,  mountPath: /etc/prometheus}
+        - {name: storage, mountPath: /prometheus}
+        readinessProbe:
+          httpGet: {path: /-/ready, port: 9090}
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        resources:
+          requests: {cpu: 100m, memory: 256Mi}
+          limits:   {cpu: 500m, memory: 1Gi}
+      volumes:
+      - name: config
+        configMap: {name: prometheus-config}
+      - name: storage
+        persistentVolumeClaim: {claimName: prometheus-pvc}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+spec:
+  selector: {app: prometheus}
+  ports: [{port: 9090, targetPort: 9090}]
+
+# ==============================================================================
+# 2. GRAFANA
+# ==============================================================================
+
+---
+# Datasource + dashboard provisioning. Grafana reads these on boot so
+# the admin doesn't have to click through the UI to wire Prometheus
+# up. The chess-overview dashboard mounts as a separate volume under
+# /var/lib/grafana/dashboards because Grafana's dashboard provider is
+# a file-watching loader.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-provisioning
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+    - name: Prometheus
+      type: prometheus
+      access: proxy
+      url: http://prometheus:9090
+      isDefault: true
+      editable: false
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+    - name: chess
+      folder: ""
+      type: file
+      disableDeletion: false
+      updateIntervalSeconds: 30
+      allowUiUpdates: true
+      options:
+        path: /var/lib/grafana/dashboards
+
+---
+# Starter dashboard. Covers what we actually emit: chess_http_requests_total,
+# chess_http_request_duration_seconds, chess_ws_connections_active,
+# chess_redis_stream_pending_count. Add more panels as the metrics surface
+# grows. JSON is hand-written (not exported from Grafana UI) so it stays
+# diff-able.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+data:
+  chess-overview.json: |
+    {
+      "title": "Chess platform overview",
+      "uid": "chess-overview",
+      "schemaVersion": 39,
+      "version": 1,
+      "refresh": "30s",
+      "time": {"from": "now-1h", "to": "now"},
+      "templating": {"list": []},
+      "panels": [
+        {
+          "id": 1,
+          "type": "timeseries",
+          "title": "HTTP request rate (req/s) by service",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+          "targets": [{
+            "expr": "sum by (service) (rate(chess_http_requests_total[1m]))",
+            "legendFormat": "{{service}}",
+            "refId": "A"
+          }]
+        },
+        {
+          "id": 2,
+          "type": "timeseries",
+          "title": "HTTP p95 latency (s) by route",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+          "targets": [{
+            "expr": "histogram_quantile(0.95, sum by (le, service, route) (rate(chess_http_request_duration_seconds_bucket[5m])))",
+            "legendFormat": "{{service}} {{route}}",
+            "refId": "A"
+          }]
+        },
+        {
+          "id": 3,
+          "type": "timeseries",
+          "title": "WebSocket connections (gauge)",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+          "targets": [{
+            "expr": "sum by (kind) (chess_ws_connections_active)",
+            "legendFormat": "{{kind}}",
+            "refId": "A"
+          }]
+        },
+        {
+          "id": 4,
+          "type": "timeseries",
+          "title": "Redis stream pending (unacked messages)",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+          "targets": [{
+            "expr": "chess_redis_stream_pending_count",
+            "legendFormat": "{{stream}}/{{group}}",
+            "refId": "A"
+          }]
+        },
+        {
+          "id": 5,
+          "type": "timeseries",
+          "title": "HTTP error rate (5xx, by service)",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+          "targets": [{
+            "expr": "sum by (service) (rate(chess_http_requests_total{status=~\"5..\"}[5m]))",
+            "legendFormat": "{{service}}",
+            "refId": "A"
+          }]
+        },
+        {
+          "id": 6,
+          "type": "stat",
+          "title": "Active pods (chess namespace)",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+          "targets": [{
+            "expr": "count by (service) (up{job=\"chess\"})",
+            "legendFormat": "{{service}}",
+            "refId": "A"
+          }]
+        }
+      ]
+    }
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: grafana-pvc
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 2Gi
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate   # PVC is RWO — see Prometheus comment above.
+  selector:
+    matchLabels: {app: grafana}
+  template:
+    metadata:
+      labels: {app: grafana}
+    spec:
+      # SQLite lives in /var/lib/grafana with UID 472 (grafana user).
+      # fsGroup makes the mounted PVC group-writable by that user even
+      # on storage classes that mount as root-owned by default.
+      securityContext:
+        fsGroup: 472
+      containers:
+      - name: grafana
+        image: grafana/grafana:11.3.0
+        ports: [{containerPort: 3000}]
+        env:
+        - name: GF_SECURITY_ADMIN_USER
+          value: admin
+        - name: GF_SECURITY_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: chess-secrets
+              key: GRAFANA_ADMIN_PASSWORD
+        # Subpath mount: Grafana is reached at /grafana/ via the Traefik
+        # ingress below. Without these two vars Grafana redirects to /
+        # on login and the asset paths 404.
+        - name: GF_SERVER_ROOT_URL
+          value: "https://vcm-50800.vm.duke.edu/grafana/"
+        - name: GF_SERVER_SERVE_FROM_SUB_PATH
+          value: "true"
+        # Disable anonymous + signup so the dashboard isn't world-open.
+        - name: GF_USERS_ALLOW_SIGN_UP
+          value: "false"
+        - name: GF_AUTH_ANONYMOUS_ENABLED
+          value: "false"
+        volumeMounts:
+        - {name: storage,             mountPath: /var/lib/grafana}
+        - {name: provisioning-ds,     mountPath: /etc/grafana/provisioning/datasources}
+        - {name: provisioning-dash,   mountPath: /etc/grafana/provisioning/dashboards}
+        - {name: dashboards,          mountPath: /var/lib/grafana/dashboards}
+        readinessProbe:
+          httpGet: {path: /api/health, port: 3000}
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        resources:
+          requests: {cpu: 50m,  memory: 128Mi}
+          limits:   {cpu: 300m, memory: 512Mi}
+      volumes:
+      - name: storage
+        persistentVolumeClaim: {claimName: grafana-pvc}
+      - name: provisioning-ds
+        configMap:
+          name: grafana-provisioning
+          items: [{key: datasources.yaml, path: datasources.yaml}]
+      - name: provisioning-dash
+        configMap:
+          name: grafana-provisioning
+          items: [{key: dashboards.yaml, path: dashboards.yaml}]
+      - name: dashboards
+        configMap:
+          name: grafana-dashboards
+          items: [{key: chess-overview.json, path: chess-overview.json}]
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+spec:
+  selector: {app: grafana}
+  ports: [{port: 3000, targetPort: 3000}]
+
+# ==============================================================================
+# 3. INGRESS — mount Grafana under /grafana/ on the existing host.
+#
+# Separate Ingress object (not edits to chess-ingress) so the
+# observability stack can be torn down independently. Traefik merges
+# Ingress rules per host, so the path-prefix routing here coexists with
+# chess-ingress's "/" → chess-gateway rule.
+# ==============================================================================
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: grafana-ingress
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+    traefik.ingress.kubernetes.io/router.middlewares: chess-redirect-https@kubernetescrd
+spec:
+  tls:
+  - hosts: [vcm-50800.vm.duke.edu]
+    secretName: chess-tls
+  rules:
+  - host: vcm-50800.vm.duke.edu
+    http:
+      paths:
+      - path: /grafana
+        pathType: Prefix
+        backend:
+          service:
+            name: grafana
+            port: {number: 3000}

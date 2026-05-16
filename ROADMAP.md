@@ -239,11 +239,11 @@ worth pre-building):**
 
 ## Queued — Production hardening
 
-### ⬜ Prometheus + Grafana install
-Metrics emit, nothing scrapes. Either deploy `kube-prometheus-stack` or wire up a small standalone Prom + Grafana with the existing `prometheus.io/scrape` annotations.
+### ✅ Prometheus + Grafana install (2026-05-16)
+Standalone Prom + Grafana shipped in `infra/observability.yaml`, plugged into the existing Kustomization. Prometheus discovers chess Services via `kubernetes_sd_config` (namespace-scoped Role/RoleBinding) and the existing `prometheus.io/scrape` annotations; Grafana auto-provisions Prometheus as the default datasource and ships one `chess-overview` dashboard (HTTP RPS / p95 latency / WS connection gauge / Redis stream pending / 5xx error rate / pod count). Grafana lives behind the existing Traefik ingress at `/grafana/` with the LE cert; admin password is `GRAFANA_ADMIN_PASSWORD` in `chess-secrets` (bootstrap mints it). Prometheus query UI is intentionally not exposed — `kubectl port-forward svc/prometheus 9090` for power users. Skipped `kube-prometheus-stack` because its 30+ CRDs and operator are overkill for three Services.
 
-### ⬜ CI grep-check for wire-contract drift
-A small script that fails the build when an event-name constant declared in `pkg/wire/CONTRACT.md` isn't referenced from BOTH backend and frontend. Catches the class of bug that ate hours of this session.
+### ✅ CI grep-check for wire-contract drift (2026-05-16)
+Shipped in `infra/check-wire-contract.sh` + a `wire-contract` CI job that blocks `docker` from running on drift. Extracts every WS event from Section 3 of `CONTRACT.md`, verifies each is referenced as a literal in both backend Go and frontend TS/Vue. Rows tagged with `<!-- spa-ignored -->` opt out of the frontend check (currently only `GameFinished`, which the SPA reads via its `StateUpdated` companion).
 
 ### ⬜ KEDA on `engine:requests` stream length
 Better autoscale signal for engine-worker than CPU%. Once installed, switch the worker HPA to a `ScaledObject` with `trigger.type=redis-streams`.

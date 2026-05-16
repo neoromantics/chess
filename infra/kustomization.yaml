@@ -5,7 +5,18 @@ namespace: chess
 
 resources:
   - deploy.yaml
+  # Standalone Prometheus + Grafana. Comment out to skip if a cluster
+  # doesn't need observability (e.g. local dev where you'd rather not
+  # eat the ~12Gi of PVC). The deploy CI applies whatever's listed
+  # here, so toggling this line is the install / uninstall switch.
+  - observability.yaml
 
 # chess-secrets is bootstrapped on the VM via infra/bootstrap-secrets.sh
 # and then owned by the cluster, never touched by CI. To rotate, edit
 # the live Secret with kubectl + rollout restart.
+#
+# observability.yaml expects GRAFANA_ADMIN_PASSWORD inside chess-secrets;
+# bootstrap-secrets.sh mints it. On a cluster that pre-dates that script
+# version, add it with:
+#   kubectl -n chess patch secret chess-secrets --type=merge \
+#     -p='{"stringData":{"GRAFANA_ADMIN_PASSWORD":"<your-password>"}}'

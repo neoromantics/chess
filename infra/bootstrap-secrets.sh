@@ -43,12 +43,18 @@ fi
 PG_USER="chess_$(openssl rand -hex 4)"
 PG_PASS="$(openssl rand -hex 32)"
 JWT="$(openssl rand -hex 32)"
+# Grafana admin password — emitted to stdout so the operator can save
+# it. Only consumed when infra/observability.yaml is also applied; the
+# core three-service stack ignores it.
+GRAFANA_PASS="$(openssl rand -hex 16)"
 
 kubectl -n "$NAMESPACE" create secret generic chess-secrets \
   --from-literal=POSTGRES_USER="$PG_USER" \
   --from-literal=POSTGRES_PASSWORD="$PG_PASS" \
   --from-literal=POSTGRES_DB=chess \
-  --from-literal=JWT_SECRET="$JWT"
+  --from-literal=JWT_SECRET="$JWT" \
+  --from-literal=GRAFANA_ADMIN_PASSWORD="$GRAFANA_PASS"
 
 echo "Created chess-secrets in namespace '$NAMESPACE'."
 echo "POSTGRES_USER=$PG_USER  (Postgres data dir is initialized with this on first PG boot only)"
+echo "GRAFANA_ADMIN_PASSWORD=$GRAFANA_PASS  (save this — visible only at bootstrap)"
