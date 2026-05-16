@@ -55,10 +55,39 @@ func (gw *Gateway) handleIndex(w http.ResponseWriter, r *http.Request) {
 			http.NotFound(w, r)
 			return
 		}
+		// Vite hashes every file in /assets/ (e.g. main-DZo9wGhC.js), so
+		// the URL changes on every build — safe to cache aggressively
+		// in the browser AND in Traefik. Everything else (favicon,
+		// public/ files) keeps the default no-policy behaviour, which
+		// the browser interprets as "cache but revalidate". The
+		// hashed-assets carve-out is the bulk of bytes anyway.
+		if isHashedAsset(r.URL.Path) {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		}
 		http.FileServer(assetsFS).ServeHTTP(w, r)
 		return
 	}
 
+	// index.html is the SPA shell and references the hashed assets by
+	// name; if a browser caches it, a deploy can ship a new asset hash
+	// but the browser keeps loading the old bundle until its
+	// heuristic cache expires (often hours). `no-store` forces a
+	// revalidation on every visit — the response is small, and this is
+	// the canonical Vite SPA cache policy.
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html")
 	w.Write(indexHTML)
+}
+
+// isHashedAsset reports whether a URL path is a Vite hashed-asset
+// output and therefore safe for year-long immutable caching. We match
+// the conventional /assets/<name>-<hash>.<ext> shape rather than a
+// blanket "any extension" rule so that other public/ files (favicon,
+// robots.txt, future static drops) keep the conservative default.
+func isHashedAsset(p string) bool {
+	const prefix = "/assets/"
+	if len(p) <= len(prefix) || p[:len(prefix)] != prefix {
+		return false
+	}
+	return true
 }
