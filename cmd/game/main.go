@@ -936,6 +936,25 @@ func (s *GameService) handleMakeMove(ctx context.Context, cmd eventbus.Command) 
 	json.Unmarshal([]byte(rec.History), &history)
 	gm.Load(rec.StartFEN, history, rec.EngineWhite, rec.EngineBlack)
 
+	// Engine-toggle late-reply guard. A search dispatched while a side
+	// was configured as engine can land here AFTER the user flipped that
+	// side back to human via /api/set_players. Without this check, the
+	// engine's bestmove still gets applied — the user's piece moves on
+	// its own and they're rightly confused. UserID==0 marks the system
+	// (engine) dispatch path; for those, re-check that the side-to-move
+	// is still engine in the *fresh* rec we just loaded inside the lock.
+	if cmd.UserID == 0 {
+		stm := gm.Board.SideToMove
+		stillEngine := (stm == core.White && rec.EngineWhite) ||
+			(stm == core.Black && rec.EngineBlack)
+		if !stillEngine {
+			slog.Info("dropping engine reply: side no longer configured as engine",
+				"game_id", cmd.GameID, "side", stm)
+			clearThinking()
+			return
+		}
+	}
+
 	m, err := gm.Board.ParseUCIMove(payload.Move)
 	if err != nil {
 		slog.Error("invalid move format", "move", payload.Move)
