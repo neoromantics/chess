@@ -51,6 +51,7 @@ game row.
 | Method | Path | Auth | Owner | Frontend caller |
 |---|---|---|---|---|
 | GET | `/api/state?game_id=X` | 🔐+game | gateway → game-svc | `api.getState` |
+| GET | `/api/can_watch?game_id=X` | 🔐+game | gateway → game-svc | gateway WS-upgrade preflight (no SPA caller) |
 | POST | `/api/move?game_id=X` | 🔐+game | gateway → game-svc | `api.move` |
 | POST | `/api/resign?game_id=X` | 🔐+game | gateway → game-svc | `api.resign` |
 | POST | `/api/new?game_id=X` | 🔐+game | gateway → game-svc | `api.newGame` |
@@ -105,10 +106,16 @@ hits the `/api/temp/*` surface; everything else hits the durable
 | GET | `/ws/user` | per-user WebSocket. JWT cookie |
 | GET | `/`, `/assets/*` | gateway-embedded SPA |
 
-The single supported PvP time control is **`15+10`** (rapid). The
-matchmaking queue keys (`mm:queue:{tc}`), the invite-acceptance
-validator (`validTimeControl`), and the SPA pickers all hard-code
-this for now.
+Supported PvP time controls: **`3+0`** (Blitz) and **`10+0`** (Rapid).
+The matchmaking queue keys (`mm:queue:{tc}`), the invite-acceptance
+validator (`validTimeControl`), and the SPA pickers stay in lock-step.
+Expand only when the active-player pool justifies a third queue.
+
+Identity injection from gateway → game-service goes via the
+`X-User-ID` and `X-Anon-ID` request headers. The legacy `?user_id=` /
+`?anon_id=` query params are still accepted by game-service for
+rolling-deploy safety but will be dropped in a follow-up after a
+clean release.
 
 ---
 
@@ -163,11 +170,10 @@ Forgetting this breaks every WS upgrade silently with
 | `type` | When | Payload shape | Backend constant | Frontend handler |
 |---|---|---|---|---|
 | `StateUpdated` | every HTTP mutation in cmd/game/handlers.go | full `stateJSON` | `eventbus.EvtStateUpdated` | `GameView.connectWS` → `updateState` |
-| `state` | (legacy alias for StateUpdated) | full `stateJSON` | — | `GameView.connectWS` → `updateState` |
 | `MovePlayed` | engine-result Command consumer | `MovePlayedEvt` (partial — SPA refetches) | `eventbus.EvtMovePlayed` | `GameView.connectWS` → `api.getState` |
 | `GameStarted` | new row written | empty | `eventbus.EvtGameStarted` | `GameView.connectWS` → `api.getState` |
 | `GameFinished` | game terminal | `stateJSON` | `eventbus.EvtGameFinished` | (rating-updater consumes; SPA reads via StateUpdated companion) |
-| `hint` | engine response, hint context | `{move, from, to, score, depth}` | (literal) | `GameView.onHintReceived` |
+| `hint` (temp games only) | temp engine hint response | `{move, from, to, score, depth}` | (literal) | `GameView.connectWS` → `onHintReceived` |
 | `DrawOffered` | one PvP participant offered a draw | `{from_user_id, game_id}` | `eventbus.EvtDrawOffered` | `GameView.connectWS` → set incoming-draw banner |
 | `DrawDeclined` | opponent declined a draw offer | `{by_user_id, game_id}` | `eventbus.EvtDrawDeclined` | `GameView.connectWS` → toast + clear banner |
 | `DrawAccepted` | opponent accepted; game ends 1/2-1/2 | `stateJSON` (status=draw_agreement) | `eventbus.EvtDrawAccepted` | (companion to StateUpdated; SPA clears banner) |
@@ -189,6 +195,8 @@ contract — backend emissions must match these strings exactly.
 | `invite_declined` | recipient said no | `inviteWire` | `eventbus.EvtInviteDeclined` | `useInviteStore` |
 | `invite_cancelled` | sender withdrew | `inviteWire` | `eventbus.EvtInviteCancelled` | `useInviteStore` |
 | `invite_expired` | TTL ran out (sweeper) | `inviteWire` | `eventbus.EvtInviteExpired` | `useInviteStore` |
+| `hint` (durable games) | engine hint response, scoped to the requester | `{move, from, to, score, depth, promo?}` | (literal — published by `publishHint`) | `GameView.onMounted` → `userEventsStore.on('hint')` |
+| `rating_updated` | Glicko-2 update after a rated game | `{user_id, rating, game_id}` | (literal) | `authStore.activateUserChannel` updates the live rating chip |
 
 ---
 

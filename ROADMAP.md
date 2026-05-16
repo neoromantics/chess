@@ -48,6 +48,48 @@ The session that produced this roadmap shipped ~40 commits restructuring the pla
 
 Nothing right now — the platform is in a stable state. Pick the next item below.
 
+Recent ops/cleanup (2026-05-16):
+- ✅ **Holistic design-audit pass** (`6c464a5` … `2f6ebee`).
+  - Dropped dead `users.elo` + `games.assessments` columns and the
+    `CmdResign` / `SendInviteCmd` / `AcceptInviteCmd` /
+    `DeclineInviteCmd` / `CancelInviteCmd` structs that had no
+    consumer. Single-game mutations and per-invite verbs all run
+    over sync HTTP now per the Streams-vs-HTTP rule.
+  - Per-session PG `statement_timeout = 5s` via DSN
+    (`PG_STATEMENT_TIMEOUT_MS` overrides). Stops a missing-index
+    regression from pinning a pool connection forever.
+  - Game cache stores one JSON blob per row instead of the
+    per-field hash — one serialize per write, one deserialize per
+    read, and schema changes ride on the existing json tags.
+  - `bus.Consume(stream, group, consumer, handler)` collapses the
+    for-select + ReadX + range + Ack boilerplate that was duplicated
+    at three sites.
+  - Graceful shutdown across gateway, game-service, engine-worker
+    (`http.Server.Shutdown` + WaitGroup; engine-worker also signals
+    every active search via the existing per-game stop atomic so the
+    consumer-group's pending list doesn't grow on rolling restarts).
+  - Identity moved to `X-User-ID` / `X-Anon-ID` request headers
+    (query params still accepted as fallback for rolling-deploy
+    safety; drop in a follow-up).
+  - New `/api/can_watch?game_id=X` — bare ownership check for the
+    WS upgrade preflight; replaces the old full-snapshot call.
+  - Hub `register`/`unregister` channels 32 → 1024 for reconnect
+    storms; Traefik `service.sticky.cookie` on `chess-gateway` so a
+    returning client lands on the pod that already has its
+    `game.evt.{id}` / `user.evt.{id}` SUBSCRIBEs live.
+- ✅ **Hint privacy fix** (`ed90b36`). PvP hint now publishes to the
+  requester's `user.evt.{id}` instead of the shared `game.evt.{id}`,
+  so the opponent no longer sees the suggested move on their own
+  board. Temp games stay on `game.evt` (single-player; no leak).
+- ✅ **Time-control menu trimmed to 3+0 (Blitz) and 10+0 (Rapid)**
+  (`ed90b36`). 10 buckets diluted the matchmaking pool at our
+  current playerbase; both `validTimeControl` and `supportedTCs`
+  moved in lock-step with the SPA picker.
+- ✅ CI: bumped `actions/setup-go` from v5 to v6 (native Node 24).
+  Combined with the earlier `checkout` / `setup-node` bumps and the
+  `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24` backstop, the Sept-2026
+  Node-20 deprecation warning is fully cleared.
+
 Recent ops/cleanup (2026-05-15):
 - ✅ Dropped the dead `games.session_id` column (pre-SPA holdover).
   Removed from `schema.sql` + added an idempotent `DROP COLUMN IF
@@ -57,10 +99,6 @@ Recent ops/cleanup (2026-05-15):
   `AcceptInviteWithGame(...)`. Also dropped the dead
   `eventbus.ChannelUserEvents` constant (services build the channel
   name directly via `fmt.Sprintf("user.evt.%d", uid)`).
-- ✅ CI: bumped `actions/checkout` and `actions/setup-node` to `@v5`
-  (native Node 24) so the Sept-2026 Node-20 deprecation warning stops
-  firing. The `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24` env var stays as a
-  backstop for any future Node-20 action.
 
 ---
 
@@ -83,10 +121,12 @@ likely-to-return ones:
       per-game WS channel. SidePanel renders ✓ / ? / ★ (best / alt /
       only-legal) next to each SAN. Centipawn-loss classification +
       stored `rec.Assessments` persistence are follow-up phases.
-- ✅ **Bullet/blitz/classical time controls** (2026-05-15) — restored
-      `1+0, 2+1, 3+0, 3+2, 5+0, 5+3, 10+0, 10+5, 15+10, 30+0` via
-      `validTimeControl` + `supportedTCs`. Match page exposes the
-      pills grouped by category (bullet/blitz/rapid/classical).
+- ✅ **Time controls** (2026-05-15, 2026-05-16) — restored as
+      `1+0, 2+1, 3+0, 3+2, 5+0, 5+3, 10+0, 10+5, 15+10, 30+0`, then
+      trimmed back to `3+0` + `10+0` on 2026-05-16 because the
+      10-bucket fan-out diluted the matchmaking pool. Expand again
+      via `validTimeControl` + `supportedTCs` when the playerbase
+      justifies a third queue.
 - ✅ **Save / load PGN** (2026-05-15) — proper Seven-Tag-Roster PGN
       via `pkg/pgn`. `GET /api/pgn?game_id=X` downloads, `POST
       /api/load_pgn` replays a pasted PGN onto the row (engine games
