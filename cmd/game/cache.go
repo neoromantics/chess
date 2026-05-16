@@ -143,7 +143,6 @@ func marshalGameHash(rec *db.GameRecord) map[string]interface{} {
 		"rated":            boolToStr(rec.Rated),
 		"status":           rec.Status,
 		"result":           rec.Result,
-		"assessments":      rec.Assessments,
 		"created_at":       rec.CreatedAt.UTC().Format(time.RFC3339Nano),
 		"updated_at":       rec.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}
@@ -174,7 +173,6 @@ func unmarshalGameHash(m map[string]string) (*db.GameRecord, error) {
 		Rated:          m["rated"] == "1",
 		Status:         m["status"],
 		Result:         m["result"],
-		Assessments:    m["assessments"],
 	}
 	if v, ok := m["white_user_id"]; ok && v != "" {
 		i := int64(strToInt(v))

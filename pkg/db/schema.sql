@@ -23,6 +23,9 @@ CREATE TABLE IF NOT EXISTS users (
     losses          INTEGER NOT NULL DEFAULT 0,
     draws           INTEGER NOT NULL DEFAULT 0
 );
+-- Drop the pre-Glicko-2 elo column on clusters that still have it.
+-- Never read by current code; superseded by rating/rd/volatility.
+ALTER TABLE users DROP COLUMN IF EXISTS elo;
 
 CREATE TABLE IF NOT EXISTS games (
     id                TEXT      PRIMARY KEY,
@@ -34,7 +37,6 @@ CREATE TABLE IF NOT EXISTS games (
     white_think_time  INTEGER   NOT NULL DEFAULT 1000,
     black_think_time  INTEGER   NOT NULL DEFAULT 1000,
     status            TEXT      NOT NULL,
-    assessments       TEXT      NOT NULL DEFAULT '[]',
     created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     white_user_id     BIGINT REFERENCES users(id) ON DELETE SET NULL,
@@ -55,6 +57,11 @@ ALTER TABLE games ADD COLUMN IF NOT EXISTS start_fen TEXT NOT NULL DEFAULT '';
 -- The column was never read or written by the current code path; this
 -- is the rare "deliberate, idempotent drop" CLAUDE.md permits.
 ALTER TABLE games DROP COLUMN IF EXISTS session_id;
+-- Drop the unused assessments column. Move-assessment Phase 1 streams
+-- per-ply verdicts over WS only; persisting them back to a column was
+-- a Phase 2 plan that never landed. The empty '[]' default just bloats
+-- the row.
+ALTER TABLE games DROP COLUMN IF EXISTS assessments;
 
 -- Index support for ListGames (WHERE white_user_id=$1 OR black_user_id=$1
 -- ORDER BY updated_at DESC). Without these, every Match-page load and
@@ -74,12 +81,10 @@ CREATE INDEX IF NOT EXISTS games_status_idx ON games (status);
 CREATE INDEX IF NOT EXISTS invites_pending_expires_idx ON invites (expires_at) WHERE status = 'pending';
 CREATE INDEX IF NOT EXISTS invites_to_user_pending_idx ON invites (to_user_id, created_at DESC) WHERE status = 'pending';
 
--- Notes on dead-but-kept columns:
--- - users.elo: legacy pre-Glicko-2 column. Kept to avoid an in-place
---   ALTER TABLE on a busy production DB; queries don't touch it.
--- - games.assessments: kept for the eventual persistence of move-
---   assessment results (Phase 1 of /api/analyze streams over WS only;
---   Phase 2 will write back to this column).
+-- The previously-dead users.elo + games.assessments columns are dropped
+-- via the ALTER TABLE DROP COLUMN IF EXISTS statements above. Adding new
+-- columns: prefer ADD COLUMN IF NOT EXISTS so the apply stays
+-- idempotent.
 
 CREATE TABLE IF NOT EXISTS invites (
   id           UUID PRIMARY KEY,

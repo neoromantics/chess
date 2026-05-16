@@ -40,9 +40,12 @@ type Querier interface {
 	GetInvite(ctx context.Context, id uuid.UUID) (Invite, error)
 	GetUserByID(ctx context.Context, id int64) (User, error)
 	GetUserByUsername(ctx context.Context, username string) (User, error)
-	// Games where the user is on either side. ORDER BY updated_at DESC matches
-	// the dashboard view.
-	ListGames(ctx context.Context, dollar_1 int64) ([]ListGamesRow, error)
+	// Games where the user is on either side. Cursor-paginated: callers pass
+	// $2 as "newer than" (typically the last seen updated_at) or NOW() for the
+	// first page, and $3 as the page size. NULL/zero $2 falls back to NOW().
+	// The (updated_at, id) tie-break keeps pagination stable when multiple
+	// rows share an updated_at.
+	ListGames(ctx context.Context, arg ListGamesParams) ([]ListGamesRow, error)
 	// The reconnect-handshake backlog query. Returns invites the user hasn't
 	// yet acted on, newest first.
 	ListPendingInvitesForUser(ctx context.Context, toUserID int64) ([]Invite, error)
@@ -56,7 +59,6 @@ type Querier interface {
 	// after a rated game completes. All four fields move atomically so we
 	// never expose a half-updated rating to readers.
 	UpdateUserRating(ctx context.Context, arg UpdateUserRatingParams) error
-	// white_user_id / black_user_id supersede user_id. user_id has been dropped.
 	UpsertGame(ctx context.Context, arg UpsertGameParams) error
 }
 

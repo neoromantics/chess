@@ -217,6 +217,12 @@ func (s *PostgresStore) GetUserStats(id int64) (*UserStats, error) {
 
 // === GAMES ===
 
+// defaultListGamesLimit is the per-page cap when the caller doesn't
+// specify one. Tight enough that the dashboard renders fast even for
+// power users with thousands of historical rows; bigger pages should
+// page through explicitly with the cursor.
+const defaultListGamesLimit = 50
+
 func (s *PostgresStore) SaveGame(g *GameRecord) error {
 	return s.q.UpsertGame(context.Background(), gen.UpsertGameParams{
 		ID:             g.ID,
@@ -233,15 +239,21 @@ func (s *PostgresStore) SaveGame(g *GameRecord) error {
 		Rated:          g.Rated,
 		Status:         g.Status,
 		Result:         defaultString(g.Result, "*"),
-		Assessments:    g.Assessments,
 		CreatedAt:      g.CreatedAt,
 		UpdatedAt:      g.UpdatedAt,
 		StartFen:       g.StartFEN,
 	})
 }
 
-func (s *PostgresStore) ListGames(userID int64) ([]GameRecord, error) {
-	rows, err := s.q.ListGames(context.Background(), userID)
+func (s *PostgresStore) ListGames(userID int64, cursor time.Time, limit int) ([]GameRecord, error) {
+	if limit <= 0 {
+		limit = defaultListGamesLimit
+	}
+	rows, err := s.q.ListGames(context.Background(), gen.ListGamesParams{
+		Column1: userID,
+		Column2: cursor,
+		Column3: int32(limit),
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -263,7 +275,6 @@ func (s *PostgresStore) ListGames(userID int64) ([]GameRecord, error) {
 			Rated:          r.Rated,
 			Status:         r.Status,
 			Result:         r.Result,
-			Assessments:    r.Assessments,
 			CreatedAt:      r.CreatedAt,
 			UpdatedAt:      r.UpdatedAt,
 		}
@@ -292,7 +303,6 @@ func (s *PostgresStore) GetGame(id string) (*GameRecord, error) {
 		Rated:          r.Rated,
 		Status:         r.Status,
 		Result:         r.Result,
-		Assessments:    r.Assessments,
 		CreatedAt:      r.CreatedAt,
 		UpdatedAt:      r.UpdatedAt,
 	}, nil
@@ -380,7 +390,6 @@ func (s *PostgresStore) AcceptInviteWithGame(inviteID uuid.UUID, toUserID int64,
 		Rated:          g.Rated,
 		Status:         g.Status,
 		Result:         defaultString(g.Result, "*"),
-		Assessments:    g.Assessments,
 		CreatedAt:      g.CreatedAt,
 		UpdatedAt:      g.UpdatedAt,
 		StartFen:       g.StartFEN,
@@ -442,7 +451,6 @@ func userFromRow(r gen.User) *User {
 		AvatarURL:    r.AvatarUrl,
 		Country:      r.Country,
 		IsPremium:    r.IsPremium,
-		Elo:          int(r.Elo),
 		Bio:          r.Bio,
 		LastLogin:    r.LastLogin,
 		CreatedAt:    r.CreatedAt,

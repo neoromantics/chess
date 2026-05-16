@@ -14,7 +14,6 @@ type User struct {
 	AvatarURL    string    `json:"avatar_url"`
 	Country      string    `json:"country"`
 	IsPremium    bool      `json:"is_premium"`
-	Elo          int       `json:"elo"` // legacy column, kept until 000004 drops it
 	Bio          string    `json:"bio"`
 	LastLogin    time.Time `json:"last_login"`
 	CreatedAt    time.Time `json:"created_at"`
@@ -54,6 +53,14 @@ type UserStats struct {
 // GameRecord represents a persistent game state in the database.
 // WhiteUserID/BlackUserID are the new platform-level owners; UserID has
 // been dropped.
+//
+// WhiteThinkTime / BlackThinkTime are the *engine search budget* in ms
+// for engine-to-move searches on each side. They're meaningful only for
+// engine and engine-vs-engine games; PvP rows carry a placeholder 1000
+// that the clock subsystem ignores (PvP uses the time_control + clock
+// hash for the actual bank). Don't conflate this with the player's
+// remaining clock — that's WhiteClockMS / BlackClockMS in the wire
+// snapshot, sourced from cmd/game/clocks.go.
 type GameRecord struct {
 	ID             string    `json:"id"`
 	WhiteUserID    *int64    `json:"white_user_id,omitempty"` // nil when engine plays white
@@ -64,13 +71,12 @@ type GameRecord struct {
 	HistorySAN     string    `json:"history_san"` // JSON string
 	EngineWhite    bool      `json:"engine_white"`
 	EngineBlack    bool      `json:"engine_black"`
-	WhiteThinkTime int       `json:"white_think_time"` // in ms
-	BlackThinkTime int       `json:"black_think_time"` // in ms
+	WhiteThinkTime int       `json:"white_think_time"` // engine search budget, ms; ignored for PvP
+	BlackThinkTime int       `json:"black_think_time"` // engine search budget, ms; ignored for PvP
 	TimeControl    string    `json:"time_control"`     // "engine" | "1+0" | "3+2" | "10+5" | "corr-1d"
 	Rated          bool      `json:"rated"`
 	Status         string    `json:"status"`
 	Result         string    `json:"result"` // "*" | "1-0" | "0-1" | "1/2-1/2"
-	Assessments    string    `json:"assessments"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 }
@@ -122,7 +128,11 @@ type Store interface {
 
 	// Game management
 	SaveGame(g *GameRecord) error
-	ListGames(userID int64) ([]GameRecord, error)
+	// ListGames returns the user's games newer-than-cursor, ordered by
+	// updated_at DESC, capped at limit. Pass a zero cursor for the first
+	// page (interpreted as "now"); pass the last returned UpdatedAt for
+	// the next page. limit <= 0 falls back to a sensible default.
+	ListGames(userID int64, cursor time.Time, limit int) ([]GameRecord, error)
 	GetGame(id string) (*GameRecord, error)
 	// DeleteGame returns the number of rows removed; callers should treat 0
 	// as a missing record (or one that was already deleted).

@@ -1,20 +1,20 @@
 -- name: CreateUser :one
-INSERT INTO users (username, password_hash, elo, created_at, last_login)
-VALUES ($1, $2, 1200, NOW(), NOW())
+INSERT INTO users (username, password_hash, created_at, last_login)
+VALUES ($1, $2, NOW(), NOW())
 RETURNING id, username, password_hash, display_name, avatar_url, country,
-          is_premium, elo, bio, last_login, created_at,
+          is_premium, bio, last_login, created_at,
           rating, rd, volatility, games_played, wins, losses, draws;
 
 -- name: GetUserByUsername :one
 SELECT id, username, password_hash, display_name, avatar_url, country,
-       is_premium, elo, bio, last_login, created_at,
+       is_premium, bio, last_login, created_at,
        rating, rd, volatility, games_played, wins, losses, draws
 FROM users
 WHERE username = $1;
 
 -- name: GetUserByID :one
 SELECT id, username, password_hash, display_name, avatar_url, country,
-       is_premium, elo, bio, last_login, created_at,
+       is_premium, bio, last_login, created_at,
        rating, rd, volatility, games_played, wins, losses, draws
 FROM users
 WHERE id = $1;
@@ -76,15 +76,14 @@ WHERE white_user_id = $1::BIGINT
    OR black_user_id = $1::BIGINT;
 
 -- name: UpsertGame :exec
--- white_user_id / black_user_id supersede user_id. user_id has been dropped.
 INSERT INTO games (
     id, white_user_id, black_user_id,
     fen, history, history_san,
     engine_white, engine_black, white_think_time, black_think_time,
-    time_control, rated, status, result, assessments,
+    time_control, rated, status, result,
     created_at, updated_at, start_fen
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 ON CONFLICT (id) DO UPDATE SET
     white_user_id    = EXCLUDED.white_user_id,
     black_user_id    = EXCLUDED.black_user_id,
@@ -99,28 +98,31 @@ ON CONFLICT (id) DO UPDATE SET
     rated            = EXCLUDED.rated,
     status           = EXCLUDED.status,
     result           = EXCLUDED.result,
-    assessments      = EXCLUDED.assessments,
     start_fen        = EXCLUDED.start_fen,
     updated_at       = EXCLUDED.updated_at;
 
 -- name: ListGames :many
--- Games where the user is on either side. ORDER BY updated_at DESC matches
--- the dashboard view.
+-- Games where the user is on either side. Cursor-paginated: callers pass
+-- $2 as "newer than" (typically the last seen updated_at) or NOW() for the
+-- first page, and $3 as the page size. NULL/zero $2 falls back to NOW().
+-- The (updated_at, id) tie-break keeps pagination stable when multiple
+-- rows share an updated_at.
 SELECT id, white_user_id, black_user_id,
        fen, history, history_san,
        engine_white, engine_black, white_think_time, black_think_time,
-       time_control, rated, status, result, assessments,
+       time_control, rated, status, result,
        created_at, updated_at, start_fen
 FROM games
-WHERE white_user_id = $1::BIGINT
-   OR black_user_id = $1::BIGINT
-ORDER BY updated_at DESC;
+WHERE (white_user_id = $1::BIGINT OR black_user_id = $1::BIGINT)
+  AND updated_at < COALESCE($2::TIMESTAMPTZ, NOW())
+ORDER BY updated_at DESC, id DESC
+LIMIT $3::INT;
 
 -- name: GetGame :one
 SELECT id, white_user_id, black_user_id,
        fen, history, history_san,
        engine_white, engine_black, white_think_time, black_think_time,
-       time_control, rated, status, result, assessments,
+       time_control, rated, status, result,
        created_at, updated_at, start_fen
 FROM games
 WHERE id = $1;

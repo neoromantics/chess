@@ -357,6 +357,12 @@ func (s *GameService) handleReplayData(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, gm.ReplayData())
 }
 
+// handleListGames returns one cursor page of the user's games. The SPA
+// requests the first page with no `before` param (server interprets as
+// now); subsequent pages pass `before=<rfc3339 of last UpdatedAt>`.
+// `limit` is capped server-side; the response shape stays a JSON array
+// — the next-page cursor is just "the UpdatedAt of the last row" so
+// the client doesn't need a wrapper object.
 func (s *GameService) handleListGames(w http.ResponseWriter, r *http.Request) {
 	userIDStr := r.URL.Query().Get("user_id")
 	if userIDStr == "" {
@@ -365,12 +371,23 @@ func (s *GameService) handleListGames(w http.ResponseWriter, r *http.Request) {
 	}
 	userID, _ := strconv.ParseInt(userIDStr, 10, 64)
 
-	games, err := s.db.ListGames(userID)
+	cursor := time.Now()
+	if v := r.URL.Query().Get("before"); v != "" {
+		if t, err := time.Parse(time.RFC3339Nano, v); err == nil {
+			cursor = t
+		}
+	}
+	limit := 0 // 0 -> store-side default
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 200 {
+			limit = n
+		}
+	}
+	games, err := s.db.ListGames(userID, cursor, limit)
 	if err != nil {
 		http.Error(w, "failed to list games", 500)
 		return
 	}
-
 	writeJSON(w, games)
 }
 
@@ -524,8 +541,6 @@ func (s *GameService) processCommand(ctx context.Context, msg redis.XMessage) {
 	switch cmd.Type {
 	case eventbus.CmdMakeMove:
 		s.handleMakeMove(ctx, cmd)
-	case eventbus.CmdResign:
-		s.handleResign(ctx, cmd)
 	case eventbus.CmdNewGame:
 		s.handleNewGame(ctx, cmd)
 	case eventbus.CmdCreatePvPGame:
@@ -578,7 +593,6 @@ func (s *GameService) handleNewGame(ctx context.Context, cmd eventbus.Command) {
 		Rated:          false,
 		Status:         "ongoing",
 		Result:         "*",
-		Assessments:    "[]",
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),
 	}
@@ -623,7 +637,6 @@ func (s *GameService) handleCreatePvPGame(ctx context.Context, cmd eventbus.Comm
 		Rated:          payload.Rated,
 		Status:         "ongoing",
 		Result:         "*",
-		Assessments:    "[]",
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),
 	}
@@ -806,29 +819,6 @@ func (s *GameService) handleMakeMove(ctx context.Context, cmd eventbus.Command) 
 		// spinner falls.
 		clearThinking()
 	}
-}
-
-func (s *GameService) handleResign(ctx context.Context, cmd eventbus.Command) {
-	rec, err := s.getGameCached(ctx, cmd.GameID)
-	if err != nil {
-		return
-	}
-
-	res := "*"
-	if rec.WhiteUserID != nil && *rec.WhiteUserID == cmd.UserID {
-		res = "0-1"
-	} else if rec.BlackUserID != nil && *rec.BlackUserID == cmd.UserID {
-		res = "1-0"
-	} else {
-		return
-	}
-
-	rec.Status = "resign"
-	rec.Result = res
-	rec.UpdatedAt = time.Now()
-	_ = s.saveGameCached(ctx, rec)
-
-	s.emitGameFinished(ctx, cmd.GameID, nil)
 }
 
 func (s *GameService) emitGameFinished(ctx context.Context, gameID string, gm *game.Game) {

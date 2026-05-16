@@ -808,7 +808,6 @@ func (s *GameService) handleTempUpgrade(w http.ResponseWriter, r *http.Request) 
 		Rated:          false,
 		Status:         rec.Status,
 		Result:         rec.Result,
-		Assessments:    "[]",
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),
 	}

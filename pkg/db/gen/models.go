@@ -21,7 +21,6 @@ type Game struct {
 	WhiteThinkTime int32         `json:"white_think_time"`
 	BlackThinkTime int32         `json:"black_think_time"`
 	Status         string        `json:"status"`
-	Assessments    string        `json:"assessments"`
 	CreatedAt      time.Time     `json:"created_at"`
 	UpdatedAt      time.Time     `json:"updated_at"`
 	WhiteUserID    sql.NullInt64 `json:"white_user_id"`
@@ -53,7 +52,6 @@ type User struct {
 	AvatarUrl    string    `json:"avatar_url"`
 	Country      string    `json:"country"`
 	IsPremium    bool      `json:"is_premium"`
-	Elo          int32     `json:"elo"`
 	Bio          string    `json:"bio"`
 	LastLogin    time.Time `json:"last_login"`
 	CreatedAt    time.Time `json:"created_at"`

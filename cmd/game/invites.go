@@ -253,7 +253,6 @@ func buildPvPGameRecord(inv *db.Invite) *db.GameRecord {
 		Rated:          inv.Rated,
 		Status:         "ongoing",
 		Result:         "*",
-		Assessments:    "[]",
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}

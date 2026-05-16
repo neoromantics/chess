@@ -139,10 +139,10 @@ func (q *Queries) CreateInvite(ctx context.Context, arg CreateInviteParams) (Inv
 }
 
 const createUser = `-- name: CreateUser :one
-INSERT INTO users (username, password_hash, elo, created_at, last_login)
-VALUES ($1, $2, 1200, NOW(), NOW())
+INSERT INTO users (username, password_hash, created_at, last_login)
+VALUES ($1, $2, NOW(), NOW())
 RETURNING id, username, password_hash, display_name, avatar_url, country,
-          is_premium, elo, bio, last_login, created_at,
+          is_premium, bio, last_login, created_at,
           rating, rd, volatility, games_played, wins, losses, draws
 `
 
@@ -162,7 +162,6 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.AvatarUrl,
 		&i.Country,
 		&i.IsPremium,
-		&i.Elo,
 		&i.Bio,
 		&i.LastLogin,
 		&i.CreatedAt,
@@ -262,7 +261,7 @@ const getGame = `-- name: GetGame :one
 SELECT id, white_user_id, black_user_id,
        fen, history, history_san,
        engine_white, engine_black, white_think_time, black_think_time,
-       time_control, rated, status, result, assessments,
+       time_control, rated, status, result,
        created_at, updated_at, start_fen
 FROM games
 WHERE id = $1
@@ -283,7 +282,6 @@ type GetGameRow struct {
 	Rated          bool          `json:"rated"`
 	Status         string        `json:"status"`
 	Result         string        `json:"result"`
-	Assessments    string        `json:"assessments"`
 	CreatedAt      time.Time     `json:"created_at"`
 	UpdatedAt      time.Time     `json:"updated_at"`
 	StartFen       string        `json:"start_fen"`
@@ -307,7 +305,6 @@ func (q *Queries) GetGame(ctx context.Context, id string) (GetGameRow, error) {
 		&i.Rated,
 		&i.Status,
 		&i.Result,
-		&i.Assessments,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.StartFen,
@@ -342,7 +339,7 @@ func (q *Queries) GetInvite(ctx context.Context, id uuid.UUID) (Invite, error) {
 
 const getUserByID = `-- name: GetUserByID :one
 SELECT id, username, password_hash, display_name, avatar_url, country,
-       is_premium, elo, bio, last_login, created_at,
+       is_premium, bio, last_login, created_at,
        rating, rd, volatility, games_played, wins, losses, draws
 FROM users
 WHERE id = $1
@@ -359,7 +356,6 @@ func (q *Queries) GetUserByID(ctx context.Context, id int64) (User, error) {
 		&i.AvatarUrl,
 		&i.Country,
 		&i.IsPremium,
-		&i.Elo,
 		&i.Bio,
 		&i.LastLogin,
 		&i.CreatedAt,
@@ -376,7 +372,7 @@ func (q *Queries) GetUserByID(ctx context.Context, id int64) (User, error) {
 
 const getUserByUsername = `-- name: GetUserByUsername :one
 SELECT id, username, password_hash, display_name, avatar_url, country,
-       is_premium, elo, bio, last_login, created_at,
+       is_premium, bio, last_login, created_at,
        rating, rd, volatility, games_played, wins, losses, draws
 FROM users
 WHERE username = $1
@@ -393,7 +389,6 @@ func (q *Queries) GetUserByUsername(ctx context.Context, username string) (User,
 		&i.AvatarUrl,
 		&i.Country,
 		&i.IsPremium,
-		&i.Elo,
 		&i.Bio,
 		&i.LastLogin,
 		&i.CreatedAt,
@@ -412,13 +407,20 @@ const listGames = `-- name: ListGames :many
 SELECT id, white_user_id, black_user_id,
        fen, history, history_san,
        engine_white, engine_black, white_think_time, black_think_time,
-       time_control, rated, status, result, assessments,
+       time_control, rated, status, result,
        created_at, updated_at, start_fen
 FROM games
-WHERE white_user_id = $1::BIGINT
-   OR black_user_id = $1::BIGINT
-ORDER BY updated_at DESC
+WHERE (white_user_id = $1::BIGINT OR black_user_id = $1::BIGINT)
+  AND updated_at < COALESCE($2::TIMESTAMPTZ, NOW())
+ORDER BY updated_at DESC, id DESC
+LIMIT $3::INT
 `
+
+type ListGamesParams struct {
+	Column1 int64     `json:"column_1"`
+	Column2 time.Time `json:"column_2"`
+	Column3 int32     `json:"column_3"`
+}
 
 type ListGamesRow struct {
 	ID             string        `json:"id"`
@@ -435,16 +437,18 @@ type ListGamesRow struct {
 	Rated          bool          `json:"rated"`
 	Status         string        `json:"status"`
 	Result         string        `json:"result"`
-	Assessments    string        `json:"assessments"`
 	CreatedAt      time.Time     `json:"created_at"`
 	UpdatedAt      time.Time     `json:"updated_at"`
 	StartFen       string        `json:"start_fen"`
 }
 
-// Games where the user is on either side. ORDER BY updated_at DESC matches
-// the dashboard view.
-func (q *Queries) ListGames(ctx context.Context, dollar_1 int64) ([]ListGamesRow, error) {
-	rows, err := q.db.QueryContext(ctx, listGames, dollar_1)
+// Games where the user is on either side. Cursor-paginated: callers pass
+// $2 as "newer than" (typically the last seen updated_at) or NOW() for the
+// first page, and $3 as the page size. NULL/zero $2 falls back to NOW().
+// The (updated_at, id) tie-break keeps pagination stable when multiple
+// rows share an updated_at.
+func (q *Queries) ListGames(ctx context.Context, arg ListGamesParams) ([]ListGamesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listGames, arg.Column1, arg.Column2, arg.Column3)
 	if err != nil {
 		return nil, err
 	}
@@ -467,7 +471,6 @@ func (q *Queries) ListGames(ctx context.Context, dollar_1 int64) ([]ListGamesRow
 			&i.Rated,
 			&i.Status,
 			&i.Result,
-			&i.Assessments,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.StartFen,
@@ -711,10 +714,10 @@ INSERT INTO games (
     id, white_user_id, black_user_id,
     fen, history, history_san,
     engine_white, engine_black, white_think_time, black_think_time,
-    time_control, rated, status, result, assessments,
+    time_control, rated, status, result,
     created_at, updated_at, start_fen
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 ON CONFLICT (id) DO UPDATE SET
     white_user_id    = EXCLUDED.white_user_id,
     black_user_id    = EXCLUDED.black_user_id,
@@ -729,7 +732,6 @@ ON CONFLICT (id) DO UPDATE SET
     rated            = EXCLUDED.rated,
     status           = EXCLUDED.status,
     result           = EXCLUDED.result,
-    assessments      = EXCLUDED.assessments,
     start_fen        = EXCLUDED.start_fen,
     updated_at       = EXCLUDED.updated_at
 `
@@ -749,13 +751,11 @@ type UpsertGameParams struct {
 	Rated          bool          `json:"rated"`
 	Status         string        `json:"status"`
 	Result         string        `json:"result"`
-	Assessments    string        `json:"assessments"`
 	CreatedAt      time.Time     `json:"created_at"`
 	UpdatedAt      time.Time     `json:"updated_at"`
 	StartFen       string        `json:"start_fen"`
 }
 
-// white_user_id / black_user_id supersede user_id. user_id has been dropped.
 func (q *Queries) UpsertGame(ctx context.Context, arg UpsertGameParams) error {
 	_, err := q.db.ExecContext(ctx, upsertGame,
 		arg.ID,
@@ -772,7 +772,6 @@ func (q *Queries) UpsertGame(ctx context.Context, arg UpsertGameParams) error {
 		arg.Rated,
 		arg.Status,
 		arg.Result,
-		arg.Assessments,
 		arg.CreatedAt,
 		arg.UpdatedAt,
 		arg.StartFen,

@@ -45,34 +45,27 @@ type EngineResponse struct {
 	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
-// Command types
+// Command types. Only the ones actually dispatched are listed — earlier
+// drafts had CmdResign / CmdOfferDraw / CmdAcceptDraw / CmdDeclineDraw /
+// CmdSendInvite / CmdAcceptInvite / CmdDeclineInvite / CmdCancelInvite,
+// but the SPA now hits sync HTTP for every single-game and per-invite
+// mutation (Streams-vs-HTTP rule — see CLAUDE.md). Streams stay for
+// (1) cross-service intent (matchmaker pairing on game:commands) and
+// (2) CPU-asymmetric work (engine search on engine:requests).
 const (
 	CmdMakeMove      = "MakeMove"
-	CmdResign        = "Resign"
-	CmdOfferDraw     = "OfferDraw"
-	CmdAcceptDraw    = "AcceptDraw"
-	CmdDeclineDraw   = "DeclineDraw"
 	CmdNewGame       = "NewGame"
 	CmdCreatePvPGame = "CreatePvPGame"
 
 	// Matchmaking Commands
-	CmdJoinQueue     = "JoinQueue"
-	CmdLeaveQueue    = "LeaveQueue"
-	CmdSendInvite    = "SendInvite"
-	CmdAcceptInvite  = "AcceptInvite"
-	CmdDeclineInvite = "DeclineInvite"
-	CmdCancelInvite  = "CancelInvite"
+	CmdJoinQueue  = "JoinQueue"
+	CmdLeaveQueue = "LeaveQueue"
 )
 
 // Command payloads
 type MakeMoveCmd struct {
 	Move string `json:"move"` // UCI format
 }
-
-type ResignCmd struct{}
-type OfferDrawCmd struct{}
-type AcceptDrawCmd struct{}
-type DeclineDrawCmd struct{}
 
 // NewGameCmd carries the human-vs-engine creation params from the
 // dashboard's "Engine think" dropdown. EngineWhite/EngineBlack default
@@ -98,24 +91,6 @@ type JoinQueueCmd struct {
 
 type LeaveQueueCmd struct {
 	TimeControl string `json:"time_control"`
-}
-
-type SendInviteCmd struct {
-	ToUserID    int64  `json:"to_user_id"`
-	TimeControl string `json:"time_control"`
-	Rated       bool   `json:"rated"`
-}
-
-type AcceptInviteCmd struct {
-	InviteID string `json:"invite_id"`
-}
-
-type DeclineInviteCmd struct {
-	InviteID string `json:"invite_id"`
-}
-
-type CancelInviteCmd struct {
-	InviteID string `json:"invite_id"`
 }
 
 // Event types.
