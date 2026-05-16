@@ -538,12 +538,16 @@ func (s *GameService) handleReplayData(w http.ResponseWriter, r *http.Request) {
 // — the next-page cursor is just "the UpdatedAt of the last row" so
 // the client doesn't need a wrapper object.
 func (s *GameService) handleListGames(w http.ResponseWriter, r *http.Request) {
-	userIDStr := r.URL.Query().Get("user_id")
-	if userIDStr == "" {
-		http.Error(w, "missing user_id", 400)
+	// Identity comes from the gateway-injected X-User-ID header (set by
+	// injectAuthedUser after JWT validation). The legacy ?user_id= query
+	// param was removed in 3dba1d8; this handler was the lone holdout
+	// from the 32f4b02 migration and silently returned an empty list
+	// (via a 400 the SPA's loadGames swallows) for every signed-in user.
+	userID, ok := authedUserID(r)
+	if !ok {
+		http.Error(w, "missing user_id", http.StatusBadRequest)
 		return
 	}
-	userID, _ := strconv.ParseInt(userIDStr, 10, 64)
 
 	cursor := time.Now()
 	if v := r.URL.Query().Get("before"); v != "" {
