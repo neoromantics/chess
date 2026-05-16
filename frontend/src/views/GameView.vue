@@ -381,7 +381,7 @@ const connectWS = () => {
     try {
       const data = JSON.parse(event.data);
       // Backend emits a few different event types over game.evt.{id}:
-      //   - 'state' / 'StateUpdated'  full StateJSON snapshot (every HTTP
+      //   - 'StateUpdated'            full StateJSON snapshot (every HTTP
       //                                mutation in cmd/game/handlers.go)
       //   - 'MovePlayed'              delta event from the engine-result
       //                                consumer path; payload is partial
@@ -389,7 +389,7 @@ const connectWS = () => {
       //                                snapshot in the payload
       // For the delta/no-payload variants we re-fetch /api/state, which
       // gives us the canonical full snapshot.
-      if (data.type === 'state' || data.type === 'StateUpdated') {
+      if (data.type === 'StateUpdated') {
         updateState(data.payload);
       } else if (data.type === 'MovePlayed' || data.type === 'GameStarted') {
         refetchState();

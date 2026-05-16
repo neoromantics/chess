@@ -59,11 +59,15 @@ type Client struct {
 
 func NewHub(b *eventbus.Client) *Hub {
 	return &Hub{
-		bus:        b,
-		gameSubs:   make(map[string]map[*Client]bool),
-		userSubs:   make(map[string]map[*Client]bool),
-		register:   make(chan *Client, 32),
-		unregister: make(chan *Client, 32),
+		bus:      b,
+		gameSubs: make(map[string]map[*Client]bool),
+		userSubs: make(map[string]map[*Client]bool),
+		// 1024-deep register/unregister so a reconnect storm (post
+		// network blip, pod restart, or rolling deploy) doesn't block
+		// the upgrade handlers. Each pending Client is ~200 bytes; even
+		// fully queued it's <250 KB per pod.
+		register:   make(chan *Client, 1024),
+		unregister: make(chan *Client, 1024),
 	}
 }
 

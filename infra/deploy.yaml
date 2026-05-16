@@ -251,6 +251,16 @@ metadata:
     prometheus.io/scrape: "true"
     prometheus.io/port: "8080"
     prometheus.io/path: "/metrics"
+    # Traefik session stickiness: a returning client lands on the same
+    # gateway pod, so its game.evt.* / user.evt.* SUBSCRIBE has already
+    # been established. Without this, each reconnect could bounce to a
+    # fresh pod that has to SUBSCRIBE from scratch — extra Redis chatter
+    # per re-connect storm. The cookie is set per-Service by Traefik.
+    traefik.ingress.kubernetes.io/service.sticky.cookie: "true"
+    traefik.ingress.kubernetes.io/service.sticky.cookie.name: "chess_lb"
+    traefik.ingress.kubernetes.io/service.sticky.cookie.httponly: "true"
+    traefik.ingress.kubernetes.io/service.sticky.cookie.secure: "true"
+    traefik.ingress.kubernetes.io/service.sticky.cookie.samesite: "lax"
 spec:
   selector:
     app: chess-gateway
