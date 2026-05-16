@@ -46,8 +46,11 @@ func (gw *Gateway) handleSignup(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "username must be 3-32 characters", 400)
 		return
 	}
-	if len(req.Password) < 6 {
-		http.Error(w, "password must be at least 6 characters", 400)
+	if err := auth.ValidatePassword(req.Password, req.Username); err != nil {
+		// PasswordError messages are written for end users — pass
+		// through verbatim. The frontend Signup form surfaces them
+		// next to the password field.
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	hash, err := auth.HashPassword(req.Password)
@@ -223,6 +226,10 @@ func (gw *Gateway) handleChangePassword(w http.ResponseWriter, r *http.Request) 
 	dbUser, _ := gw.db.GetUserByID(user.UserID)
 	if dbUser == nil || !auth.CheckPasswordHash(req.CurrentPassword, dbUser.PasswordHash) {
 		http.Error(w, "invalid current password", 401)
+		return
+	}
+	if err := auth.ValidatePassword(req.NewPassword, dbUser.Username); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	newHash, _ := auth.HashPassword(req.NewPassword)

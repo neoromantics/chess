@@ -9,7 +9,15 @@
         </div>
         <div class="form-group">
           <label>Password</label>
-          <input v-model="password" type="password" required placeholder="Choose a password">
+          <input v-model="password" type="password" required placeholder="At least 8 characters" minlength="8">
+          <!-- Mirror of the backend ValidatePassword rules in pkg/auth/password.go.
+               Authoritative check happens server-side; this is just to surface
+               the constraints before the user hits Submit. -->
+          <div class="hint-list">
+            <div :class="{ ok: password.length >= 8 }">• At least 8 characters</div>
+            <div :class="{ ok: password.length > 0 && !looksCommon }">• Not a commonly-used password</div>
+            <div :class="{ ok: password.length > 0 && !containsUsername }">• Doesn't contain your username</div>
+          </div>
         </div>
         <div class="form-group">
           <label>Confirm Password</label>
@@ -28,7 +36,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { api } from '../api';
 import { useAuthStore } from '../stores/auth';
@@ -41,6 +49,23 @@ const password = ref('');
 const confirmPassword = ref('');
 const error = ref('');
 const loading = ref(false);
+
+// Frontend mirror of pkg/auth/password.go's blacklist. Kept short on
+// purpose — the server has the authoritative list; this is just for
+// instant visual feedback while typing. Don't fork the full list to
+// avoid drift; the most common offenders cover 95% of the help-text
+// value.
+const commonPasswordsHint = new Set([
+  'password', 'password1', 'password123', '12345678', '123456789',
+  'qwerty', 'qwerty123', 'abc123', 'letmein', 'welcome', 'iloveyou',
+  'admin', 'changeme', 'chess', 'chess123', 'chessmaster',
+]);
+const looksCommon = computed(() => commonPasswordsHint.has(password.value.toLowerCase()));
+const containsUsername = computed(() => {
+  const u = username.value.trim().toLowerCase();
+  if (u.length < 3) return false;
+  return password.value.toLowerCase().includes(u);
+});
 
 const handleSubmit = async () => {
   if (password.value !== confirmPassword.value) {
@@ -86,6 +111,9 @@ h2 { margin: 0 0 24px; text-align: center; color: #ddd; }
 .btn-primary { width: 100%; background: #4a6b8a; color: white; border: none; padding: 14px; border-radius: 4px; cursor: pointer; font-weight: 600; font-size: 16px; }
 .btn-primary:hover { background: #5a7b9a; }
 .btn-primary:disabled { opacity: 0.5; }
+
+.hint-list { margin-top: 8px; font-size: 12px; color: #777; line-height: 1.6; }
+.hint-list .ok { color: #5cb85c; }
 
 .auth-footer { margin-top: 24px; text-align: center; font-size: 14px; color: #888; }
 .auth-footer a { color: #4a6b8a; text-decoration: none; }
