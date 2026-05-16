@@ -62,6 +62,14 @@ body { font-family: -apple-system, system-ui, sans-serif; background: #1e1e1e; c
 select, button, input[type=text], input[type=password] { background: #333; color: #ddd; border: 1px solid #555; padding: 6px 10px; border-radius: 3px; font: inherit; cursor: pointer; }
 button:hover, select:hover { background: #404040; }
 
+/* iOS Safari auto-zooms the viewport when a focused input's effective
+ * font-size is under 16px. Bumping every text input + select up to
+ * 16px on small screens kills the zoom without uglifying the desktop
+ * layout (which we let the per-view font-size keep at 14px). */
+@media (max-width: 768px) {
+  input, select, textarea { font-size: 16px !important; }
+}
+
 .btn-row { display: flex; gap: 6px; margin: 6px 0; }
 .btn-row button { flex: 1; }
 

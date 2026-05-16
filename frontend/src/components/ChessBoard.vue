@@ -88,8 +88,13 @@ const boardSquares = computed(() => {
 </script>
 
 <style scoped>
-#board { display: grid; grid-template-columns: repeat(8, var(--sq)); grid-template-rows: repeat(8, var(--sq)); position: relative; }
-.sq { width: var(--sq); height: var(--sq); display: flex; align-items: center; justify-content: center; font-size: calc(var(--sq) * 0.78); cursor: pointer; user-select: none; position: relative; line-height: 1; }
+#board { display: grid; grid-template-columns: repeat(8, var(--sq)); grid-template-rows: repeat(8, var(--sq)); position: relative; touch-action: manipulation; }
+/* touch-action: manipulation kills iOS Safari's "double-tap to zoom"
+ * gesture on board squares. Without it, two quick piece taps (e.g.
+ * a fast premove or grabbing/placing) is interpreted as a zoom
+ * gesture; the viewport zooms in and the user has to pinch back out
+ * to keep playing. We want single taps and pans, nothing else. */
+.sq { width: var(--sq); height: var(--sq); display: flex; align-items: center; justify-content: center; font-size: calc(var(--sq) * 0.78); cursor: pointer; user-select: none; position: relative; line-height: 1; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 .light { background: #f0d9b5; }
 .dark  { background: #b58863; }
 .sel   { box-shadow: inset 0 0 0 4px #ffe066; }

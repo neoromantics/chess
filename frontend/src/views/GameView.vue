@@ -1027,9 +1027,15 @@ onUnmounted(() => {
 <style scoped>
 #app-container { display: flex; gap: 32px; align-items: flex-start; justify-content: center; padding: 32px 20px; min-height: calc(100vh - 64px); width: 100%; }
 
+/* Below 1000px the SidePanel stacks under the board instead of
+ * sitting beside it. Earlier this breakpoint *hid* the panel entirely,
+ * which meant a mobile user couldn't resign, undo, see moves, or open
+ * settings — they could only tap pieces. Stacking keeps every control
+ * reachable; the board still gets the full viewport width since the
+ * --sq sizing on App.vue's <1000px branch already accounts for it. */
 @media (max-width: 1000px) {
-  #side { display: none; }
-  #app-container { padding: 10px; gap: 0; }
+  #app-container { padding: 10px; gap: 12px; flex-direction: column; align-items: center; }
+  #side { width: 100%; max-width: 560px; padding: 0 4px; }
 }
 
 #side { width: 340px; }
