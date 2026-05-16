@@ -6,8 +6,10 @@ import (
 	_ "embed"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -32,6 +34,36 @@ func envInt(key string, fallback int) int {
 //
 //go:embed schema.sql
 var schemaSQL string
+
+// withStatementTimeout appends a per-session statement_timeout to the
+// DSN so a runaway SELECT (missing index, bad cursor, planner blowup)
+// can't pin a pool connection forever. Postgres aborts the offending
+// query, lib/pq surfaces it as an error, and the connection returns
+// to the pool. If the operator already passed an `options` query param
+// we respect it (assume they know what they're doing).
+//
+// 5s default is loose enough for any indexed lookup or paginated list
+// but tight enough that a missing-index regression pages someone
+// quickly instead of starving the pool silently.
+func withStatementTimeout(dsn string, timeoutMS int) string {
+	if timeoutMS <= 0 {
+		return dsn
+	}
+	if !(strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://")) {
+		return dsn
+	}
+	u, err := url.Parse(dsn)
+	if err != nil {
+		return dsn
+	}
+	q := u.Query()
+	if q.Get("options") != "" {
+		return dsn
+	}
+	q.Set("options", fmt.Sprintf("-c statement_timeout=%d", timeoutMS))
+	u.RawQuery = q.Encode()
+	return u.String()
+}
 
 // schemaLockID is an arbitrary 64-bit constant used with
 // pg_advisory_lock() to serialize schema application across racing
@@ -59,6 +91,8 @@ type PostgresStore struct {
 // / PG_MAX_IDLE_CONNS lets ops tune without a code change when the
 // topology shifts.
 func OpenPostgres(dsn string) (Store, error) {
+	dsn = withStatementTimeout(dsn, envInt("PG_STATEMENT_TIMEOUT_MS", 5000))
+
 	sqlDB, err := sql.Open("postgres", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open postgres: %w", err)
@@ -98,6 +132,14 @@ func applySchema(sqlDB *sql.DB) error {
 		return fmt.Errorf("acquire conn: %w", err)
 	}
 	defer conn.Close()
+
+	// Disable the global statement_timeout for this session: pg_advisory_lock
+	// can block on a peer replica's schema apply, and a large CREATE INDEX
+	// in schema.sql can easily exceed 5s on cold start. The ctx timeout
+	// above (30s) is the real ceiling here.
+	if _, err := conn.ExecContext(ctx, "SET statement_timeout = 0"); err != nil {
+		return fmt.Errorf("clear statement_timeout: %w", err)
+	}
 
 	if _, err := conn.ExecContext(ctx, "SELECT pg_advisory_lock($1)", schemaLockID); err != nil {
 		return fmt.Errorf("acquire advisory lock: %w", err)
