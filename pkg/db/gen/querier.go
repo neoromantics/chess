@@ -6,6 +6,7 @@ package gen
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -70,10 +71,20 @@ type Querier interface {
 	// the history. detail is a free-form JSON or plain string the handler
 	// can set per-action ("confirm_username mismatch", "cascade rows=N").
 	InsertAdminAction(ctx context.Context, arg InsertAdminActionParams) error
+	// Active-games panel on /admin. Joins users for the player usernames
+	// so the SPA renders "alice vs bob" without a second roundtrip. Caps
+	// at 50: at our scale that's "every active game"; if we ever blow
+	// past that, swap in cursor pagination.
+	ListActiveGamesForAdmin(ctx context.Context) ([]ListActiveGamesForAdminRow, error)
 	// Most recent 50 actions, for the audit panel. Anything older is
 	// archived implicitly by the index + LIMIT — we don't expect this
 	// table to grow fast enough to need pagination yet.
 	ListAdminActions(ctx context.Context) ([]AdminAction, error)
+	// Pagination cursor for the audit panel. Pass a non-zero $1 to fetch
+	// the next page; the first page calls ListAdminActions (no cursor).
+	// The (created_at, id) tie-break keeps the order stable when two rows
+	// share a created_at to the microsecond.
+	ListAdminActionsBefore(ctx context.Context, createdAt time.Time) ([]AdminAction, error)
 	// Read-side of the bot pool. Game-service calls this at boot to warm
 	// its in-memory bot cache. Cheap (small N, indexable predicate) and
 	// only runs at startup; we don't poll.

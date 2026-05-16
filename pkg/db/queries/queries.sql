@@ -302,3 +302,33 @@ LIMIT 50;
 -- Wrap in an audit-log write at the handler level; this query is
 -- intentionally bare so the caller controls the transaction.
 DELETE FROM users WHERE id = $1;
+
+-- name: ListActiveGamesForAdmin :many
+-- Active-games panel on /admin. Joins users for the player usernames
+-- so the SPA renders "alice vs bob" without a second roundtrip. Caps
+-- at 50: at our scale that's "every active game"; if we ever blow
+-- past that, swap in cursor pagination.
+SELECT g.id,
+       g.white_user_id, g.black_user_id,
+       uw.username AS white_username,
+       ub.username AS black_username,
+       g.time_control, g.rated,
+       g.created_at, g.updated_at
+FROM games g
+LEFT JOIN users uw ON uw.id = g.white_user_id
+LEFT JOIN users ub ON ub.id = g.black_user_id
+WHERE g.status = 'ongoing'
+ORDER BY g.updated_at DESC
+LIMIT 50;
+
+-- name: ListAdminActionsBefore :many
+-- Pagination cursor for the audit panel. Pass a non-zero $1 to fetch
+-- the next page; the first page calls ListAdminActions (no cursor).
+-- The (created_at, id) tie-break keeps the order stable when two rows
+-- share a created_at to the microsecond.
+SELECT id, actor_user_id, actor_username, action,
+       target_user_id, target_username, detail, created_at
+FROM admin_actions
+WHERE created_at < $1
+ORDER BY created_at DESC
+LIMIT 50;

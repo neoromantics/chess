@@ -358,6 +358,49 @@ func (s *PostgresStore) ListAdminActions() ([]AdminAction, error) {
 	return out, nil
 }
 
+func (s *PostgresStore) ListAdminActionsBefore(cursor time.Time) ([]AdminAction, error) {
+	rows, err := s.q.ListAdminActionsBefore(context.Background(), cursor)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]AdminAction, len(rows))
+	for i, r := range rows {
+		out[i] = AdminAction{
+			ID:             r.ID,
+			ActorUserID:    nullToInt64Ptr(r.ActorUserID),
+			ActorUsername:  r.ActorUsername,
+			Action:         r.Action,
+			TargetUserID:   nullToInt64Ptr(r.TargetUserID),
+			TargetUsername: r.TargetUsername,
+			Detail:         r.Detail,
+			CreatedAt:      r.CreatedAt,
+		}
+	}
+	return out, nil
+}
+
+func (s *PostgresStore) ListActiveGamesAdmin() ([]AdminLiveGame, error) {
+	rows, err := s.q.ListActiveGamesForAdmin(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	out := make([]AdminLiveGame, len(rows))
+	for i, r := range rows {
+		out[i] = AdminLiveGame{
+			ID:            r.ID,
+			WhiteUserID:   nullToInt64Ptr(r.WhiteUserID),
+			BlackUserID:   nullToInt64Ptr(r.BlackUserID),
+			WhiteUsername: r.WhiteUsername.String,
+			BlackUsername: r.BlackUsername.String,
+			TimeControl:   r.TimeControl,
+			Rated:         r.Rated,
+			CreatedAt:     r.CreatedAt,
+			UpdatedAt:     r.UpdatedAt,
+		}
+	}
+	return out, nil
+}
+
 // === GAMES ===
 
 // defaultListGamesLimit is the per-page cap when the caller doesn't

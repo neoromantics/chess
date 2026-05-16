@@ -153,7 +153,7 @@ export const api = {
     rating: number;
     created_at: string;
   }>>('/api/admin/signups'),
-  adminActions: () => request<Array<{
+  adminActions: (beforeIso?: string) => request<Array<{
     id: number;
     actor_user_id?: number;
     actor_username: string;
@@ -162,7 +162,19 @@ export const api = {
     target_username: string;
     detail: string;
     created_at: string;
-  }>>('/api/admin/actions'),
+  }>>('/api/admin/actions' + (beforeIso ? `?before=${encodeURIComponent(beforeIso)}` : '')),
+  adminLiveGames: () => request<Array<{
+    id: string;
+    white_user_id?: number;
+    black_user_id?: number;
+    white_username: string;
+    black_username: string;
+    time_control: string;
+    rated: boolean;
+    created_at: string;
+    updated_at: string;
+    viewer_count: number;
+  }>>('/api/admin/live_games'),
   // Hard-delete. Body has to carry confirm_username matching the
   // target exactly — gateway 400s on mismatch as a typo guard.
   adminDeleteUser: (id: number, confirmUsername: string) =>

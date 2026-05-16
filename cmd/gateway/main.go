@@ -121,6 +121,7 @@ func main() {
 	mux.HandleFunc("GET /api/admin/overview", gw.handleAdminOverview)
 	mux.HandleFunc("GET /api/admin/signups", gw.handleAdminSignups)
 	mux.HandleFunc("GET /api/admin/actions", gw.handleAdminActions)
+	mux.HandleFunc("GET /api/admin/live_games", gw.handleAdminLiveGames)
 	// DELETE /api/admin/users/{id} — body {"confirm_username": "..."}.
 	// adminOnly + self-deletion guard + bot guard + typed-confirm.
 	mux.HandleFunc("DELETE /api/admin/users/{id}", gw.handleAdminDeleteUser)

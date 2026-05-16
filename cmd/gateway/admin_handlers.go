@@ -129,13 +129,72 @@ func (gw *Gateway) handleAdminActions(w http.ResponseWriter, r *http.Request) {
 	if _, ok := gw.adminOnly(w, r); !ok {
 		return
 	}
-	rows, err := gw.db.ListAdminActions()
+	// Cursor pagination: ?before=<rfc3339> fetches the page older than
+	// that timestamp. First-page callers omit it; subsequent pages
+	// pass the CreatedAt of the last returned row. Empty / unparsable
+	// values fall through to the first-page query so a typo can't
+	// blank the panel.
+	var rows []db.AdminAction
+	var err error
+	if v := r.URL.Query().Get("before"); v != "" {
+		if t, perr := time.Parse(time.RFC3339Nano, v); perr == nil {
+			rows, err = gw.db.ListAdminActionsBefore(t)
+		} else {
+			rows, err = gw.db.ListAdminActions()
+		}
+	} else {
+		rows, err = gw.db.ListAdminActions()
+	}
 	if err != nil {
 		slog.Error("admin actions: list failed", "error", err)
 		http.Error(w, "failed to list actions", http.StatusInternalServerError)
 		return
 	}
 	writeJSONGW(w, rows)
+}
+
+// handleAdminLiveGames lists every ongoing game with its current WS
+// subscriber count attached. The viewer count is sourced from Redis
+// PUBSUB NUMSUB on the same `game.evt.{id}` channels the gateway hub
+// subscribes to — counting all subscribers (players + spectators)
+// because the per-game pub/sub layer doesn't distinguish them. The
+// SPA labels it "viewers" which the operator can interpret.
+func (gw *Gateway) handleAdminLiveGames(w http.ResponseWriter, r *http.Request) {
+	if _, ok := gw.adminOnly(w, r); !ok {
+		return
+	}
+	games, err := gw.db.ListActiveGamesAdmin()
+	if err != nil {
+		slog.Error("admin live games: list failed", "error", err)
+		http.Error(w, "failed to list live games", http.StatusInternalServerError)
+		return
+	}
+	if len(games) == 0 {
+		writeJSONGW(w, games)
+		return
+	}
+	channels := make([]string, len(games))
+	for i, g := range games {
+		channels[i] = "game.evt." + g.ID
+	}
+	// Single round-trip: PUBSUB NUMSUB accepts a vector of channels.
+	// 500ms bound — same posture as the queue-depth lookup; if Redis
+	// is slow we'd rather render the rest of the panel with viewer=0
+	// than time out wholesale.
+	pCtx, cancel := context.WithTimeout(r.Context(), adminQueueDepthTimeout)
+	defer cancel()
+	subs, err := gw.bus.Rdb().PubSubNumSub(pCtx, channels...).Result()
+	if err != nil {
+		slog.Warn("admin live games: NUMSUB failed", "error", err)
+		// Don't fail the whole response — the games list is still
+		// useful without the viewer column.
+		writeJSONGW(w, games)
+		return
+	}
+	for i, g := range games {
+		games[i].ViewerCount = subs["game.evt."+g.ID]
+	}
+	writeJSONGW(w, games)
 }
 
 // handleAdminDeleteUser is the only destructive admin endpoint in the

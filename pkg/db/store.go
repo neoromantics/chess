@@ -72,6 +72,27 @@ type AdminAction struct {
 	CreatedAt      time.Time `json:"created_at"`
 }
 
+// AdminLiveGame is one row of the /admin "Live games" panel. Joins
+// from the active-game query plus the per-game Redis subscriber count
+// the gateway fills in before responding.
+type AdminLiveGame struct {
+	ID            string    `json:"id"`
+	WhiteUserID   *int64    `json:"white_user_id,omitempty"`
+	BlackUserID   *int64    `json:"black_user_id,omitempty"`
+	WhiteUsername string    `json:"white_username"`
+	BlackUsername string    `json:"black_username"`
+	TimeControl   string    `json:"time_control"`
+	Rated         bool      `json:"rated"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+	// ViewerCount is the live count of WS subscribers on
+	// game.evt.{id}. Includes the two players if they're currently
+	// connected — the SPA renders it as "N watching" without trying
+	// to subtract participants (we'd need per-client metadata to do
+	// that correctly).
+	ViewerCount int64 `json:"viewer_count"`
+}
+
 // UserSummary is the public view of another user (no PII, no hash).
 // Returned by username search for invites and shown in profile cards.
 type UserSummary struct {
@@ -204,6 +225,14 @@ type Store interface {
 	DeleteUser(id int64) (int64, error)
 	InsertAdminAction(actorID *int64, actorUsername, action string, targetID *int64, targetUsername, detail string) error
 	ListAdminActions() ([]AdminAction, error)
+	// ListAdminActionsBefore is the cursor-paginated tail. Passes the
+	// last seen CreatedAt as the cursor; first-page callers use
+	// ListAdminActions (no cursor). Returns up to 50 rows.
+	ListAdminActionsBefore(cursor time.Time) ([]AdminAction, error)
+	// ListActiveGamesAdmin powers /admin's "Live games" panel — every
+	// ongoing row joined to player usernames, no viewer count yet
+	// (handler attaches that from Redis PUBSUB NUMSUB).
+	ListActiveGamesAdmin() ([]AdminLiveGame, error)
 
 	// Game management
 	SaveGame(g *GameRecord) error

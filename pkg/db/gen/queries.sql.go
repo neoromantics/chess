@@ -526,6 +526,70 @@ func (q *Queries) InsertAdminAction(ctx context.Context, arg InsertAdminActionPa
 	return err
 }
 
+const listActiveGamesForAdmin = `-- name: ListActiveGamesForAdmin :many
+SELECT g.id,
+       g.white_user_id, g.black_user_id,
+       uw.username AS white_username,
+       ub.username AS black_username,
+       g.time_control, g.rated,
+       g.created_at, g.updated_at
+FROM games g
+LEFT JOIN users uw ON uw.id = g.white_user_id
+LEFT JOIN users ub ON ub.id = g.black_user_id
+WHERE g.status = 'ongoing'
+ORDER BY g.updated_at DESC
+LIMIT 50
+`
+
+type ListActiveGamesForAdminRow struct {
+	ID            string         `json:"id"`
+	WhiteUserID   sql.NullInt64  `json:"white_user_id"`
+	BlackUserID   sql.NullInt64  `json:"black_user_id"`
+	WhiteUsername sql.NullString `json:"white_username"`
+	BlackUsername sql.NullString `json:"black_username"`
+	TimeControl   string         `json:"time_control"`
+	Rated         bool           `json:"rated"`
+	CreatedAt     time.Time      `json:"created_at"`
+	UpdatedAt     time.Time      `json:"updated_at"`
+}
+
+// Active-games panel on /admin. Joins users for the player usernames
+// so the SPA renders "alice vs bob" without a second roundtrip. Caps
+// at 50: at our scale that's "every active game"; if we ever blow
+// past that, swap in cursor pagination.
+func (q *Queries) ListActiveGamesForAdmin(ctx context.Context) ([]ListActiveGamesForAdminRow, error) {
+	rows, err := q.db.QueryContext(ctx, listActiveGamesForAdmin)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListActiveGamesForAdminRow{}
+	for rows.Next() {
+		var i ListActiveGamesForAdminRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.WhiteUserID,
+			&i.BlackUserID,
+			&i.WhiteUsername,
+			&i.BlackUsername,
+			&i.TimeControl,
+			&i.Rated,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAdminActions = `-- name: ListAdminActions :many
 SELECT id, actor_user_id, actor_username, action,
        target_user_id, target_username, detail, created_at
@@ -539,6 +603,51 @@ LIMIT 50
 // table to grow fast enough to need pagination yet.
 func (q *Queries) ListAdminActions(ctx context.Context) ([]AdminAction, error) {
 	rows, err := q.db.QueryContext(ctx, listAdminActions)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AdminAction{}
+	for rows.Next() {
+		var i AdminAction
+		if err := rows.Scan(
+			&i.ID,
+			&i.ActorUserID,
+			&i.ActorUsername,
+			&i.Action,
+			&i.TargetUserID,
+			&i.TargetUsername,
+			&i.Detail,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAdminActionsBefore = `-- name: ListAdminActionsBefore :many
+SELECT id, actor_user_id, actor_username, action,
+       target_user_id, target_username, detail, created_at
+FROM admin_actions
+WHERE created_at < $1
+ORDER BY created_at DESC
+LIMIT 50
+`
+
+// Pagination cursor for the audit panel. Pass a non-zero $1 to fetch
+// the next page; the first page calls ListAdminActions (no cursor).
+// The (created_at, id) tie-break keeps the order stable when two rows
+// share a created_at to the microsecond.
+func (q *Queries) ListAdminActionsBefore(ctx context.Context, createdAt time.Time) ([]AdminAction, error) {
+	rows, err := q.db.QueryContext(ctx, listAdminActionsBefore, createdAt)
 	if err != nil {
 		return nil, err
 	}

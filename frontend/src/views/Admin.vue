@@ -36,6 +36,37 @@
 
     <section class="card">
       <header class="card-header">
+        <h2>Live games</h2>
+        <span class="muted">{{ liveGames.length }} ongoing</span>
+      </header>
+      <table v-if="liveGames.length" class="signup-table">
+        <thead>
+          <tr>
+            <th>White</th>
+            <th>Black</th>
+            <th>TC</th>
+            <th>Started</th>
+            <th class="num">Viewers</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="g in liveGames" :key="g.id">
+            <td><router-link :to="`/watch/${g.id}`" class="username game-link">{{ g.white_username || '—' }}</router-link></td>
+            <td><router-link :to="`/watch/${g.id}`" class="username game-link">{{ g.black_username || '—' }}</router-link></td>
+            <td>
+              <span class="tc-tag">{{ g.time_control }}</span>
+              <span v-if="g.rated" class="rated-tag">rated</span>
+            </td>
+            <td :title="g.created_at">{{ formatRelative(g.created_at) }}</td>
+            <td class="num">{{ g.viewer_count }}</td>
+          </tr>
+        </tbody>
+      </table>
+      <div v-else class="empty">No ongoing games right now.</div>
+    </section>
+
+    <section class="card">
+      <header class="card-header">
         <h2>Recent signups</h2>
         <span class="muted">{{ signups.length }} most recent</span>
       </header>
@@ -98,6 +129,13 @@
         </tbody>
       </table>
       <div v-else class="empty">No admin actions recorded yet.</div>
+      <div v-if="actions.length >= 50" class="more-row">
+        <button
+          class="btn ghost"
+          :disabled="loadingMoreActions"
+          @click="loadMoreActions"
+        >{{ loadingMoreActions ? 'Loading…' : 'Load older' }}</button>
+      </div>
     </section>
 
     <!-- Confirm-delete modal. Type the username to enable the
@@ -158,7 +196,7 @@ const overview = ref<{
   queue_depth: Record<string, number>;
 } | null>(null);
 const signups = ref<Signup[]>([]);
-const actions = ref<Array<{
+type AdminAction = {
   id: number;
   actor_user_id?: number;
   actor_username: string;
@@ -167,6 +205,20 @@ const actions = ref<Array<{
   target_username: string;
   detail: string;
   created_at: string;
+};
+const actions = ref<AdminAction[]>([]);
+const loadingMoreActions = ref(false);
+const liveGames = ref<Array<{
+  id: string;
+  white_user_id?: number;
+  black_user_id?: number;
+  white_username: string;
+  black_username: string;
+  time_control: string;
+  rated: boolean;
+  created_at: string;
+  updated_at: string;
+  viewer_count: number;
 }>>([]);
 const loadError = ref<string | null>(null);
 
@@ -182,16 +234,34 @@ const queueDepth = computed(() => overview.value?.queue_depth ?? {});
 const loadAll = async () => {
   loadError.value = null;
   try {
-    const [ov, sg, ac] = await Promise.all([
+    const [ov, sg, ac, lg] = await Promise.all([
       api.adminOverview(),
       api.adminSignups(),
       api.adminActions(),
+      api.adminLiveGames(),
     ]);
     overview.value = ov;
     signups.value = sg || [];
     actions.value = ac || [];
+    liveGames.value = lg || [];
   } catch (e: any) {
     loadError.value = e?.message || 'unknown error';
+  }
+};
+
+const loadMoreActions = async () => {
+  if (loadingMoreActions.value || actions.value.length === 0) return;
+  loadingMoreActions.value = true;
+  try {
+    const cursor = actions.value[actions.value.length - 1].created_at;
+    const more = await api.adminActions(cursor);
+    // Append; the backend returns rows strictly older than cursor so
+    // there's no overlap to dedupe.
+    actions.value = actions.value.concat(more || []);
+  } catch (e: any) {
+    toastStore.error('Failed to load older actions: ' + (e?.message || e));
+  } finally {
+    loadingMoreActions.value = false;
   }
 };
 
@@ -321,6 +391,29 @@ onMounted(loadAll);
   font-size: 11px;
   font-family: ui-monospace, Menlo, monospace;
 }
+
+.tc-tag {
+  background: #1f1f1f;
+  border: 1px solid #3a3a3a;
+  color: #ccc;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: ui-monospace, Menlo, monospace;
+}
+.rated-tag {
+  margin-left: 6px;
+  color: #c9a86a;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.signup-table th.num, .signup-table td.num { text-align: right; }
+.game-link { color: #9bb3cc; text-decoration: none; }
+.game-link:hover { color: #c0d3e6; text-decoration: underline; }
+
+.more-row { display: flex; justify-content: center; margin-top: 12px; }
 
 .modal-backdrop {
   position: fixed;
