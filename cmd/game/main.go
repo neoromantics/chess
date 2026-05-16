@@ -63,6 +63,7 @@ func main() {
 		w.Write([]byte("OK"))
 	})
 	mux.HandleFunc("GET /api/state", s.handleState)
+	mux.HandleFunc("GET /api/can_watch", s.handleCanWatch)
 	mux.HandleFunc("GET /api/games", s.handleListGames)
 	mux.HandleFunc("GET /api/replay", s.handleReplayData)
 
@@ -253,6 +254,30 @@ func (s *GameService) handleState(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, s.snapshotFromRecord(r.Context(), rec))
+}
+
+// handleCanWatch is the cheap WS upgrade preflight: it returns 200 if
+// the caller is a participant of the game (or 404 otherwise). Skips
+// the full snapshot synthesis that /api/state does. Used by the
+// gateway's WS upgrade gate before promoting an HTTP connection — at
+// scale we burn enough CPU on WS opens to matter.
+func (s *GameService) handleCanWatch(w http.ResponseWriter, r *http.Request) {
+	gameID := r.URL.Query().Get("game_id")
+	if gameID == "" {
+		http.Error(w, "missing game_id", 400)
+		return
+	}
+	rec, err := s.getGameCached(r.Context(), gameID)
+	if err != nil {
+		http.Error(w, "game not found", 404)
+		return
+	}
+	uid, ok := authedUserID(r)
+	if !ok || !userOwnsGame(uid, rec) {
+		http.Error(w, "game not found", 404)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
 }
 
 // snapshotFromRecord builds the wire-protocol StateJSON the SPA

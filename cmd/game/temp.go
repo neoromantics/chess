@@ -155,7 +155,7 @@ func (t *tempStore) refreshTTL(ctx context.Context, gameID, anonID string) {
 // the TTL, and returns (rec, store, ok). On any failure writes a 4xx
 // and returns ok=false — handlers stop on a single line.
 func (s *GameService) requireTempAccess(w http.ResponseWriter, r *http.Request) (*tempGameRec, *tempStore, bool) {
-	anonID := r.URL.Query().Get("anon_id")
+	anonID := authedAnonID(r)
 	gameID := r.URL.Query().Get("game_id")
 	if anonID == "" {
 		http.Error(w, "missing anon_id", http.StatusBadRequest)
@@ -220,7 +220,7 @@ func newTempRec(anonID string, thinkMS int, engineWhite, engineBlack bool) *temp
 // caller's currently-active temp game if one exists and hasn't expired,
 // otherwise creates a new one. SPA calls this on first visit.
 func (s *GameService) handleTempSession(w http.ResponseWriter, r *http.Request) {
-	anonID := r.URL.Query().Get("anon_id")
+	anonID := authedAnonID(r)
 	if anonID == "" {
 		http.Error(w, "missing anon_id (gateway should inject)", http.StatusBadRequest)
 		return
@@ -729,15 +729,10 @@ func (s *GameService) handleTempSetPlayers(w http.ResponseWriter, r *http.Reques
 // is a retry), returns 200 with empty game_id so the gateway can
 // degrade gracefully.
 func (s *GameService) handleTempUpgrade(w http.ResponseWriter, r *http.Request) {
-	anonID := r.URL.Query().Get("anon_id")
-	userIDStr := r.URL.Query().Get("user_id")
-	if anonID == "" || userIDStr == "" {
+	anonID := authedAnonID(r)
+	userID, ok := authedUserID(r)
+	if anonID == "" || !ok {
 		http.Error(w, "missing anon_id or user_id", http.StatusBadRequest)
-		return
-	}
-	userID, err := strconv.ParseInt(userIDStr, 10, 64)
-	if err != nil || userID <= 0 {
-		http.Error(w, "bad user_id", http.StatusBadRequest)
 		return
 	}
 	store := newTempStore(s.bus.Rdb())

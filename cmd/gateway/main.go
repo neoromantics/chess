@@ -272,11 +272,15 @@ func (gw *Gateway) handleCreateGame(w http.ResponseWriter, r *http.Request) {
 }
 
 // injectAuthedUser wraps a reverse-proxy handler so the authenticated
-// user's ID is appended to the proxied request as ?user_id=N. This is
-// the gateway's job, not the frontend's: the SPA sends a JWT cookie,
-// the gateway resolves the user once, and downstream services trust the
-// query param. Doing this client-side would let any caller list anyone
-// else's games.
+// user's ID is forwarded on the proxied request as an X-User-ID
+// header (preferred) and also a ?user_id= query param (legacy). The
+// SPA sends a JWT cookie, the gateway resolves the user once, and
+// downstream services trust the gateway-set value. Doing this
+// client-side would let any caller list anyone else's games.
+//
+// The double-write to header + query lets the next mid-rolling-restart
+// pod pair (new gateway + old game-service, or vice versa) keep
+// working during a deploy. A follow-up commit can drop the query.
 func (gw *Gateway) injectAuthedUser(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, ok := auth.GetUser(r.Context())
@@ -284,8 +288,10 @@ func (gw *Gateway) injectAuthedUser(next http.Handler) http.Handler {
 			http.Error(w, "unauthorized", 401)
 			return
 		}
+		idStr := strconv.FormatInt(user.UserID, 10)
+		r.Header.Set("X-User-ID", idStr)
 		q := r.URL.Query()
-		q.Set("user_id", strconv.FormatInt(user.UserID, 10))
+		q.Set("user_id", idStr)
 		r.URL.RawQuery = q.Encode()
 		next.ServeHTTP(w, r)
 	})
@@ -336,6 +342,7 @@ func (gw *Gateway) injectAnonID(next http.Handler) http.Handler {
 			anonID = uuid.New().String()
 			setAnonCookie(w, anonID)
 		}
+		r.Header.Set("X-Anon-ID", anonID)
 		q := r.URL.Query()
 		q.Set("anon_id", anonID)
 		r.URL.RawQuery = q.Encode()
@@ -386,17 +393,18 @@ func (gw *Gateway) handleJoinQueue(w http.ResponseWriter, r *http.Request) {
 }
 
 // userMayWatchGame is the WS upgrade pre-flight that asks game-service
-// "is userID a participant on gameID?". We piggy-back on /api/state's
-// existing ownership check (which returns 404 for non-participants) so
-// we don't need a new dedicated authz endpoint.
+// "is userID a participant on gameID?". Hits /api/can_watch which is
+// a bare ownership check — no snapshot synthesis. With WS opens
+// otherwise costing a full /api/state read on every reconnect, this
+// matters under load.
 func (gw *Gateway) userMayWatchGame(ctx context.Context, userID int64, gameID string) bool {
 	u := *gw.gameSvcURL
-	u.Path = "/api/state"
+	u.Path = "/api/can_watch"
 	q := u.Query()
 	q.Set("game_id", gameID)
-	q.Set("user_id", strconv.FormatInt(userID, 10))
 	u.RawQuery = q.Encode()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	req.Header.Set("X-User-ID", strconv.FormatInt(userID, 10))
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		slog.Warn("ws authz preflight failed", "error", err)
