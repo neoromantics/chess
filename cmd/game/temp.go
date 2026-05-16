@@ -732,7 +732,7 @@ func (s *GameService) handleTempUpgrade(w http.ResponseWriter, r *http.Request) 
 	anonID := authedAnonID(r)
 	userID, ok := authedUserID(r)
 	if anonID == "" || !ok {
-		http.Error(w, "missing anon_id or user_id", http.StatusBadRequest)
+		http.Error(w, "missing X-Anon-ID or X-User-ID", http.StatusBadRequest)
 		return
 	}
 	store := newTempStore(s.bus.Rdb())

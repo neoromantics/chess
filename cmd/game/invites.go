@@ -39,23 +39,13 @@ type inviteWire struct {
 }
 
 // authedUserID extracts the caller's user_id from the X-User-ID
-// request header (preferred) or the ?user_id= query param (legacy).
-// The gateway's injectAuthedUser middleware sets both after JWT
-// validation; no service downstream of the gateway re-validates JWTs.
-//
-// Header is preferred because: (1) it doesn't muddy the URL the SPA
-// sees in logs, (2) it can't be cached at intermediaries the way a
-// query string can, (3) it survives URL rewrites in middleware. The
-// query-string fallback is kept so a mid-rolling-restart pod pair
-// (new gateway + old game-service or vice versa) doesn't return 401.
-// Drop the query fallback in a follow-up after a clean deploy.
+// request header. The gateway's injectAuthedUser middleware sets it
+// after JWT validation; no service downstream of the gateway
+// re-validates JWTs. Header (not query string) because: (1) it
+// doesn't muddy the URL in logs, (2) intermediaries can't cache off
+// it, (3) it survives URL rewrites in middleware.
 func authedUserID(r *http.Request) (int64, bool) {
-	if s := r.Header.Get("X-User-ID"); s != "" {
-		if id, err := strconv.ParseInt(s, 10, 64); err == nil && id > 0 {
-			return id, true
-		}
-	}
-	s := r.URL.Query().Get("user_id")
+	s := r.Header.Get("X-User-ID")
 	if s == "" {
 		return 0, false
 	}
@@ -67,13 +57,9 @@ func authedUserID(r *http.Request) (int64, bool) {
 }
 
 // authedAnonID extracts the caller's anonymous-session ID from
-// X-Anon-ID (preferred) or ?anon_id= (legacy). Same migration
-// rationale as authedUserID.
+// X-Anon-ID — set by gateway.injectAnonID from the chess-anon cookie.
 func authedAnonID(r *http.Request) string {
-	if s := r.Header.Get("X-Anon-ID"); s != "" {
-		return s
-	}
-	return r.URL.Query().Get("anon_id")
+	return r.Header.Get("X-Anon-ID")
 }
 
 // userOwnsGame returns true if userID is a participant of the game

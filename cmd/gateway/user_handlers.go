@@ -85,12 +85,13 @@ func (gw *Gateway) handleSignup(w http.ResponseWriter, r *http.Request) {
 // user. Errors are non-fatal — we'd rather succeed signup without
 // the carry-over than fail signup over a Redis hiccup.
 func (gw *Gateway) upgradeAnonGame(ctx context.Context, anonID string, userID int64) (string, error) {
-	target := fmt.Sprintf("%s/api/temp/upgrade?anon_id=%s&user_id=%s",
-		gw.gameSvcURL.String(), anonID, strconv.FormatInt(userID, 10))
+	target := gw.gameSvcURL.String() + "/api/temp/upgrade"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, nil)
 	if err != nil {
 		return "", err
 	}
+	req.Header.Set("X-Anon-ID", anonID)
+	req.Header.Set("X-User-ID", strconv.FormatInt(userID, 10))
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {

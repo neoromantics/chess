@@ -113,10 +113,11 @@ validator (`validTimeControl`), and the SPA pickers stay in lock-step.
 Expand only when the active-player pool justifies a third queue.
 
 Identity injection from gateway → game-service goes via the
-`X-User-ID` and `X-Anon-ID` request headers. The legacy `?user_id=` /
-`?anon_id=` query params are still accepted by game-service for
-rolling-deploy safety but will be dropped in a follow-up after a
-clean release.
+`X-User-ID` and `X-Anon-ID` request headers. Downstream services
+trust these absolutely — they're set by the gateway after JWT /
+cookie validation and are never sourced from the client. The
+short-lived `?user_id=` / `?anon_id=` query-param fallback that
+shipped in the header migration is gone.
 
 ---
 

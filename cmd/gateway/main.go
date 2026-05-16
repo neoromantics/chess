@@ -277,14 +277,9 @@ func (gw *Gateway) handleCreateGame(w http.ResponseWriter, r *http.Request) {
 
 // injectAuthedUser wraps a reverse-proxy handler so the authenticated
 // user's ID is forwarded on the proxied request as an X-User-ID
-// header (preferred) and also a ?user_id= query param (legacy). The
-// SPA sends a JWT cookie, the gateway resolves the user once, and
-// downstream services trust the gateway-set value. Doing this
-// client-side would let any caller list anyone else's games.
-//
-// The double-write to header + query lets the next mid-rolling-restart
-// pod pair (new gateway + old game-service, or vice versa) keep
-// working during a deploy. A follow-up commit can drop the query.
+// header. The SPA sends a JWT cookie, the gateway resolves the user
+// once, and downstream services trust the gateway-set header. Doing
+// this client-side would let any caller list anyone else's games.
 func (gw *Gateway) injectAuthedUser(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, ok := auth.GetUser(r.Context())
@@ -292,11 +287,7 @@ func (gw *Gateway) injectAuthedUser(next http.Handler) http.Handler {
 			http.Error(w, "unauthorized", 401)
 			return
 		}
-		idStr := strconv.FormatInt(user.UserID, 10)
-		r.Header.Set("X-User-ID", idStr)
-		q := r.URL.Query()
-		q.Set("user_id", idStr)
-		r.URL.RawQuery = q.Encode()
+		r.Header.Set("X-User-ID", strconv.FormatInt(user.UserID, 10))
 		next.ServeHTTP(w, r)
 	})
 }
@@ -310,11 +301,7 @@ func (gw *Gateway) injectAuthedUser(next http.Handler) http.Handler {
 func (gw *Gateway) injectAuthedUserOptional(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if user, ok := auth.GetUser(r.Context()); ok {
-			idStr := strconv.FormatInt(user.UserID, 10)
-			r.Header.Set("X-User-ID", idStr)
-			q := r.URL.Query()
-			q.Set("user_id", idStr)
-			r.URL.RawQuery = q.Encode()
+			r.Header.Set("X-User-ID", strconv.FormatInt(user.UserID, 10))
 		}
 		next.ServeHTTP(w, r)
 	})
@@ -366,9 +353,6 @@ func (gw *Gateway) injectAnonID(next http.Handler) http.Handler {
 			setAnonCookie(w, anonID)
 		}
 		r.Header.Set("X-Anon-ID", anonID)
-		q := r.URL.Query()
-		q.Set("anon_id", anonID)
-		r.URL.RawQuery = q.Encode()
 		next.ServeHTTP(w, r)
 	})
 }
