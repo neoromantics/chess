@@ -1,4 +1,4 @@
-# neoromantics Chess Platform
+# neoromantics Chess
 
 **Live:** [https://vcm-50800.vm.duke.edu](https://vcm-50800.vm.duke.edu)
 (k3s + Traefik + Let's Encrypt on a Duke VCM)

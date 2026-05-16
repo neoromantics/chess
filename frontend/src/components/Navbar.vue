@@ -2,7 +2,7 @@
   <nav class="navbar">
     <div class="nav-content">
       <router-link to="/" class="nav-brand">
-        <span class="logo">♞</span> Chess Platform
+        <span class="logo">♞</span> Chess
       </router-link>
       
       <div class="nav-links">
