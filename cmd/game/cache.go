@@ -11,6 +11,13 @@ package main
 // connection ceiling; this commit fixes the latency floor and load
 // floor by keeping the working set in Redis.
 //
+// Storage: one Redis STRING per game holding the JSON-serialized
+// GameRecord. We tried a hash with one field per column; that
+// burned a per-field encode/decode cycle on every read and made
+// schema changes painful (every new field needed a marshal helper).
+// JSON is one round-trip in each direction and reuses the same
+// struct definition the DB layer already maintains.
+//
 // Consistency: every writer takes the per-game lock (cmd/game/lock.go)
 // before reading the row. Because reads and writes both go through
 // this cache and writes are write-through (Redis + PG together,
@@ -88,125 +95,37 @@ func (s *GameService) invalidateGameCache(ctx context.Context, id string) {
 	}
 }
 
-// tryReadCache attempts a single HGETALL. (false, nil) means clean miss
+// tryReadCache attempts a single GET. (false, nil) means clean miss
 // — caller should fall through to PG. (rec, true, nil) is a hit.
 // Errors are returned but treated as miss + log by the caller.
 func (s *GameService) tryReadCache(ctx context.Context, id string) (*db.GameRecord, bool, error) {
-	res, err := s.bus.Rdb().HGetAll(ctx, gameCacheKey(id)).Result()
-	if err != nil {
-		return nil, false, err
-	}
-	if len(res) == 0 {
+	data, err := s.bus.Rdb().Get(ctx, gameCacheKey(id)).Bytes()
+	if err == redis.Nil {
 		return nil, false, nil
 	}
-	rec, err := unmarshalGameHash(res)
 	if err != nil {
-		// Cached payload is corrupt (schema drift, partial write...);
-		// treat as miss and let PG repopulate the entry.
 		return nil, false, err
 	}
-	return rec, true, nil
+	if len(data) == 0 {
+		return nil, false, nil
+	}
+	var rec db.GameRecord
+	if err := json.Unmarshal(data, &rec); err != nil {
+		// Cached payload is corrupt (schema drift, partial write,
+		// truncation); treat as miss and let PG repopulate.
+		return nil, false, err
+	}
+	return &rec, true, nil
 }
 
-// writeCache HSETs every GameRecord field, refreshes TTL.
+// writeCache stores the GameRecord as a single JSON blob with TTL.
 func (s *GameService) writeCache(ctx context.Context, rec *db.GameRecord) error {
 	if rec == nil || rec.ID == "" {
 		return errors.New("nil record")
 	}
-	fields := marshalGameHash(rec)
-	pipe := s.bus.Rdb().TxPipeline()
-	pipe.Del(ctx, gameCacheKey(rec.ID)) // wipe stale fields a previous schema may have written
-	pipe.HSet(ctx, gameCacheKey(rec.ID), fields)
-	pipe.Expire(ctx, gameCacheKey(rec.ID), gameCacheTTL)
-	_, err := pipe.Exec(ctx)
-	return err
+	data, err := json.Marshal(rec)
+	if err != nil {
+		return err
+	}
+	return s.bus.Rdb().Set(ctx, gameCacheKey(rec.ID), data, gameCacheTTL).Err()
 }
-
-// marshalGameHash flattens a GameRecord into Redis hash fields. Each
-// field is stored as a string; pointer fields use sentinel keys so we
-// can disambiguate "nil" from "0". Versioning prefix `v1:` lets us
-// add fields later without breaking old cached payloads (we'd just
-// mismatch the prefix and treat as miss).
-func marshalGameHash(rec *db.GameRecord) map[string]interface{} {
-	m := map[string]interface{}{
-		"v":                "1",
-		"id":               rec.ID,
-		"fen":              rec.FEN,
-		"start_fen":        rec.StartFEN,
-		"history":          rec.History,
-		"history_san":      rec.HistorySAN,
-		"engine_white":     boolToStr(rec.EngineWhite),
-		"engine_black":     boolToStr(rec.EngineBlack),
-		"white_think_time": intToStr(rec.WhiteThinkTime),
-		"black_think_time": intToStr(rec.BlackThinkTime),
-		"time_control":     rec.TimeControl,
-		"rated":            boolToStr(rec.Rated),
-		"status":           rec.Status,
-		"result":           rec.Result,
-		"created_at":       rec.CreatedAt.UTC().Format(time.RFC3339Nano),
-		"updated_at":       rec.UpdatedAt.UTC().Format(time.RFC3339Nano),
-	}
-	if rec.WhiteUserID != nil {
-		m["white_user_id"] = intToStr(int(*rec.WhiteUserID))
-	}
-	if rec.BlackUserID != nil {
-		m["black_user_id"] = intToStr(int(*rec.BlackUserID))
-	}
-	return m
-}
-
-func unmarshalGameHash(m map[string]string) (*db.GameRecord, error) {
-	if m["v"] != "1" {
-		return nil, errors.New("unknown cache version")
-	}
-	rec := &db.GameRecord{
-		ID:             m["id"],
-		FEN:            m["fen"],
-		StartFEN:       m["start_fen"],
-		History:        m["history"],
-		HistorySAN:     m["history_san"],
-		EngineWhite:    m["engine_white"] == "1",
-		EngineBlack:    m["engine_black"] == "1",
-		WhiteThinkTime: strToInt(m["white_think_time"]),
-		BlackThinkTime: strToInt(m["black_think_time"]),
-		TimeControl:    m["time_control"],
-		Rated:          m["rated"] == "1",
-		Status:         m["status"],
-		Result:         m["result"],
-	}
-	if v, ok := m["white_user_id"]; ok && v != "" {
-		i := int64(strToInt(v))
-		rec.WhiteUserID = &i
-	}
-	if v, ok := m["black_user_id"]; ok && v != "" {
-		i := int64(strToInt(v))
-		rec.BlackUserID = &i
-	}
-	if t, err := time.Parse(time.RFC3339Nano, m["created_at"]); err == nil {
-		rec.CreatedAt = t
-	}
-	if t, err := time.Parse(time.RFC3339Nano, m["updated_at"]); err == nil {
-		rec.UpdatedAt = t
-	}
-	return rec, nil
-}
-
-func boolToStr(b bool) string {
-	if b {
-		return "1"
-	}
-	return "0"
-}
-func intToStr(i int) string {
-	b, _ := json.Marshal(i)
-	return string(b)
-}
-func strToInt(s string) int {
-	var i int
-	_ = json.Unmarshal([]byte(s), &i)
-	return i
-}
-
-// silence linter when redis is imported only via s.bus.Rdb() in the
-// helpers above — we don't construct a Client directly here.
-var _ = redis.Nil
