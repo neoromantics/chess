@@ -297,6 +297,42 @@ func (c *Client) ReadEngineResults(ctx context.Context, group, consumer string, 
 	return c.readStream(ctx, StreamEngineResults, group, consumer, timeout)
 }
 
+// Consume is the standard consumer-group read loop. It blocks until
+// ctx is cancelled, calling handler(ctx, msg) for each message and
+// XACK-ing on return. handler errors are logged but do not stop the
+// loop or skip the ack — at-least-once delivery means the consumer
+// is responsible for idempotency. Read errors back off 1s and retry.
+//
+// The previous boilerplate (a for-select + ReadX + range + Ack block
+// repeated in every cmd/game consumer) was identical at three sites;
+// collapsing it here keeps the consumer surface to one call.
+func (c *Client) Consume(
+	ctx context.Context,
+	stream, group, consumer string,
+	handler func(ctx context.Context, msg redis.XMessage),
+) {
+	for ctx.Err() == nil {
+		msgs, err := c.readStream(ctx, stream, group, consumer, 5*time.Second)
+		if err != nil {
+			if ctx.Err() == nil {
+				slog.Error("consume read error", "stream", stream, "group", group, "error", err)
+			}
+			select {
+			case <-time.After(1 * time.Second):
+			case <-ctx.Done():
+				return
+			}
+			continue
+		}
+		for _, msg := range msgs {
+			handler(ctx, msg)
+			if ackErr := c.Ack(ctx, stream, group, msg.ID); ackErr != nil && ctx.Err() == nil {
+				slog.Warn("xack failed", "stream", stream, "group", group, "id", msg.ID, "error", ackErr)
+			}
+		}
+	}
+}
+
 func (c *Client) readStream(ctx context.Context, stream, group, consumer string, timeout time.Duration) ([]redis.XMessage, error) {
 	err := c.rdb.XGroupCreateMkStream(ctx, stream, group, "0").Err()
 	if err != nil && !strings.Contains(err.Error(), "BUSYGROUP") {

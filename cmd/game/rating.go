@@ -22,7 +22,6 @@ import (
 	"encoding/json"
 	"log/slog"
 	"os"
-	"time"
 
 	"github.com/neoromantics/chess/pkg/db"
 	"github.com/neoromantics/chess/pkg/eventbus"
@@ -34,20 +33,7 @@ import (
 // on every GameFinished. Started as a goroutine in main().
 func (s *GameService) runRatingUpdater(ctx context.Context) {
 	hostname, _ := os.Hostname()
-	for ctx.Err() == nil {
-		msgs, err := s.bus.ReadEvents(ctx, "rating-updater-group", hostname, 5*time.Second)
-		if err != nil {
-			if ctx.Err() == nil {
-				slog.Error("rating-updater: read events error", "error", err)
-			}
-			time.Sleep(1 * time.Second)
-			continue
-		}
-		for _, msg := range msgs {
-			s.processRatingEvent(ctx, msg)
-			s.bus.Ack(ctx, eventbus.StreamGameEvents, "rating-updater-group", msg.ID)
-		}
-	}
+	s.bus.Consume(ctx, eventbus.StreamGameEvents, "rating-updater-group", hostname, s.processRatingEvent)
 }
 
 func (s *GameService) processRatingEvent(ctx context.Context, msg redis.XMessage) {

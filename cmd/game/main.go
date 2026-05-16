@@ -403,25 +403,7 @@ func writeJSON(w http.ResponseWriter, v any) {
 // stream's pending entries list until acked.
 func (s *GameService) listenToEngineResults(ctx context.Context) {
 	hostname, _ := os.Hostname()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			msgs, err := s.bus.ReadEngineResults(ctx, "game-engine-results-group", hostname, 5*time.Second)
-			if err != nil {
-				if ctx.Err() == nil {
-					slog.Error("engine-results read error", "error", err)
-				}
-				time.Sleep(1 * time.Second)
-				continue
-			}
-			for _, msg := range msgs {
-				s.processEngineResult(ctx, msg)
-				s.bus.Ack(ctx, eventbus.StreamEngineResults, "game-engine-results-group", msg.ID)
-			}
-		}
-	}
+	s.bus.Consume(ctx, eventbus.StreamEngineResults, "game-engine-results-group", hostname, s.processEngineResult)
 }
 
 func (s *GameService) processEngineResult(ctx context.Context, msg redis.XMessage) {
@@ -503,26 +485,7 @@ func (s *GameService) publishHint(ctx context.Context, resp eventbus.EngineRespo
 
 func (s *GameService) Run(ctx context.Context) {
 	hostname, _ := os.Hostname()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			msgs, err := s.bus.ReadCommands(ctx, "game-service-group", hostname, 5*time.Second)
-			if err != nil {
-				if ctx.Err() == nil {
-					slog.Error("read commands error", "error", err)
-				}
-				time.Sleep(1 * time.Second)
-				continue
-			}
-
-			for _, msg := range msgs {
-				s.processCommand(ctx, msg)
-				s.bus.Ack(ctx, eventbus.StreamGameCommands, "game-service-group", msg.ID)
-			}
-		}
-	}
+	s.bus.Consume(ctx, eventbus.StreamGameCommands, "game-service-group", hostname, s.processCommand)
 }
 
 func (s *GameService) processCommand(ctx context.Context, msg redis.XMessage) {
