@@ -191,7 +191,13 @@ const editCastling = ref<Record<string, boolean>>({ K: true, Q: true, k: true, q
 let lastSoundedHistoryLen = 0;
 let prevFenForSound = '';
 let audioCtx: AudioContext | null = null;
-let audioPrimed = false;
+// When a move sound is requested while the AudioContext is still
+// suspended (common right after a page refresh — the engine reply lands
+// before the user has clicked anything), we stash the latest kind here
+// and replay it on the first successful resume(). Without this, the
+// move sound for the first engine reply after a refresh is silently
+// dropped.
+let pendingSound: string | null = null;
 
 const ensureAudio = () => {
   if (!audioCtx) {
@@ -201,14 +207,27 @@ const ensureAudio = () => {
   return audioCtx;
 };
 
+const flushPendingSound = () => {
+  if (!pendingSound) return;
+  const kind = pendingSound;
+  pendingSound = null;
+  playMoveSound(kind);
+};
+
 const primeAudio = () => {
-  if (audioPrimed) return;
   const ctx = ensureAudio();
   if (!ctx) return;
+  if (ctx.state === 'running') {
+    flushPendingSound();
+    return;
+  }
   // resume() on suspended ctx only succeeds during a user gesture, so
-  // this handler is the right place to do it.
-  if (ctx.state === 'suspended') ctx.resume().catch(() => {});
-  audioPrimed = true;
+  // this handler is the right place to do it. Keep retrying on every
+  // gesture until it actually transitions to running — synchronous
+  // "primed" flag was lying when an early resume() rejected.
+  if (ctx.state === 'suspended') {
+    ctx.resume().then(flushPendingSound).catch(() => {});
+  }
 };
 
 const playClick = (freq: number, dur: number, gain: number) => {
@@ -233,6 +252,16 @@ const playClick = (freq: number, dur: number, gain: number) => {
 };
 
 const playMoveSound = (kind: string) => {
+  if (!soundEnabled.value) return;
+  const ctx = ensureAudio();
+  // If audio is still gated (no user gesture since load/refresh), park
+  // the latest sound and let primeAudio flush it once resume() succeeds.
+  // Last-write-wins is intentional: only the most recent move is worth
+  // catching up on once the speaker comes alive.
+  if (ctx && ctx.state === 'suspended') {
+    pendingSound = kind;
+    return;
+  }
   if (kind === 'capture') playClick(220, 0.12, 0.15);
   else if (kind === 'check') { playClick(880, 0.08, 0.12); setTimeout(() => playClick(660, 0.10, 0.10), 90); }
   else playClick(520, 0.06, 0.10);
