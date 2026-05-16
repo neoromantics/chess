@@ -4,24 +4,24 @@
          game state. Always present so the affordances don't move. -->
     <div class="toolbar">
       <button class="tool" :class="{ on: soundEnabled }" @click="$emit('update:sound-enabled', !soundEnabled)" :title="soundEnabled ? 'Sound on (click to mute)' : 'Sound off (click to unmute)'">
-        <span aria-hidden="true">{{ soundEnabled ? '🔊' : '🔇' }}</span>
-        <span class="tool-label">{{ soundEnabled ? 'Sound on' : 'Muted' }}</span>
+        <span class="tool-icon" aria-hidden="true">{{ soundEnabled ? '🔊' : '🔇' }}</span>
+        <span class="tool-label">{{ soundEnabled ? 'Sound' : 'Muted' }}</span>
       </button>
       <button class="tool" @click="$emit('toggle-flip')" title="Flip board (F)">
-        <span aria-hidden="true">⇅</span>
+        <span class="tool-icon" aria-hidden="true">⇅</span>
         <span class="tool-label">Flip</span>
       </button>
       <button v-if="state?.status !== 'ongoing'" class="tool" @click="$emit('open-replay')" title="Open replay viewer">
-        <span aria-hidden="true">▶</span>
+        <span class="tool-icon" aria-hidden="true">▶</span>
         <span class="tool-label">Replay</span>
       </button>
       <button v-if="canEditPosition" class="tool" @click="$emit('edit-position')" title="Set up a custom position (engine games only)">
-        <span aria-hidden="true">✎</span>
+        <span class="tool-icon" aria-hidden="true">✎</span>
         <span class="tool-label">Setup</span>
       </button>
       <button class="tool" :class="{ on: touchMove }" @click="$emit('update:touch-move', !touchMove)" :title="touchMove ? 'Touch-move ON: a touched piece must move (FIDE rule)' : 'Touch-move OFF (default)'">
-        <span aria-hidden="true">☝</span>
-        <span class="tool-label">{{ touchMove ? 'Touch-move' : 'Free' }}</span>
+        <span class="tool-icon" aria-hidden="true">☝</span>
+        <span class="tool-label">{{ touchMove ? 'Touch' : 'Free' }}</span>
       </button>
     </div>
 
@@ -259,27 +259,32 @@ const onLoadPgn = () => {
 <style scoped>
 .side-panel { display: flex; flex-direction: column; gap: 14px; }
 
-/* Top toolbar */
-.toolbar { display: flex; gap: 6px; align-items: stretch; }
+/* Top toolbar. Equal-width buttons (flex: 1 1 0) so a row of 3, 4, or
+   5 always lines up cleanly; min-width:0 + ellipsized labels keep
+   narrow viewports from overflowing. flex-wrap is the safety net. */
+.toolbar { display: flex; gap: 6px; align-items: stretch; flex-wrap: wrap; }
 .tool {
-  flex: 1 1 auto;
-  display: flex;
+  flex: 1 1 0;
+  min-width: 56px;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  padding: 9px 10px;
+  gap: 5px;
+  padding: 8px 6px;
   background: #232323;
   border: 1px solid #333;
   border-radius: 6px;
   color: #ccc;
-  font-size: 13px;
+  font-size: 12px;
+  line-height: 1;
   cursor: pointer;
   font: inherit;
   transition: border-color 120ms ease, background-color 120ms ease;
 }
 .tool:hover { border-color: #4a6b8a; background: #2a2f36; }
 .tool.on { color: #fff; border-color: #4a6b8a; background: rgba(74,107,138,0.15); }
-.tool-label { font-size: 12px; }
+.tool-icon { font-size: 14px; line-height: 1; flex: 0 0 auto; }
+.tool-label { font-size: 12px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Draw / takeback prompt cards */
 .prompt {

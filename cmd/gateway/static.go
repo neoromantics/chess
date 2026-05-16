@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net/http"
 	"path"
-	"strings"
 )
 
 //go:embed all:dist
@@ -46,15 +45,17 @@ func init() {
 }
 
 func (gw *Gateway) handleIndex(w http.ResponseWriter, r *http.Request) {
-	// If it's a request for a static asset, serve it from the assets filesystem
-	if strings.HasPrefix(r.URL.Path, "/assets/") {
-		http.FileServer(assetsFS).ServeHTTP(w, r)
-		return
-	}
-
-	// For all other paths (SPA routing), serve index.html
+	// Anything with a file extension is treated as a static asset and
+	// served from the embedded dist filesystem. That covers /assets/* (the
+	// hashed JS/CSS bundles), /favicon.svg, and any other public/ file
+	// Vite drops at the dist root. SPA routes are extension-less so they
+	// fall through to index.html below.
 	if path.Ext(r.URL.Path) != "" {
-		http.NotFound(w, r)
+		if assetsFS == nil {
+			http.NotFound(w, r)
+			return
+		}
+		http.FileServer(assetsFS).ServeHTTP(w, r)
 		return
 	}
 
