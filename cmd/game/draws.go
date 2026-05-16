@@ -105,6 +105,10 @@ func (s *GameService) handleDrawOffer(w http.ResponseWriter, r *http.Request) {
 		Payload: payload,
 	})
 	slog.Info("draw offered", "game_id", rec.ID, "from", uid)
+	// Bot-fallback: if the opposite side is a seeded bot, kick off a
+	// delayed accept/decline so the offer doesn't sit unresolved.
+	// TODO(matchmaker-engine-fallback): remove with the bot pool.
+	s.maybeScheduleBotDrawResponse(rec, uid)
 	w.WriteHeader(http.StatusAccepted)
 }
 

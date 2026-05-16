@@ -172,6 +172,61 @@ func pickBotReactionDelay() time.Duration {
 	return botReactionDelays[mathrand.Intn(len(botReactionDelays))]
 }
 
+// isBotUserID reports whether uid is in the seeded bot pool. Used by
+// the draw/takeback handlers to decide whether the offer recipient is
+// a bot that should auto-respond after a humanizing delay.
+// TODO(matchmaker-engine-fallback): delete with the bot pool.
+func isBotUserID(uid int64) bool {
+	v := botPool.Load()
+	if v == nil {
+		return false
+	}
+	pool, _ := v.([]db.BotUser)
+	for _, b := range pool {
+		if b.ID == uid {
+			return true
+		}
+	}
+	return false
+}
+
+// opponentUIDOnRec returns the other participant's user_id, given a
+// known participant. ok=false if rec doesn't have both sides populated
+// (engine games or temp games will hit this and be skipped silently).
+// TODO(matchmaker-engine-fallback): delete with the bot pool.
+func opponentUIDOnRec(rec *db.GameRecord, uid int64) (int64, bool) {
+	if rec == nil {
+		return 0, false
+	}
+	if rec.WhiteUserID != nil && rec.BlackUserID != nil {
+		if *rec.WhiteUserID == uid {
+			return *rec.BlackUserID, true
+		}
+		if *rec.BlackUserID == uid {
+			return *rec.WhiteUserID, true
+		}
+	}
+	return 0, false
+}
+
+// botResponseDelay picks a wall-clock delay for the bot's reply to a
+// draw or takeback offer. Bounded to (0.5s, 10s] — instant replies are
+// the same "this is a bot" tell as instant moves, and >10s would feel
+// like a hung opponent and tempt the user to refresh.
+// TODO(matchmaker-engine-fallback): delete with the bot pool.
+func botResponseDelay() time.Duration {
+	// 500ms minimum, 10s maximum; uniformly distributed in between.
+	return 500*time.Millisecond + time.Duration(mathrand.Intn(9500))*time.Millisecond
+}
+
+// botShouldAcceptOffer returns whether the bot accepts an offer this
+// time. ~40% accept rate so the bot doesn't always agree (which would
+// itself be a tell, and would let the user farm draws/takebacks).
+// TODO(matchmaker-engine-fallback): delete with the bot pool.
+func botShouldAcceptOffer() bool {
+	return mathrand.Intn(10) < 4
+}
+
 func abs(x int) int {
 	if x < 0 {
 		return -x

@@ -89,6 +89,46 @@ Recent ops/cleanup (2026-05-16):
   Combined with the earlier `checkout` / `setup-node` bumps and the
   `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24` backstop, the Sept-2026
   Node-20 deprecation warning is fully cleared.
+- ✅ CI: bumped the three docker actions to their Node-24-native
+  majors — `docker/login-action` v3→v4, `docker/setup-buildx-action`
+  v3→v4, `docker/build-push-action` v5→v7. Each major's release
+  notes call out "Node 24 as default runtime", so the deprecation
+  warning is now silent on the `docker` job too.
+- ✅ **Engine-fallback matchmaker** (`c21b863` → `1a69a1b` → `dc409f6`
+  → this commit). Temporary engagement hack while organic pairing
+  volume is low: a matchmaking entry that waits longer than
+  `mmEngineFallbackAfter` (10s) gets silently routed into a game
+  against a seeded "bot" user from `cmd/game/bots.go`. All bot infra
+  is tagged `TODO(matchmaker-engine-fallback)` for trivial removal.
+  - **Bot pool**: 12 chess-themed usernames seeded into the `users`
+    table at boot (idempotent `UpsertBot` with `is_bot=TRUE`); each
+    gets a random bcrypt hash so nobody can log in as them.
+    `SearchUsersByPrefix` excludes them so they don't surface in
+    invite autocomplete.
+  - **Disguise**: snapshotFromRecord masks `engine_{white,black}` /
+    `engine_to_move` to false for bot matches, so the SPA renders
+    the game as PvP — no "Engine settings", no "(engine thinking…)".
+    Server-side trigger uses the truthful flags.
+  - **Humanization**: random color per match (50/50), 3s or 10s
+    reaction delay added to every engine move (the search itself is
+    600ms — the delay is what reads as human). Thinking-sentinel
+    TTL bumped to 15s for bot games so the spinner survives the
+    full reaction window.
+  - **Silent rematch**: `handleHTTPNew` detects `isBotMatch(rec)`
+    and preserves the original engine_white/black flags even when
+    the SPA (which sees masked flags) sends both false.
+  - **Stale-row guard**: the delayed MakeMove dispatcher captures
+    `rec.UpdatedAt` as a generation token; if the row changed
+    during the wait (resign / rematch / something else), the move
+    is dropped and the thinking sentinel cleared.
+  - **Negotiation auto-response**: when a human in a bot match
+    offers a draw or takeback, a goroutine waits 0.5–10s then
+    randomly accepts (~40%) or declines, emitting the same
+    `DrawAccepted` / `DrawDeclined` / `TakebackAccepted` /
+    `TakebackDeclined` events the HTTP handler would. Without this
+    the bot would silently ignore the offer until TTL expiry, which
+    is the loudest possible "this isn't a human" tell.
+  - All non-rated so `rec.Rated` guards keep Glicko-2 clean.
 
 Recent ops/cleanup (2026-05-15):
 - ✅ Dropped the dead `games.session_id` column (pre-SPA holdover).

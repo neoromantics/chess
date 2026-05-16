@@ -138,6 +138,10 @@ func (s *GameService) handleTakebackOffer(w http.ResponseWriter, r *http.Request
 		Payload: payload,
 	})
 	slog.Info("takeback requested", "game_id", rec.ID, "from", uid, "plies", pliesToPop)
+	// Bot-fallback: if the opposite side is a seeded bot, schedule a
+	// delayed accept/decline. See cmd/game/bot_actions.go.
+	// TODO(matchmaker-engine-fallback): remove with the bot pool.
+	s.maybeScheduleBotTakebackResponse(rec, uid)
 	w.WriteHeader(http.StatusAccepted)
 }
 
