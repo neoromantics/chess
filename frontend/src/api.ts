@@ -40,7 +40,7 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
     }),
-  getUserStats: (userId?: number) => request<{ games_played: number; wins: number; losses: number; draws: number; current_streak: number }>('/api/user/stats' + (userId ? `?user_id=${userId}` : '')),
+  getUserStats: () => request<{ games_played: number; wins: number; losses: number; draws: number; current_streak: number }>('/api/user/stats'),
   getUserProfile: (username: string) => request<any>(`/api/user/profile?username=${username}`),
 
   // ===== Game management =====

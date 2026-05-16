@@ -382,14 +382,21 @@ const updateState = (s: StateJSON) => {
   }
 
   // First payload after mount: figure out which color the current user
-  // is playing (if any) and flip the board so their pieces are on the
+  // is playing (if any) and orient the board so their pieces are on the
   // near side. After this we leave 'flipped' alone — the manual Flip
   // button keeps working.
+  //
+  // Assign unconditionally (not "only flip to true if black"): the
+  // previous version inherited whatever flipped was in localStorage, so
+  // a user who played black last game then opened a new game as white
+  // saw the board from black's side until they flipped manually.
   if (!didAutoOrient && authStore.user) {
     const me = authStore.user.id;
     if (s.white_user_id === me) myColor.value = 'white';
     else if (s.black_user_id === me) myColor.value = 'black';
-    if (myColor.value === 'black') flipped.value = true;
+    if (myColor.value !== null) {
+      flipped.value = myColor.value === 'black';
+    }
     didAutoOrient = true;
   }
 

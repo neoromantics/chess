@@ -77,8 +77,19 @@ const (
 // Remove this whole block (mmEngineFallbackAfter, the engineFallback
 // pass in holdAndPair, and dispatchEngineFallback) once real-pairing
 // volume sustains itself. Search for the TODO tag above.
+//
+// Why 60s and not 10s: at the original 10s the leader would yank the
+// first joiner into a bot game before a second human had time to even
+// open the matchmaker tab, so two real players joining a minute apart
+// would both end up against engines. 60s is long enough that two
+// humans who arrive within "the same browsing session" still pair
+// organically, but short enough that a truly empty queue doesn't
+// punish a lone user with a multi-minute spinner. The SPA's "Looking
+// for an opponent…" copy is the only thing that has to keep someone
+// engaged through the wait; surface a longer-wait progress hint there
+// if 60s starts feeling oppressive.
 const (
-	mmEngineFallbackAfter = 10 * time.Second
+	mmEngineFallbackAfter = 60 * time.Second
 )
 
 // engineFallbackThinkMS is the engine's per-move search budget for bot
