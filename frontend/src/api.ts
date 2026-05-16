@@ -26,6 +26,13 @@ export const api = {
     body: JSON.stringify({ username, password })
   }),
   logout: () => request<void>('/api/auth/logout', { method: 'POST' }),
+  // Live availability probe for the Signup form. `reason` is one of
+  // 'empty' | 'too_short' | 'too_long' | 'taken' (when available=false)
+  // or absent otherwise.
+  checkUsername: (username: string) =>
+    request<{ available: boolean; reason?: string }>(
+      `/api/auth/check-username?username=${encodeURIComponent(username)}`
+    ),
   getMe: () => request<any>('/api/user/me'),
   changePassword: (currentPassword: string, newPassword: string) =>
     request<void>('/api/user/password', {

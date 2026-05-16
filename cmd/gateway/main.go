@@ -109,6 +109,10 @@ func main() {
 	mux.HandleFunc("POST /api/user/password", gw.handleChangePassword)
 	mux.HandleFunc("GET /api/user/stats", gw.handleUserStats)
 	mux.HandleFunc("GET /api/users/search", gw.handleUserSearch)
+	// Live preflight for the Signup form; debounced from the client
+	// side. Returns {available, reason}; auth-free since it gates a
+	// flow that's itself auth-free. See cmd/gateway/user_handlers.go.
+	mux.HandleFunc("GET /api/auth/check-username", gw.handleCheckUsername)
 
 	// 3. Reverse proxy to Game Service. Wrapped in injectAuthedUser so
 	// downstream services don't have to re-validate the JWT — they

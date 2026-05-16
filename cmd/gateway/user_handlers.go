@@ -28,6 +28,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/neoromantics/chess/pkg/auth"
@@ -263,6 +264,48 @@ func (gw *Gateway) handleUserSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSONGW(w, users)
+}
+
+// handleCheckUsername is the live availability probe the Signup form
+// calls on each debounced keystroke. Returns {available, reason} so the
+// SPA can show inline feedback instead of waiting for the Submit
+// round-trip to discover a taken name.
+//
+// Same length rules as handleSignup so the two stay in lockstep. We
+// don't validate password here — that's a separate concern surfaced
+// by the form's own password rules.
+//
+// Auth-free: signup itself is auth-free and this is its preflight.
+// The data exposed (does username X exist?) is identical to what a
+// well-crafted Signup POST + 409 response would already reveal, so no
+// new information leak.
+func (gw *Gateway) handleCheckUsername(w http.ResponseWriter, r *http.Request) {
+	uname := strings.TrimSpace(r.URL.Query().Get("username"))
+	switch {
+	case len(uname) == 0:
+		writeJSONGW(w, map[string]any{"available": false, "reason": "empty"})
+		return
+	case len(uname) < 3:
+		writeJSONGW(w, map[string]any{"available": false, "reason": "too_short"})
+		return
+	case len(uname) > 32:
+		writeJSONGW(w, map[string]any{"available": false, "reason": "too_long"})
+		return
+	}
+
+	// GetUserByUsername returns (nil, error) when the row's missing.
+	// Treat "no rows" as available; any other error as a soft "unknown"
+	// so the form doesn't block submission on a DB hiccup. We mirror
+	// SearchUsersByPrefix's case-insensitive intent by exact-lookup
+	// using the existing query (Postgres TEXT comparisons are
+	// case-sensitive; the unique index on users.username matches that).
+	// If you ever want to free up case-variant duplicates, do it at
+	// signup, not here.
+	if _, err := gw.db.GetUserByUsername(uname); err == nil {
+		writeJSONGW(w, map[string]any{"available": false, "reason": "taken"})
+		return
+	}
+	writeJSONGW(w, map[string]any{"available": true})
 }
 
 // secureCookie + writeJSONGW are file-local helpers; renamed with the

@@ -6,6 +6,13 @@
         <div class="form-group">
           <label>Username</label>
           <input v-model="username" type="text" required placeholder="Choose a username">
+          <div class="hint-list" v-if="username">
+            <div v-if="usernameStatus === 'checking'" class="checking">• Checking availability…</div>
+            <div v-else-if="usernameStatus === 'available'" class="ok">• Available</div>
+            <div v-else-if="usernameStatus === 'taken'" class="err">• Already taken — pick another</div>
+            <div v-else-if="usernameStatus === 'too_short'" class="err">• At least 3 characters</div>
+            <div v-else-if="usernameStatus === 'too_long'" class="err">• At most 32 characters</div>
+          </div>
         </div>
         <div class="form-group">
           <label>Password</label>
@@ -36,7 +43,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { api } from '../api';
 import { useAuthStore } from '../stores/auth';
@@ -67,9 +74,46 @@ const containsUsername = computed(() => {
   return password.value.toLowerCase().includes(u);
 });
 
+// Live username availability. Backed by GET /api/auth/check-username.
+// Debounced so we don't fire a request per keystroke, and gated by a
+// monotonic request ID so an in-flight check for "ali" can't overwrite
+// the answer for "alice" if it races back later.
+type UsernameStatus = '' | 'checking' | 'available' | 'taken' | 'too_short' | 'too_long';
+const usernameStatus = ref<UsernameStatus>('');
+let usernameDebounce: ReturnType<typeof setTimeout> | null = null;
+let usernameCheckSeq = 0;
+
+watch(username, (raw) => {
+  const u = raw.trim();
+  if (usernameDebounce) clearTimeout(usernameDebounce);
+  if (u.length === 0) { usernameStatus.value = ''; return; }
+  if (u.length < 3)   { usernameStatus.value = 'too_short'; return; }
+  if (u.length > 32)  { usernameStatus.value = 'too_long'; return; }
+
+  usernameStatus.value = 'checking';
+  const seq = ++usernameCheckSeq;
+  usernameDebounce = setTimeout(async () => {
+    try {
+      const res = await api.checkUsername(u);
+      if (seq !== usernameCheckSeq) return;       // a newer keystroke landed
+      if (raw !== username.value)   return;       // input changed during await
+      if (res.available) usernameStatus.value = 'available';
+      else usernameStatus.value = (res.reason as UsernameStatus) || 'taken';
+    } catch {
+      // Network hiccup — clear the indicator rather than blocking; the
+      // submit-side check is the real gate.
+      if (seq === usernameCheckSeq) usernameStatus.value = '';
+    }
+  }, 350);
+});
+
 const handleSubmit = async () => {
   if (password.value !== confirmPassword.value) {
     error.value = 'Passwords do not match';
+    return;
+  }
+  if (usernameStatus.value === 'taken') {
+    error.value = 'Username already taken';
     return;
   }
 
@@ -114,6 +158,8 @@ h2 { margin: 0 0 24px; text-align: center; color: #ddd; }
 
 .hint-list { margin-top: 8px; font-size: 12px; color: #777; line-height: 1.6; }
 .hint-list .ok { color: #5cb85c; }
+.hint-list .err { color: #d35454; }
+.hint-list .checking { color: #aaa; font-style: italic; }
 
 .auth-footer { margin-top: 24px; text-align: center; font-size: 14px; color: #888; }
 .auth-footer a { color: #4a6b8a; text-decoration: none; }
