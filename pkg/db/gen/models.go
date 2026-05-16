@@ -63,4 +63,5 @@ type User struct {
 	Wins         int32     `json:"wins"`
 	Losses       int32     `json:"losses"`
 	Draws        int32     `json:"draws"`
+	IsBot        bool      `json:"is_bot"`
 }

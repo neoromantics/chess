@@ -257,6 +257,34 @@ func (s *PostgresStore) GetUserStats(id int64) (*UserStats, error) {
 	return stats, nil
 }
 
+// UpsertBot seeds a bot user row (idempotent across replicas / restarts).
+// TODO(matchmaker-engine-fallback): delete with the bot pool.
+func (s *PostgresStore) UpsertBot(username, passwordHash string, rating int) (BotUser, error) {
+	row, err := s.q.UpsertBot(context.Background(), gen.UpsertBotParams{
+		Username:     username,
+		PasswordHash: passwordHash,
+		Rating:       float32(rating),
+	})
+	if err != nil {
+		return BotUser{}, err
+	}
+	return BotUser{ID: row.ID, Username: row.Username, Rating: row.Rating}, nil
+}
+
+// ListBots returns the seeded bot pool ordered by rating ASC.
+// TODO(matchmaker-engine-fallback): delete with the bot pool.
+func (s *PostgresStore) ListBots() ([]BotUser, error) {
+	rows, err := s.q.ListBots(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	out := make([]BotUser, len(rows))
+	for i, r := range rows {
+		out[i] = BotUser{ID: r.ID, Username: r.Username, Rating: r.Rating}
+	}
+	return out, nil
+}
+
 // === GAMES ===
 
 // defaultListGamesLimit is the per-page cap when the caller doesn't

@@ -3,29 +3,54 @@ INSERT INTO users (username, password_hash, created_at, last_login)
 VALUES ($1, $2, NOW(), NOW())
 RETURNING id, username, password_hash, display_name, avatar_url, country,
           is_premium, bio, last_login, created_at,
-          rating, rd, volatility, games_played, wins, losses, draws;
+          rating, rd, volatility, games_played, wins, losses, draws, is_bot;
 
 -- name: GetUserByUsername :one
 SELECT id, username, password_hash, display_name, avatar_url, country,
        is_premium, bio, last_login, created_at,
-       rating, rd, volatility, games_played, wins, losses, draws
+       rating, rd, volatility, games_played, wins, losses, draws, is_bot
 FROM users
 WHERE username = $1;
 
 -- name: GetUserByID :one
 SELECT id, username, password_hash, display_name, avatar_url, country,
        is_premium, bio, last_login, created_at,
-       rating, rd, volatility, games_played, wins, losses, draws
+       rating, rd, volatility, games_played, wins, losses, draws, is_bot
 FROM users
 WHERE id = $1;
 
 -- name: SearchUsersByPrefix :many
 -- For invite autocomplete. Case-insensitive prefix match, capped.
+-- Bot users (is_bot=true) are excluded — they're internal stand-ins
+-- for the engine-fallback matchmaker and shouldn't appear in invite
+-- search results.
 SELECT id, username, display_name, country, rating
 FROM users
 WHERE username ILIKE $1
+  AND is_bot = FALSE
 ORDER BY username
 LIMIT 10;
+
+-- name: UpsertBot :one
+-- Idempotent bot seed. Runs once per game-service boot. ON CONFLICT
+-- DO UPDATE (instead of DO NOTHING) is required for RETURNING to fire
+-- on the already-seeded path; we only flip is_bot to TRUE (the rest
+-- of the row is left intact). Returning id+username+rating so the
+-- caller can populate its in-memory pool without a follow-up SELECT.
+INSERT INTO users (username, password_hash, rating, is_bot)
+VALUES ($1, $2, $3, TRUE)
+ON CONFLICT (username) DO UPDATE
+  SET is_bot = TRUE
+RETURNING id, username, rating;
+
+-- name: ListBots :many
+-- Read-side of the bot pool. Game-service calls this at boot to warm
+-- its in-memory bot cache. Cheap (small N, indexable predicate) and
+-- only runs at startup; we don't poll.
+SELECT id, username, rating
+FROM users
+WHERE is_bot = TRUE
+ORDER BY rating;
 
 -- name: UpdateUserProfile :exec
 UPDATE users

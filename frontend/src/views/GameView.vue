@@ -332,7 +332,13 @@ const statusMsg = computed(() => {
   if (s.status === 'draw_agreement') return 'Draw by agreement';
 
   let msg = (s.turn === 'w' ? 'White' : 'Black') + ' to move';
-  if (s.thinking) msg += ' (engine thinking…)';
+  // Only label the wait as "engine thinking…" when the SPA actually
+  // sees an engine on the board. Bot-fallback games mask the engine
+  // flags (see snapshotFromRecord + cmd/game/bots.go), so this falls
+  // through to "opponent thinking…" — which is also the truthful read
+  // for the user as far as they're concerned.
+  const enginePresent = s.engine_white || s.engine_black;
+  if (s.thinking) msg += enginePresent ? ' (engine thinking…)' : ' (opponent thinking…)';
   else if (s.engine_to_move) msg += ' (engine’s turn)';
   if (s.in_check) msg += ' — check!';
   return msg;

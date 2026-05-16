@@ -21,11 +21,20 @@ CREATE TABLE IF NOT EXISTS users (
     games_played    INTEGER NOT NULL DEFAULT 0,
     wins            INTEGER NOT NULL DEFAULT 0,
     losses          INTEGER NOT NULL DEFAULT 0,
-    draws           INTEGER NOT NULL DEFAULT 0
+    draws           INTEGER NOT NULL DEFAULT 0,
+    -- is_bot identifies bot users seeded by the engine-fallback
+    -- matchmaker. They have a real users row (so games.black_user_id
+    -- FK resolves and the SPA sees a "real" opponent) but never log in
+    -- and are filtered out of invite search. See cmd/game/bots.go.
+    -- TODO(matchmaker-engine-fallback): drop column when the fallback
+    -- is removed (tagged in matchmaker.go).
+    is_bot          BOOLEAN NOT NULL DEFAULT FALSE
 );
 -- Drop the pre-Glicko-2 elo column on clusters that still have it.
 -- Never read by current code; superseded by rating/rd/volatility.
 ALTER TABLE users DROP COLUMN IF EXISTS elo;
+-- Idempotent add for clusters that predate the bot-pool column.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_bot BOOLEAN NOT NULL DEFAULT FALSE;
 
 CREATE TABLE IF NOT EXISTS games (
     id                TEXT      PRIMARY KEY,

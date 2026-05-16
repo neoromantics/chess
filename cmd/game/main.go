@@ -132,6 +132,11 @@ func main() {
 	}
 
 	slog.Info("Game Service starting (Command Processor)...")
+	// Seed the bot pool used by the engine-fallback matchmaker. Runs
+	// once at boot, idempotent across replicas (ON CONFLICT on the
+	// username unique). See cmd/game/bots.go.
+	// TODO(matchmaker-engine-fallback): remove with the fallback.
+	seedBots(store)
 	startBg("engine-results", s.listenToEngineResults)
 	startBg("invite-sweeper", s.runInviteSweeper)
 	// Matchmaker absorbed from the former cmd/matchmaker pod. The
@@ -412,12 +417,29 @@ func (s *GameService) snapshotFromRecord(ctx context.Context, rec *db.GameRecord
 		status = rec.Status
 	}
 
+	// Bot-match disguise: when this game was created by the engine-
+	// fallback matchmaker (one side has BOTH a user_id AND an engine
+	// flag set), report the engine flags as false to the SPA so it
+	// renders the game as PvP — same gating, no "Engine settings"
+	// disclosure, no "(engine thinking…)" tell. The server-side
+	// gm.EngineToMove() / triggerEngine path still uses the truthful
+	// rec.EngineWhite/EngineBlack so the engine actually moves.
+	// TODO(matchmaker-engine-fallback): remove with the bot pool.
+	engineWhiteOut := gm.EngineWhite
+	engineBlackOut := gm.EngineBlack
+	engineToMoveOut := gm.EngineToMove()
+	if isBotMatch(rec) {
+		engineWhiteOut = false
+		engineBlackOut = false
+		engineToMoveOut = false
+	}
+
 	snap := stateJSON{
 		FEN:            gm.Board.FEN(),
 		Turn:           turn,
-		EngineWhite:    gm.EngineWhite,
-		EngineBlack:    gm.EngineBlack,
-		EngineToMove:   gm.EngineToMove(),
+		EngineWhite:    engineWhiteOut,
+		EngineBlack:    engineBlackOut,
+		EngineToMove:   engineToMoveOut,
 		Status:         status,
 		Result:         rec.Result,
 		InCheck:        gm.Board.InCheck(gm.Board.SideToMove),

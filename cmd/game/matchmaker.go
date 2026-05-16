@@ -282,8 +282,15 @@ func (s *GameService) tryEngineFallback(ctx context.Context, tc string) {
 // dispatchEngineFallback creates a brand-new engine-vs-human game for
 // `uid` and emits the same MatchFoundEvt a real pairing would have, so
 // the SPA's matchmaking UI follows its normal post-match redirect path.
-// The game is non-rated (the opponent is not a rated entity) and the
-// engine plays black with a TC-proportional think time.
+//
+// The opponent is a seeded bot user picked from the in-memory pool
+// (see cmd/game/bots.go). The bot's user_id is stored in BlackUserID,
+// while EngineBlack stays true server-side so the engine actually
+// drives the moves. snapshotFromRecord lies about EngineBlack to the
+// SPA so the game renders as PvP — see isBotMatch.
+//
+// The game is non-rated so Elo stays clean; the rating-updater skips
+// it (see cmd/game/rating.go's rec.Rated guard).
 //
 // TODO(matchmaker-engine-fallback): delete once organic pairing volume
 // makes this unnecessary. See the comment block at the top.
@@ -294,12 +301,26 @@ func (s *GameService) dispatchEngineFallback(ctx context.Context, uid int64, tc 
 		thinkMS = 1000
 	}
 
+	// Look up the human's rating so we pick a bot in the same band.
+	// If the user fetch fails, fall back to 1500 (the seed midpoint)
+	// rather than aborting — a rough match beats no match.
+	targetRating := 1500
+	if u, err := s.db.GetUserByID(uid); err == nil && u != nil {
+		targetRating = int(u.Rating)
+	}
+	bot, ok := pickBot(targetRating)
+	if !ok {
+		slog.Error("engine fallback: bot pool empty, skipping", "user_id", uid, "tc", tc)
+		return
+	}
+
 	gm := game.NewGame()
 	white := uid
+	black := bot.ID
 	rec := &db.GameRecord{
 		ID:             gameID,
 		WhiteUserID:    &white,
-		BlackUserID:    nil,
+		BlackUserID:    &black,
 		FEN:            gm.Board.FEN(),
 		History:        "[]",
 		HistorySAN:     "[]",
@@ -323,10 +344,11 @@ func (s *GameService) dispatchEngineFallback(ctx context.Context, uid int64, tc 
 	}
 
 	slog.Info("matchmaker: engine fallback dispatched",
-		"user_id", uid, "tc", tc, "game_id", gameID, "wait_threshold", mmEngineFallbackAfter)
+		"user_id", uid, "bot_id", bot.ID, "bot_name", bot.Username,
+		"tc", tc, "game_id", gameID, "wait_threshold", mmEngineFallbackAfter)
 
 	payload, _ := json.Marshal(eventbus.MatchFoundEvt{
-		GameID: gameID, WhiteUserID: uid, BlackUserID: 0, Color: "white",
+		GameID: gameID, WhiteUserID: uid, BlackUserID: bot.ID, Color: "white",
 	})
 	s.bus.PublishUserEvent(ctx, uid, eventbus.Event{
 		Type: eventbus.EvtMatchFound, GameID: gameID, Payload: payload,

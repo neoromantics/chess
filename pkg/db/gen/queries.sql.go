@@ -143,7 +143,7 @@ INSERT INTO users (username, password_hash, created_at, last_login)
 VALUES ($1, $2, NOW(), NOW())
 RETURNING id, username, password_hash, display_name, avatar_url, country,
           is_premium, bio, last_login, created_at,
-          rating, rd, volatility, games_played, wins, losses, draws
+          rating, rd, volatility, games_played, wins, losses, draws, is_bot
 `
 
 type CreateUserParams struct {
@@ -172,6 +172,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.Wins,
 		&i.Losses,
 		&i.Draws,
+		&i.IsBot,
 	)
 	return i, err
 }
@@ -342,7 +343,7 @@ func (q *Queries) GetInvite(ctx context.Context, id uuid.UUID) (Invite, error) {
 const getUserByID = `-- name: GetUserByID :one
 SELECT id, username, password_hash, display_name, avatar_url, country,
        is_premium, bio, last_login, created_at,
-       rating, rd, volatility, games_played, wins, losses, draws
+       rating, rd, volatility, games_played, wins, losses, draws, is_bot
 FROM users
 WHERE id = $1
 `
@@ -368,6 +369,7 @@ func (q *Queries) GetUserByID(ctx context.Context, id int64) (User, error) {
 		&i.Wins,
 		&i.Losses,
 		&i.Draws,
+		&i.IsBot,
 	)
 	return i, err
 }
@@ -375,7 +377,7 @@ func (q *Queries) GetUserByID(ctx context.Context, id int64) (User, error) {
 const getUserByUsername = `-- name: GetUserByUsername :one
 SELECT id, username, password_hash, display_name, avatar_url, country,
        is_premium, bio, last_login, created_at,
-       rating, rd, volatility, games_played, wins, losses, draws
+       rating, rd, volatility, games_played, wins, losses, draws, is_bot
 FROM users
 WHERE username = $1
 `
@@ -401,8 +403,48 @@ func (q *Queries) GetUserByUsername(ctx context.Context, username string) (User,
 		&i.Wins,
 		&i.Losses,
 		&i.Draws,
+		&i.IsBot,
 	)
 	return i, err
+}
+
+const listBots = `-- name: ListBots :many
+SELECT id, username, rating
+FROM users
+WHERE is_bot = TRUE
+ORDER BY rating
+`
+
+type ListBotsRow struct {
+	ID       int64   `json:"id"`
+	Username string  `json:"username"`
+	Rating   float32 `json:"rating"`
+}
+
+// Read-side of the bot pool. Game-service calls this at boot to warm
+// its in-memory bot cache. Cheap (small N, indexable predicate) and
+// only runs at startup; we don't poll.
+func (q *Queries) ListBots(ctx context.Context) ([]ListBotsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listBots)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListBotsRow{}
+	for rows.Next() {
+		var i ListBotsRow
+		if err := rows.Scan(&i.ID, &i.Username, &i.Rating); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listGames = `-- name: ListGames :many
@@ -582,6 +624,7 @@ const searchUsersByPrefix = `-- name: SearchUsersByPrefix :many
 SELECT id, username, display_name, country, rating
 FROM users
 WHERE username ILIKE $1
+  AND is_bot = FALSE
 ORDER BY username
 LIMIT 10
 `
@@ -595,6 +638,9 @@ type SearchUsersByPrefixRow struct {
 }
 
 // For invite autocomplete. Case-insensitive prefix match, capped.
+// Bot users (is_bot=true) are excluded — they're internal stand-ins
+// for the engine-fallback matchmaker and shouldn't appear in invite
+// search results.
 func (q *Queries) SearchUsersByPrefix(ctx context.Context, username string) ([]SearchUsersByPrefixRow, error) {
 	rows, err := q.db.QueryContext(ctx, searchUsersByPrefix, username)
 	if err != nil {
@@ -731,6 +777,38 @@ func (q *Queries) UpdateUserRating(ctx context.Context, arg UpdateUserRatingPara
 		arg.Draws,
 	)
 	return err
+}
+
+const upsertBot = `-- name: UpsertBot :one
+INSERT INTO users (username, password_hash, rating, is_bot)
+VALUES ($1, $2, $3, TRUE)
+ON CONFLICT (username) DO UPDATE
+  SET is_bot = TRUE
+RETURNING id, username, rating
+`
+
+type UpsertBotParams struct {
+	Username     string  `json:"username"`
+	PasswordHash string  `json:"password_hash"`
+	Rating       float32 `json:"rating"`
+}
+
+type UpsertBotRow struct {
+	ID       int64   `json:"id"`
+	Username string  `json:"username"`
+	Rating   float32 `json:"rating"`
+}
+
+// Idempotent bot seed. Runs once per game-service boot. ON CONFLICT
+// DO UPDATE (instead of DO NOTHING) is required for RETURNING to fire
+// on the already-seeded path; we only flip is_bot to TRUE (the rest
+// of the row is left intact). Returning id+username+rating so the
+// caller can populate its in-memory pool without a follow-up SELECT.
+func (q *Queries) UpsertBot(ctx context.Context, arg UpsertBotParams) (UpsertBotRow, error) {
+	row := q.db.QueryRowContext(ctx, upsertBot, arg.Username, arg.PasswordHash, arg.Rating)
+	var i UpsertBotRow
+	err := row.Scan(&i.ID, &i.Username, &i.Rating)
+	return i, err
 }
 
 const upsertGame = `-- name: UpsertGame :exec

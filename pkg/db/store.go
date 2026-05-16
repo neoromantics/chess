@@ -96,6 +96,18 @@ type Invite struct {
 	ResolvedAt  *time.Time `json:"resolved_at,omitempty"`
 }
 
+// BotUser is the minimal view of a seeded bot returned by ListBots and
+// UpsertBot. Game-service uses it to populate the in-memory bot pool;
+// password_hash and the rest of the User row are never needed once a
+// bot exists. See cmd/game/bots.go.
+// TODO(matchmaker-engine-fallback): delete with the rest of the bot
+// pool when organic pairing volume sustains itself.
+type BotUser struct {
+	ID       int64   `json:"id"`
+	Username string  `json:"username"`
+	Rating   float32 `json:"rating"`
+}
+
 // RatingUpdate captures the Glicko-2 delta to apply after a rated game.
 // All four scalar fields move atomically; wins/losses/draws are +1/0
 // counters chosen by the caller based on the game result.
@@ -126,6 +138,12 @@ type Store interface {
 	UpdatePassword(id int64, passwordHash string) error
 	UpdateUserRating(u RatingUpdate) error
 	GetUserStats(id int64) (*UserStats, error)
+	// UpsertBot seeds (or re-marks) a bot user. Idempotent across
+	// replica startups. Used by cmd/game/bots.go.
+	// TODO(matchmaker-engine-fallback): delete with the bot pool.
+	UpsertBot(username, passwordHash string, rating int) (BotUser, error)
+	// ListBots returns the seeded bot pool ordered by rating ASC.
+	ListBots() ([]BotUser, error)
 
 	// Game management
 	SaveGame(g *GameRecord) error

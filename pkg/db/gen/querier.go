@@ -40,6 +40,10 @@ type Querier interface {
 	GetInvite(ctx context.Context, id uuid.UUID) (Invite, error)
 	GetUserByID(ctx context.Context, id int64) (User, error)
 	GetUserByUsername(ctx context.Context, username string) (User, error)
+	// Read-side of the bot pool. Game-service calls this at boot to warm
+	// its in-memory bot cache. Cheap (small N, indexable predicate) and
+	// only runs at startup; we don't poll.
+	ListBots(ctx context.Context) ([]ListBotsRow, error)
 	// Games where the user is on either side. Cursor-paginated: callers pass
 	// $2 as "newer than" (typically the last seen updated_at) or NOW() for the
 	// first page, and $3 as the page size. NULL/zero $2 falls back to NOW().
@@ -51,6 +55,9 @@ type Querier interface {
 	ListPendingInvitesForUser(ctx context.Context, toUserID int64) ([]Invite, error)
 	ListPendingInvitesFromUser(ctx context.Context, fromUserID int64) ([]Invite, error)
 	// For invite autocomplete. Case-insensitive prefix match, capped.
+	// Bot users (is_bot=true) are excluded — they're internal stand-ins
+	// for the engine-fallback matchmaker and shouldn't appear in invite
+	// search results.
 	SearchUsersByPrefix(ctx context.Context, username string) ([]SearchUsersByPrefixRow, error)
 	// Owner-gated spectator toggle. Handler validates the caller is a
 	// participant before invoking this; we still scope by id alone because
@@ -63,6 +70,12 @@ type Querier interface {
 	// after a rated game completes. All four fields move atomically so we
 	// never expose a half-updated rating to readers.
 	UpdateUserRating(ctx context.Context, arg UpdateUserRatingParams) error
+	// Idempotent bot seed. Runs once per game-service boot. ON CONFLICT
+	// DO UPDATE (instead of DO NOTHING) is required for RETURNING to fire
+	// on the already-seeded path; we only flip is_bot to TRUE (the rest
+	// of the row is left intact). Returning id+username+rating so the
+	// caller can populate its in-memory pool without a follow-up SELECT.
+	UpsertBot(ctx context.Context, arg UpsertBotParams) (UpsertBotRow, error)
 	UpsertGame(ctx context.Context, arg UpsertGameParams) error
 }
 

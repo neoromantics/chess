@@ -23,15 +23,40 @@ onMounted(() => {
 
 <style>
 /* Global styles */
-:root { --sq: 112px; }
+/* Board cell sizing.
+ *
+ * The board is 8 × var(--sq) plus a thin coords strip on each axis.
+ * The viewport budget has to subtract the sticky 64px navbar, the
+ * 32px top+bottom container padding (64px total), and ~30px for the
+ * file-coordinates row + breathing room. That gives ~160px of
+ * vertical chrome — anything more and the page scrolls on a 768p
+ * laptop screen, which was the original complaint.
+ *
+ * The min() picks the smallest constraint so the board never overflows:
+ *   - 112px      → hard cap on huge monitors (matches the original)
+ *   - height term → keeps the column inside the viewport (no scroll)
+ *   - width term  → leaves room for the 340px SidePanel + gaps + padding
+ */
+:root {
+  --sq: min(
+    112px,
+    calc((100vh - 160px) / 8.2),
+    calc((100vw - 420px) / 8.2)
+  );
+}
 * { box-sizing: border-box; }
 body { font-family: -apple-system, system-ui, sans-serif; background: #1e1e1e; color: #ddd; margin: 0; min-height: 100vh; }
 
-@media (max-width: 1400px) {
-  :root { --sq: min(11vh, calc((100vw - 420px) / 8.2)); }
-}
+/* Below 1000px the SidePanel collapses (GameView.vue media query); the
+ * board can use almost the full width. Keep the vertical budget the
+ * same so the board still fits without scrolling on short screens. */
 @media (max-width: 1000px) {
-  :root { --sq: min(11vh, 11vw); }
+  :root {
+    --sq: min(
+      calc((100vh - 140px) / 8.2),
+      calc((100vw - 20px) / 8.2)
+    );
+  }
 }
 
 select, button, input[type=text], input[type=password] { background: #333; color: #ddd; border: 1px solid #555; padding: 6px 10px; border-radius: 3px; font: inherit; cursor: pointer; }
