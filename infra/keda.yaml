@@ -85,7 +85,11 @@ spec:
   # concurrency-per-pod design.
   - type: redis-streams
     metadata:
-      address: chess-redis:6379
+      # FQDN, not the in-namespace short name. The KEDA operator runs
+      # in the `keda` namespace and resolves DNS from there; a bare
+      # `chess-redis:6379` only works for pods inside the chess ns.
+      # The gateway prometheus trigger below uses the same pattern.
+      address: chess-redis.chess.svc.cluster.local:6379
       stream: engine:requests
       consumerGroup: engine-worker-group
       pendingEntriesCount: "3"
