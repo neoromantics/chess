@@ -15,6 +15,12 @@
       <div class="stat">
         <div class="stat-label">Total users</div>
         <div class="stat-value">{{ overview?.users ?? '—' }}</div>
+        <div class="stat-sub">humans only</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Seeded bots</div>
+        <div class="stat-value">{{ overview?.bots ?? '—' }}</div>
+        <div class="stat-sub">matchmaker fallback</div>
       </div>
       <div class="stat">
         <div class="stat-label">Signups (24h)</div>
@@ -63,6 +69,30 @@
         </tbody>
       </table>
       <div v-else class="empty">No ongoing games right now.</div>
+    </section>
+
+    <section class="card">
+      <header class="card-header">
+        <h2>Seeded bots</h2>
+        <span class="muted">{{ bots.length }} in pool</span>
+      </header>
+      <table v-if="bots.length" class="signup-table">
+        <thead>
+          <tr>
+            <th>Username</th>
+            <th class="num">Rating</th>
+            <th class="num">Games played</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="b in bots" :key="b.id">
+            <td class="username">{{ b.username }}</td>
+            <td class="num">{{ b.rating }}</td>
+            <td class="num">{{ b.games_played }}</td>
+          </tr>
+        </tbody>
+      </table>
+      <div v-else class="empty">No bots seeded.</div>
     </section>
 
     <section class="card">
@@ -220,6 +250,12 @@ const liveGames = ref<Array<{
   updated_at: string;
   viewer_count: number;
 }>>([]);
+const bots = ref<Array<{
+  id: number;
+  username: string;
+  rating: number;
+  games_played: number;
+}>>([]);
 const loadError = ref<string | null>(null);
 
 // Delete-confirm modal state. Single-target at a time keeps the UI
@@ -234,16 +270,18 @@ const queueDepth = computed(() => overview.value?.queue_depth ?? {});
 const loadAll = async () => {
   loadError.value = null;
   try {
-    const [ov, sg, ac, lg] = await Promise.all([
+    const [ov, sg, ac, lg, bt] = await Promise.all([
       api.adminOverview(),
       api.adminSignups(),
       api.adminActions(),
       api.adminLiveGames(),
+      api.adminBots(),
     ]);
     overview.value = ov;
     signups.value = sg || [];
     actions.value = ac || [];
     liveGames.value = lg || [];
+    bots.value = bt || [];
   } catch (e: any) {
     loadError.value = e?.message || 'unknown error';
   }
@@ -342,6 +380,7 @@ onMounted(loadAll);
 }
 .stat-label { color: #8a8a8a; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
 .stat-value { color: #fff; font-size: 26px; font-weight: 700; margin-top: 4px; }
+.stat-sub { color: #666; font-size: 10px; margin-top: 2px; text-transform: lowercase; letter-spacing: 0.3px; }
 
 .card-header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 12px; }
 .card-header h2 { margin: 0; font-size: 16px; color: #ddd; font-weight: 600; }

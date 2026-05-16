@@ -46,8 +46,9 @@ Bootstrap the first admin via SQL: `UPDATE users SET is_admin = TRUE WHERE usern
 
 | Method | Path | Auth | Owner | Frontend caller |
 |---|---|---|---|---|
-| GET | `/api/admin/overview` | 🔐+admin | gateway | `api.adminOverview` (user count, signups 24h/7d, active games, queue depth per TC) |
+| GET | `/api/admin/overview` | 🔐+admin | gateway | `api.adminOverview`. Returns `{users, bots, signups_24h, signups_7d, active_games, queue_depth{tc → ZCARD}}`. `users` is human signups only (excludes the seeded bot pool, broken out as `bots`). |
 | GET | `/api/admin/signups` | 🔐+admin | gateway | `api.adminSignups` (20 most recent non-bot signups) |
+| GET | `/api/admin/bots` | 🔐+admin | gateway | `api.adminBots`. Per-bot rows: `{id, username, rating, games_played}`. `games_played` is a live LEFT JOIN onto `games` (bot games are unrated so users.games_played stays 0). |
 | GET | `/api/admin/actions[?before=…]` | 🔐+admin | gateway | `api.adminActions`. 50 rows newest-first; pass the last seen `created_at` (rfc3339) as the cursor for the next page. |
 | GET | `/api/admin/live_games` | 🔐+admin | gateway | `api.adminLiveGames`. Active rows joined to player usernames + `viewer_count` from Redis `PUBSUB NUMSUB game.evt.{id}` (includes players, not just spectators). |
 | DELETE | `/api/admin/users/{id}` | 🔐+admin | gateway | `api.adminDeleteUser`. Body: `{confirm_username}` must match the target. Refuses self-delete + bot-pool members. Audit row written before the cascade. |

@@ -38,13 +38,28 @@ type User struct {
 
 // AdminOverview is the dashboard's headline counter set: total users,
 // recent signups, in-flight games. Cheap to compute (1–2 queries) and
-// the snapshot a small-cluster operator wants at a glance.
+// the snapshot a small-cluster operator wants at a glance. Users
+// counts humans only; Bots is the seeded matchmaker-fallback pool
+// and is broken out separately so the headline isn't inflated by a
+// fixed dozen rows.
 type AdminOverview struct {
 	Users         int64            `json:"users"`
+	Bots          int64            `json:"bots"`
 	SignupsDay    int64            `json:"signups_24h"`
 	SignupsWeek   int64            `json:"signups_7d"`
 	ActiveGames   int64            `json:"active_games"`
 	QueueDepthMap map[string]int64 `json:"queue_depth"` // tc → ZCARD
+}
+
+// BotStat is one row of the admin "Seeded bots" panel. GamesPlayed is
+// a live count from the games table (joined on white/black user id) —
+// users.games_played stays 0 because bot games are unrated and the
+// rating updater that increments it skips them.
+type BotStat struct {
+	ID          int64  `json:"id"`
+	Username    string `json:"username"`
+	Rating      int    `json:"rating"`
+	GamesPlayed int64  `json:"games_played"`
 }
 
 // AdminSignup is one row of the "Recent signups" panel — no PII beyond
@@ -218,8 +233,9 @@ type Store interface {
 	// Delete + audit are the write side — every destructive call must
 	// pair InsertAdminAction with the mutation it logs, so the audit
 	// row survives a crashed cascade.
-	CountUsers() (int64, error)
+	CountUsers() (humans int64, bots int64, err error)
 	CountRecentSignups() (day int64, week int64, err error)
+	ListBotStats() ([]BotStat, error)
 	ListRecentSignups() ([]AdminSignup, error)
 	CountActiveGames() (int64, error)
 	DeleteUser(id int64) (int64, error)

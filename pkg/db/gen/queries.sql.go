@@ -134,19 +134,27 @@ func (q *Queries) CountUserGameStats(ctx context.Context, dollar_1 int64) (Count
 }
 
 const countUsers = `-- name: CountUsers :one
-SELECT COUNT(*)::BIGINT AS total
+SELECT
+  COUNT(*) FILTER (WHERE is_bot = FALSE)::BIGINT AS humans,
+  COUNT(*) FILTER (WHERE is_bot = TRUE)::BIGINT  AS bots
 FROM users
 `
 
-// Total users across the whole table, bots and admins included. The
-// /api/admin/overview endpoint surfaces this as the headline number;
-// bot exclusion would mislead since they ARE users from a "rows in
-// the table" perspective.
-func (q *Queries) CountUsers(ctx context.Context) (int64, error) {
+type CountUsersRow struct {
+	Humans int64 `json:"humans"`
+	Bots   int64 `json:"bots"`
+}
+
+// Two counts in one trip via FILTER, so the admin overview can show
+// "real signups" and "seeded bots" as separate numbers. The original
+// single-COUNT version inflated "Total users" by the 12-row bot pool;
+// splitting matches the is_bot=FALSE filter ListRecentSignups +
+// CountRecentSignups already apply.
+func (q *Queries) CountUsers(ctx context.Context) (CountUsersRow, error) {
 	row := q.db.QueryRowContext(ctx, countUsers)
-	var total int64
-	err := row.Scan(&total)
-	return total, err
+	var i CountUsersRow
+	err := row.Scan(&i.Humans, &i.Bots)
+	return i, err
 }
 
 const createInvite = `-- name: CreateInvite :one
@@ -664,6 +672,57 @@ func (q *Queries) ListAdminActionsBefore(ctx context.Context, createdAt time.Tim
 			&i.TargetUsername,
 			&i.Detail,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listBotStats = `-- name: ListBotStats :many
+SELECT u.id, u.username, u.rating,
+       COUNT(g.id)::BIGINT AS games_played
+FROM users u
+LEFT JOIN games g
+  ON g.white_user_id = u.id OR g.black_user_id = u.id
+WHERE u.is_bot = TRUE
+GROUP BY u.id, u.username, u.rating
+ORDER BY u.rating
+`
+
+type ListBotStatsRow struct {
+	ID          int64   `json:"id"`
+	Username    string  `json:"username"`
+	Rating      float32 `json:"rating"`
+	GamesPlayed int64   `json:"games_played"`
+}
+
+// Per-bot stats for the admin "Seeded bots" panel. Returns the static
+// rating set at seed time plus a games-played count derived live from
+// the games table (bot games are rated=false so users.games_played
+// never increments via the rating updater). The LEFT JOIN keeps bots
+// with zero games in the result.
+func (q *Queries) ListBotStats(ctx context.Context) ([]ListBotStatsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listBotStats)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListBotStatsRow{}
+	for rows.Next() {
+		var i ListBotStatsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Username,
+			&i.Rating,
+			&i.GamesPlayed,
 		); err != nil {
 			return nil, err
 		}

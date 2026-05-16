@@ -287,8 +287,29 @@ func (s *PostgresStore) ListBots() ([]BotUser, error) {
 
 // === ADMIN DASHBOARD ===
 
-func (s *PostgresStore) CountUsers() (int64, error) {
-	return s.q.CountUsers(context.Background())
+func (s *PostgresStore) CountUsers() (int64, int64, error) {
+	row, err := s.q.CountUsers(context.Background())
+	if err != nil {
+		return 0, 0, err
+	}
+	return row.Humans, row.Bots, nil
+}
+
+func (s *PostgresStore) ListBotStats() ([]BotStat, error) {
+	rows, err := s.q.ListBotStats(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	out := make([]BotStat, len(rows))
+	for i, r := range rows {
+		out[i] = BotStat{
+			ID:          r.ID,
+			Username:    r.Username,
+			Rating:      int(r.Rating),
+			GamesPlayed: r.GamesPlayed,
+		}
+	}
+	return out, nil
 }
 
 func (s *PostgresStore) CountRecentSignups() (int64, int64, error) {

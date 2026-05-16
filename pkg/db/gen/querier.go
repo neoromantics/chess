@@ -33,11 +33,12 @@ type Querier interface {
 	// counters; losses are derived on the Go side as played-(wins+draws).
 	// Explicit BIGINT casts so sqlc infers int64 (not sql.NullInt64).
 	CountUserGameStats(ctx context.Context, dollar_1 int64) (CountUserGameStatsRow, error)
-	// Total users across the whole table, bots and admins included. The
-	// /api/admin/overview endpoint surfaces this as the headline number;
-	// bot exclusion would mislead since they ARE users from a "rows in
-	// the table" perspective.
-	CountUsers(ctx context.Context) (int64, error)
+	// Two counts in one trip via FILTER, so the admin overview can show
+	// "real signups" and "seeded bots" as separate numbers. The original
+	// single-COUNT version inflated "Total users" by the 12-row bot pool;
+	// splitting matches the is_bot=FALSE filter ListRecentSignups +
+	// CountRecentSignups already apply.
+	CountUsers(ctx context.Context) (CountUsersRow, error)
 	// === INVITES ===
 	// Direct user-to-user challenges. PG row is the durable record so a
 	// recipient who's offline sees the invite when they reconnect; Redis
@@ -85,6 +86,12 @@ type Querier interface {
 	// The (created_at, id) tie-break keeps the order stable when two rows
 	// share a created_at to the microsecond.
 	ListAdminActionsBefore(ctx context.Context, createdAt time.Time) ([]AdminAction, error)
+	// Per-bot stats for the admin "Seeded bots" panel. Returns the static
+	// rating set at seed time plus a games-played count derived live from
+	// the games table (bot games are rated=false so users.games_played
+	// never increments via the rating updater). The LEFT JOIN keeps bots
+	// with zero games in the result.
+	ListBotStats(ctx context.Context) ([]ListBotStatsRow, error)
 	// Read-side of the bot pool. Game-service calls this at boot to warm
 	// its in-memory bot cache. Cheap (small N, indexable predicate) and
 	// only runs at startup; we don't poll.

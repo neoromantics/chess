@@ -233,12 +233,30 @@ RETURNING id, from_user_id, to_user_id, time_control, rated, status, game_id,
           created_at, expires_at, resolved_at;
 
 -- name: CountUsers :one
--- Total users across the whole table, bots and admins included. The
--- /api/admin/overview endpoint surfaces this as the headline number;
--- bot exclusion would mislead since they ARE users from a "rows in
--- the table" perspective.
-SELECT COUNT(*)::BIGINT AS total
+-- Two counts in one trip via FILTER, so the admin overview can show
+-- "real signups" and "seeded bots" as separate numbers. The original
+-- single-COUNT version inflated "Total users" by the 12-row bot pool;
+-- splitting matches the is_bot=FALSE filter ListRecentSignups +
+-- CountRecentSignups already apply.
+SELECT
+  COUNT(*) FILTER (WHERE is_bot = FALSE)::BIGINT AS humans,
+  COUNT(*) FILTER (WHERE is_bot = TRUE)::BIGINT  AS bots
 FROM users;
+
+-- name: ListBotStats :many
+-- Per-bot stats for the admin "Seeded bots" panel. Returns the static
+-- rating set at seed time plus a games-played count derived live from
+-- the games table (bot games are rated=false so users.games_played
+-- never increments via the rating updater). The LEFT JOIN keeps bots
+-- with zero games in the result.
+SELECT u.id, u.username, u.rating,
+       COUNT(g.id)::BIGINT AS games_played
+FROM users u
+LEFT JOIN games g
+  ON g.white_user_id = u.id OR g.black_user_id = u.id
+WHERE u.is_bot = TRUE
+GROUP BY u.id, u.username, u.rating
+ORDER BY u.rating;
 
 -- name: CountRecentSignups :one
 -- Two windows in one trip: signups in the last 24h and last 7d. The

@@ -140,11 +140,18 @@ export const api = {
   // ===== Admin (is_admin gated; non-admins get 404) =====
   adminOverview: () => request<{
     users: number;
+    bots: number;
     signups_24h: number;
     signups_7d: number;
     active_games: number;
     queue_depth: Record<string, number>;
   }>('/api/admin/overview'),
+  adminBots: () => request<Array<{
+    id: number;
+    username: string;
+    rating: number;
+    games_played: number;
+  }>>('/api/admin/bots'),
   adminSignups: () => request<Array<{
     id: number;
     username: string;

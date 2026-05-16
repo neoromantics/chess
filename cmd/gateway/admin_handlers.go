@@ -65,7 +65,7 @@ func (gw *Gateway) handleAdminOverview(w http.ResponseWriter, r *http.Request) {
 	if _, ok := gw.adminOnly(w, r); !ok {
 		return
 	}
-	users, err := gw.db.CountUsers()
+	humans, bots, err := gw.db.CountUsers()
 	if err != nil {
 		slog.Error("admin overview: count users failed", "error", err)
 		http.Error(w, "failed to load overview", http.StatusInternalServerError)
@@ -100,13 +100,27 @@ func (gw *Gateway) handleAdminOverview(w http.ResponseWriter, r *http.Request) {
 	}
 
 	out := db.AdminOverview{
-		Users:         users,
+		Users:         humans,
+		Bots:          bots,
 		SignupsDay:    day,
 		SignupsWeek:   week,
 		ActiveGames:   active,
 		QueueDepthMap: depth,
 	}
 	writeJSONGW(w, out)
+}
+
+func (gw *Gateway) handleAdminBots(w http.ResponseWriter, r *http.Request) {
+	if _, ok := gw.adminOnly(w, r); !ok {
+		return
+	}
+	rows, err := gw.db.ListBotStats()
+	if err != nil {
+		slog.Error("admin bots: list failed", "error", err)
+		http.Error(w, "failed to list bots", http.StatusInternalServerError)
+		return
+	}
+	writeJSONGW(w, rows)
 }
 
 func (gw *Gateway) handleAdminSignups(w http.ResponseWriter, r *http.Request) {
