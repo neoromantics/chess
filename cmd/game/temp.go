@@ -14,9 +14,10 @@ package main
 // only store — there is no PG sweeper to write, no migration to babysit.
 //
 // Identity: a chess-anon HttpOnly cookie carries an opaque UUID set by
-// the gateway. The gateway injects ?anon_id=<uuid> on every /api/temp/*
-// request. game-service trusts the injection (mirroring the user_id
-// pattern) and uses anon_id == rec.OwnerAnonID as the sole authz check.
+// the gateway. The gateway injects it as the X-Anon-ID header on every
+// /api/temp/* request. game-service trusts the injection (mirroring the
+// X-User-ID pattern) and uses anon_id == rec.OwnerAnonID as the sole
+// authz check.
 //
 // Engine pipeline: SendEngineRequest carries Metadata{"temp":"1",
 // "anon_id":"..."}; engine-worker echoes Metadata back; processEngineResult

@@ -104,8 +104,11 @@ const loadGames = async () => {
   try {
     const res = await api.listGames();
     games.value = res || [];
-  } catch {
-    // non-fatal; just hide the section
+  } catch (e: any) {
+    // Surface the failure instead of silently leaving both sections
+    // v-if'd off — a 400 from /api/games hid a real backend regression
+    // for an unknown stretch of time before e6fb7c4.
+    toastStore.error('Failed to load games: ' + (e?.message || e));
   }
 };
 

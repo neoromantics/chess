@@ -179,9 +179,9 @@ func main() {
 	mux.HandleFunc("GET /api/replay.html", gw.handleReplay)
 
 	// 5d. Anonymous temp games. The chess-anon HttpOnly cookie carries
-	// an opaque UUID injected as ?anon_id=<uuid> into every proxied
+	// an opaque UUID injected as an X-Anon-ID header on every proxied
 	// /api/temp/* request. game-service trusts the injection (mirrors
-	// the user_id pattern). See cmd/game/temp.go for the storage model.
+	// the X-User-ID pattern). See cmd/game/temp.go for the storage model.
 	mux.Handle("/api/temp/", gw.injectAnonID(gameProxy))
 
 	// 6. WebSockets
@@ -346,9 +346,9 @@ func setAnonCookie(w http.ResponseWriter, value string) {
 }
 
 // injectAnonID wraps a reverse-proxy handler so the caller's anon
-// session ID lands on the proxied request as ?anon_id=<uuid>. Mints
-// the cookie on first hit. Symmetric with injectAuthedUser but uses
-// the cookie rather than the JWT context.
+// session ID lands on the proxied request as the X-Anon-ID header.
+// Mints the cookie on first hit. Symmetric with injectAuthedUser but
+// uses the cookie rather than the JWT context.
 func (gw *Gateway) injectAnonID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		anonID := readAnonCookie(r)
