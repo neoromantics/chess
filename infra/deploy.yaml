@@ -406,10 +406,12 @@ spec:
 #
 # HPAs scale on CPU + memory. The "right" signals for chess workloads are:
 #   - chess-gateway:        WebSocket connection count (custom metric)
-#   - chess-engine-worker:  engine:requests stream length (KEDA ScaledObject)
-# Neither is wired today — getting custom metrics requires the
-# Prometheus Adapter; KEDA stream-length scaling requires installing
-# KEDA on the cluster. CPU + memory is a fair proxy until those land.
+#   - chess-engine-worker:  engine:requests stream pending depth (KEDA)
+# Gateway still uses CPU+memory (needs the Prometheus Adapter to do
+# better). Engine-worker swapped to KEDA's redis-streams trigger on
+# 2026-05-16; see infra/keda.yaml. The legacy chess-worker HPA used
+# to live in this file and was removed when KEDA took over — only one
+# scaler may own a Deployment at a time.
 #
 # Note on Redis HA: Sentinel-based failover requires multiple nodes.
 # This cluster is single-node today (Duke VCM), so all Redis/Sentinel
@@ -470,35 +472,13 @@ spec:
       target: {type: Utilization, averageUtilization: 75}
 
 ---
-# Engine worker scales on CPU because each search pegs its core; high
-# average CPU means the queue is being chased and we need more pods.
-# Once KEDA is installed, switch this to a ScaledObject with
-# trigger.type=redis-streams + streamName=engine:requests for direct
-# queue-depth scaling.
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: chess-worker-hpa
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: chess-worker
-  minReplicas: 2
-  maxReplicas: 8
-  metrics:
-  - type: Resource
-    resource:
-      name: cpu
-      target: {type: Utilization, averageUtilization: 70}
-  behavior:
-    scaleUp:
-      stabilizationWindowSeconds: 15  # tournament starts surge fast
-      policies: [{type: Percent, value: 100, periodSeconds: 15}]
-    scaleDown:
-      stabilizationWindowSeconds: 300
-      policies: [{type: Pods, value: 1, periodSeconds: 60}]
-
+# Engine-worker scaling moved out of this file on 2026-05-16. KEDA
+# owns it now — see infra/keda.yaml for the ScaledObject that pages
+# off engine:requests pending depth (with CPU as a backstop). If KEDA
+# is uninstalled, re-add a CPU-only HPA here and drop keda.yaml from
+# kustomization.yaml. Operator action after this change lands on a
+# cluster that still has the old HPA:
+#   kubectl -n chess delete hpa chess-worker-hpa
 ---
 # PodDisruptionBudgets prevent kubectl drain (or HPA scale-down) from
 # emptying a deployment all at once. minAvailable: 1 keeps at least

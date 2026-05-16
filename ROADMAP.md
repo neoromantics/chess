@@ -269,8 +269,7 @@ worth pre-building):**
       vertical scale ceiling, but failover semantics need a real
       second node — meaningful only after the cluster grows past one
       VM.
-- 🟰 **KEDA on engine:requests stream depth** (already on the
-      hardening list).
+- _(KEDA on engine:requests stream depth shipped 2026-05-16 — see Production hardening below.)_
 - 🟰 **PG read replicas** for `ListGames` / search / replay.
 - 🟰 **Matchmaker sharding per TC.** Current single-leader pairing
       handles low-thousands queue depth comfortably; sharding only
@@ -298,8 +297,8 @@ Standalone Prom + Grafana shipped in `infra/observability.yaml`, plugged into th
 ### ✅ CI grep-check for wire-contract drift (2026-05-16)
 Shipped in `infra/check-wire-contract.sh` + a `wire-contract` CI job that blocks `docker` from running on drift. Extracts every WS event from Section 3 of `CONTRACT.md`, verifies each is referenced as a literal in both backend Go and frontend TS/Vue. Rows tagged with `<!-- spa-ignored -->` opt out of the frontend check (currently only `GameFinished`, which the SPA reads via its `StateUpdated` companion).
 
-### ⬜ KEDA on `engine:requests` stream length
-Better autoscale signal for engine-worker than CPU%. Once installed, switch the worker HPA to a `ScaledObject` with `trigger.type=redis-streams`.
+### ✅ KEDA on `engine:requests` stream depth (2026-05-16)
+Shipped in `infra/keda.yaml` (added to the kustomization). Replaces the CPU-only chess-worker HPA with a KEDA `ScaledObject` that pages off `XPENDING` for the `engine-worker-group` consumer group on `engine:requests`, with CPU at 70% as a secondary backstop (so a long-running search keeps a pod scaled-up even when the queue itself has drained). `pendingEntriesCount=3` per pod targets ~24 in-flight engine jobs at max scale (`maxReplicaCount=8`), matching the worker's GOMAXPROCS=1-per-pod design. Same min/max envelope and scale-up/scale-down behaviour as the legacy HPA. Prerequisite: KEDA v2 must be installed on the cluster (one-time `kubectl apply -f .../keda-2.16.0.yaml`, documented in `infra/keda.yaml`). Operator action after this lands: `kubectl -n chess delete hpa chess-worker-hpa` to remove the old scaler.
 
 ### ⬜ PG read replicas
 For `ListGames`, user search, replay queries. Wait until actual traffic justifies it.

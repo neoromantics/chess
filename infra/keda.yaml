@@ -1,0 +1,104 @@
+# KEDA ScaledObject for chess-worker.
+#
+# Replaces the CPU-only HPA in deploy.yaml. CPU was a lagging proxy —
+# by the time average utilization crossed 70% the queue had already
+# accumulated dozens of pending engine:requests entries (a single
+# /api/analyze fans N+1 jobs in one burst), and the latency the user
+# saw was bounded by HPA's reaction window, not the queue.
+#
+# The redis-streams trigger pages KEDA off XPENDING for the consumer
+# group, so we react to *what the workers haven't picked up yet* rather
+# than to *how hot the CPUs they're on are*. CPU stays as a secondary
+# trigger so we don't shrink below the level needed to keep a long
+# search responsive — pending count can be 0 while a multi-second
+# search is still pegging a core.
+#
+# Prerequisite (one-time per cluster):
+#   kubectl apply --server-side \
+#     -f https://github.com/kedacore/keda/releases/download/v2.16.0/keda-2.16.0.yaml
+#   kubectl -n keda rollout status deploy/keda-operator
+# After the CRDs land, `kubectl apply -k infra/` picks this file up
+# under the usual deploy flow. The chess-worker HPA in deploy.yaml is
+# intentionally removed — having both the legacy HPA and KEDA's
+# managed HPA on the same Deployment causes the two to fight each
+# other's scale decisions.
+#
+# To disable KEDA on a cluster (e.g. local dev with the operator
+# uninstalled), comment out the entry in kustomization.yaml and
+# re-add the legacy HPA block.
+
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: chess-worker-scaler
+  namespace: chess
+  labels:
+    app: chess-worker
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: chess-worker
+
+  # Replica bounds. Mirror the legacy HPA so a swap doesn't change
+  # the operating envelope; tune later from production traces.
+  minReplicaCount: 2
+  maxReplicaCount: 8
+
+  # How long to wait after the last trigger fires before scaling back
+  # down. Long enough that the tail of a /analyze burst doesn't bounce
+  # pods, short enough that a quiet cluster releases capacity quickly.
+  cooldownPeriod: 300
+
+  # Polling cadence. KEDA's default is 30s; we drop to 10s because
+  # /analyze bursts can fill and drain the queue inside a single
+  # 30s window and we want the reaction to feel snappy.
+  pollingInterval: 10
+
+  # KEDA creates an internal HPA. Reuse the same behavior block from
+  # the legacy HPA so reaction times match (15s scale-up window for
+  # tournament starts, 300s scale-down for stable shrink).
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleUp:
+          stabilizationWindowSeconds: 15
+          policies:
+          - type: Percent
+            value: 100
+            periodSeconds: 15
+        scaleDown:
+          stabilizationWindowSeconds: 300
+          policies:
+          - type: Pods
+            value: 1
+            periodSeconds: 60
+
+  triggers:
+  # Primary: how many engine:requests entries are unacked by the
+  # engine-worker consumer group. pendingEntriesCount is the per-pod
+  # target — total pending across the deployment is roughly
+  # pendingEntriesCount * replicas. Setting it to 3 means a pod is
+  # considered "saturated" when it has more than 3 unacked jobs;
+  # combined with min=2 / max=8 that's ~24 in-flight engine jobs at
+  # full scale, which matches the engine-worker's GOMAXPROCS=1
+  # concurrency-per-pod design.
+  - type: redis-streams
+    metadata:
+      address: chess-redis:6379
+      stream: engine:requests
+      consumerGroup: engine-worker-group
+      pendingEntriesCount: "3"
+      # If the cluster ever protects Redis with a password, set
+      # passwordFromEnv here + add the env var to the worker pod.
+      # The local cluster runs Redis open inside the namespace.
+
+  # Secondary backstop. A multi-second search can saturate a core
+  # without adding to the pending count (the job's already been
+  # XCLAIMed); CPU keeps us scaling out when that happens. Threshold
+  # matches what the legacy HPA used so behaviour is unchanged on
+  # the CPU axis.
+  - type: cpu
+    metricType: Utilization
+    metadata:
+      value: "70"

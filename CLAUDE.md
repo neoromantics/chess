@@ -157,7 +157,7 @@ Full status board: `ROADMAP.md`. The high-impact open items at a glance:
 
 **Production hardening:**
 - **Redis Sentinel** — single Redis is a full-platform SPOF; AOF gives durability but not failover. Requires a multi-node cluster to be meaningful.
-- **KEDA** on `engine:requests` stream length as the engine-worker HPA signal (currently CPU utilization, which is a proxy).
+- _(KEDA on `engine:requests` pending depth + CPU backstop shipped 2026-05-16; see `infra/keda.yaml`.)_
 - **PG read replicas** for ListGames / search / replay queries.
 
 **Already shipped (kept here so they're easy to find again):**

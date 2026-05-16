@@ -10,6 +10,13 @@ resources:
   # eat the ~12Gi of PVC). The deploy CI applies whatever's listed
   # here, so toggling this line is the install / uninstall switch.
   - observability.yaml
+  # KEDA ScaledObject for chess-worker (engine:requests pending depth +
+  # CPU backstop). Requires KEDA's CRDs to be installed on the cluster
+  # — keda.yaml's top-of-file comment has the one-time bootstrap
+  # command. Comment out on a cluster without KEDA AND re-add the
+  # legacy chess-worker HPA in deploy.yaml or the deployment will
+  # have no autoscaler at all.
+  - keda.yaml
 
 # chess-secrets is bootstrapped on the VM via infra/bootstrap-secrets.sh
 # and then owned by the cluster, never touched by CI. To rotate, edit
