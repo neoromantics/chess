@@ -63,6 +63,15 @@ game row.
 | POST | `/api/load_pgn?game_id=X` | 🔐+game | gateway → game-svc | `api.loadPgn` (engine games only) |
 | POST | `/api/analyze?game_id=X` | 🔐+game | gateway → game-svc | `api.analyze` (kicks per-ply jobs, streams `Assessment` over WS) |
 | POST | `/api/hint?game_id=X` | 🔐+game | gateway → game-svc | `api.getHint` |
+| POST | `/api/draw_offer?game_id=X` | 🔐+game | gateway → game-svc | `api.drawOffer` |
+| POST | `/api/draw_accept?game_id=X` | 🔐+game | gateway → game-svc | `api.drawAccept` |
+| POST | `/api/draw_decline?game_id=X` | 🔐+game | gateway → game-svc | `api.drawDecline` |
+| POST | `/api/takeback_offer?game_id=X` | 🔐+game | gateway → game-svc | `api.takebackOffer` |
+| POST | `/api/takeback_accept?game_id=X` | 🔐+game | gateway → game-svc | `api.takebackAccept` |
+| POST | `/api/takeback_decline?game_id=X` | 🔐+game | gateway → game-svc | `api.takebackDecline` |
+| POST | `/api/rematch_offer?game_id=X` | 🔐+game | gateway → game-svc | `api.rematchOffer` (finished PvP / bot rows only) |
+| POST | `/api/rematch_accept?game_id=X` | 🔐+game | gateway → game-svc | `api.rematchAccept` → returns `{game_id}` of the new row |
+| POST | `/api/rematch_decline?game_id=X` | 🔐+game | gateway → game-svc | `api.rematchDecline` |
 | GET | `/api/replay?game_id=X` | 🔐+game | gateway → game-svc | (data fetched by gateway) |
 | GET | `/api/replay.html?game_id=X` | 🔐+game | gateway (template) | `Replay` button |
 
@@ -79,10 +88,10 @@ game row.
 
 ### Anonymous temp games (no JWT)
 Identity is the `chess-anon` HttpOnly cookie. Gateway mints it on first
-hit and injects `?anon_id=<uuid>` on every proxied call. **Auth column
-🍪** = cookie required. The `/ws?game_id=temp-…` upgrade path branches
-inside the gateway: temp game IDs use the cookie, durable IDs use the
-JWT.
+hit and injects an `X-Anon-ID` header on every proxied call. **Auth
+column 🍪** = cookie required. The `/ws?game_id=temp-…` upgrade path
+branches inside the gateway: temp game IDs use the cookie, durable IDs
+use the JWT.
 
 | Method | Path | Auth | Owner | Frontend caller |
 |---|---|---|---|---|
@@ -149,6 +158,7 @@ Three keyspaces with different durability semantics. Don't mix them.
 | `clock:fallschedule` | sorted set | none | game_id → unix-ms deadline of current mover; clock-fall sweeper polls this every 500ms |
 | `draw-offer:{game_id}` | string (user_id) | 60s (capped to remaining clock) | Pending draw offer; SETNX-protected so only one offer can be open at a time |
 | `takeback-offer:{game_id}` | string (user_id) | 60s (capped to remaining clock) | Pending takeback request; SETNX-protected |
+| `rematch-offer:{game_id}` | string (user_id) | 5m | Pending rematch offer on a finished PvP / bot row; SETNX-protected |
 
 ---
 
@@ -182,6 +192,9 @@ Forgetting this breaks every WS upgrade silently with
 | `TakebackRequested` | PvP casual game; one side asked for a takeback | `{from_user_id, game_id, plies}` | (literal — defined in cmd/game/takebacks.go) | `GameView.connectWS` → set incoming-takeback banner |
 | `TakebackDeclined` | opponent declined a takeback | `{by_user_id, game_id}` | (literal) | toast + clear banner |
 | `TakebackAccepted` | opponent accepted; history rolled back N plies | `stateJSON` | (literal) | (companion to StateUpdated; SPA clears banner) |
+| `RematchOffered` | one PvP participant offered a rematch on a finished row | `{from_user_id, game_id}` | `eventbus.EvtRematchOffered` | `GameView.connectWS` → set incoming-rematch banner |
+| `RematchDeclined` | opponent declined a rematch offer | `{by_user_id, game_id}` | `eventbus.EvtRematchDeclined` | `GameView.connectWS` → toast + clear banner |
+| `RematchAccepted` | opponent accepted; fresh row created with swapped colors | `{new_game_id, white_user_id, black_user_id, by_user_id}` | `eventbus.EvtRematchAccepted` | `GameView.connectWS` → `router.push('/game/'+new_game_id)` for participants; toast for spectators |
 | `Assessment` | one per-ply analysis result (cmd/game/analysis.go) | `PlyAssessment {ply, played, best, score, depth, cp_loss, class}` where `class ∈ {best, only, great, good, inaccuracy, mistake, blunder}` | `eventbus.EvtAssessment` | `GameView.connectWS` → `assessments[ply] = a` |
 
 ### `/ws/user` (user.evt.{user_id})
@@ -302,7 +315,7 @@ The "land on the URL, get a game; come back within 10 minutes, your
 game is still there; otherwise it's gone forever" flow.
 
 **Identity.** The gateway mints an `chess-anon` HttpOnly cookie on
-first hit (UUID). It injects `?anon_id=<uuid>` into every proxied
+first hit (UUID). It injects an `X-Anon-ID` header into every proxied
 `/api/temp/*` request — symmetric with `injectAuthedUser`. Game-service
 trusts the injection and authorizes by matching against the stored
 `OwnerAnonID` field on the temp record.

@@ -88,6 +88,9 @@ func main() {
 	mux.HandleFunc("POST /api/takeback_offer", s.handleTakebackOffer)
 	mux.HandleFunc("POST /api/takeback_accept", s.handleTakebackAccept)
 	mux.HandleFunc("POST /api/takeback_decline", s.handleTakebackDecline)
+	mux.HandleFunc("POST /api/rematch_offer", s.handleRematchOffer)
+	mux.HandleFunc("POST /api/rematch_accept", s.handleRematchAccept)
+	mux.HandleFunc("POST /api/rematch_decline", s.handleRematchDecline)
 
 	mux.HandleFunc("POST /api/invites/send", s.handleSendInvite)
 	mux.HandleFunc("GET /api/invites/pending", s.handleListPendingInvites)

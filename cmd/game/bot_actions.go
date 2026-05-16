@@ -260,3 +260,72 @@ func (s *GameService) botDeclineTakeback(ctx context.Context, gameID string, bot
 	})
 	slog.Info("bot takeback declined", "game_id", gameID, "bot_id", botUID)
 }
+
+// maybeScheduleBotRematchResponse fires a delayed bot accept on the
+// rematch offer if the recipient is a seeded bot. Unlike draws and
+// takebacks (where botShouldAcceptOffer flips ~40%), the bot ALWAYS
+// accepts rematches — a "no, I don't want to play again" reply from
+// a bot opponent reads as broken UX, and the bot pool exists to keep
+// engagement up, not gate it. The botResponseDelay still applies so
+// the accept doesn't land instantly enough to give the bot away.
+func (s *GameService) maybeScheduleBotRematchResponse(rec *db.GameRecord, offererUID int64) {
+	if !isBotMatch(rec) {
+		return
+	}
+	botUID, ok := opponentUIDOnRec(rec, offererUID)
+	if !ok || !isBotUserID(botUID) {
+		return
+	}
+	delay := botResponseDelay()
+	gameID := rec.ID
+	slog.Info("bot rematch response scheduled",
+		"game_id", gameID, "bot_id", botUID, "delay", delay)
+
+	go func() {
+		t := time.NewTimer(delay)
+		defer t.Stop()
+		<-t.C
+		ctx := context.Background()
+		cur, exists := s.loadRematchOfferer(ctx, gameID)
+		if !exists || cur != offererUID {
+			return
+		}
+		s.botAcceptRematch(ctx, gameID, botUID)
+	}()
+}
+
+// botAcceptRematch mirrors handleRematchAccept: create the new game
+// row, delete the offer key, emit RematchAccepted on the old game
+// channel so the human SPA navigates to the new room. No HTTP
+// response to write — the human's view drives off the WS event.
+func (s *GameService) botAcceptRematch(ctx context.Context, gameID string, botUID int64) {
+	prev, err := s.getGameCached(ctx, gameID)
+	if err != nil || prev == nil {
+		return
+	}
+	if prev.Status == "ongoing" {
+		_ = s.bus.Rdb().Del(ctx, rematchOfferKey+gameID).Err()
+		return
+	}
+	newRec, err := s.createRematchRow(ctx, prev)
+	if err != nil {
+		slog.Error("bot rematch create failed", "game_id", gameID, "error", err)
+		return
+	}
+	_ = s.bus.Rdb().Del(ctx, rematchOfferKey+gameID).Err()
+
+	acceptPayload, _ := json.Marshal(map[string]any{
+		"new_game_id":   newRec.ID,
+		"white_user_id": *newRec.WhiteUserID,
+		"black_user_id": *newRec.BlackUserID,
+		"by_user_id":    botUID,
+	})
+	_, _ = s.bus.EmitEvent(ctx, eventbus.Event{
+		Type: eventbus.EvtRematchAccepted, GameID: gameID, Payload: acceptPayload,
+	})
+	_, _ = s.bus.EmitEvent(ctx, eventbus.Event{
+		Type: eventbus.EvtGameStarted, GameID: newRec.ID,
+	})
+	slog.Info("bot rematch accepted",
+		"old_game_id", gameID, "new_game_id", newRec.ID, "bot_id", botUID)
+}

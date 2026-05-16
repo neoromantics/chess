@@ -45,6 +45,8 @@
         :can-request-takeback="canRequestTakeback && !isSpectator"
         :incoming-takeback="incomingTakebackFrom !== null"
         :outgoing-takeback="outgoingTakebackSent"
+        :incoming-rematch="incomingRematchFrom !== null"
+        :outgoing-rematch="outgoingRematchSent"
         :can-edit-position="canEditPosition && !isSpectator"
         :pgn-download-url="pgnDownloadUrl"
         :assessments="assessments"
@@ -65,6 +67,9 @@
         @takeback-offer="takebackOffer"
         @takeback-accept="takebackAccept"
         @takeback-decline="takebackDecline"
+        @rematch-offer="rematchOffer"
+        @rematch-accept="rematchAccept"
+        @rematch-decline="rematchDecline"
         @open-replay="openReplay"
         @toggle-flip="flipped = !flipped"
         @edit-position="enterEditMode"
@@ -108,6 +113,7 @@ import { parseBoard } from '../constants';
 import { useToastStore } from '../stores/toast';
 import { useAuthStore } from '../stores/auth';
 import { useUserEventsStore } from '../stores/userEvents';
+import { useRouter } from 'vue-router';
 import { StateJSON, Square } from '../types';
 
 const props = defineProps<{
@@ -125,6 +131,7 @@ const props = defineProps<{
 const toastStore = useToastStore();
 const authStore = useAuthStore();
 const userEventsStore = useUserEventsStore();
+const router = useRouter();
 
 // True once we've auto-oriented the board for the current user. Without
 // this guard the orientation would re-flip on every state update,
@@ -175,6 +182,10 @@ const incomingDrawFrom = ref<number | null>(null); // user_id of offerer
 const outgoingDrawSent = ref(false);
 const incomingTakebackFrom = ref<number | null>(null);
 const outgoingTakebackSent = ref(false);
+// Rematch transient state. Cleared when the user navigates away to the
+// new game's room (rematch_accepted → router.push), or on decline.
+const incomingRematchFrom = ref<number | null>(null);
+const outgoingRematchSent = ref(false);
 const canOfferDraw = computed(() => {
   // PvP-only, ongoing, and we're not the offerer waiting for a response.
   if (!state.value || state.value.status !== 'ongoing') return false;
@@ -489,6 +500,33 @@ const connectWS = () => {
         // StateUpdated rolls in alongside; just clear the banner state.
         incomingTakebackFrom.value = null;
         outgoingTakebackSent.value = false;
+      } else if (data.type === 'RematchOffered') {
+        const fromId = data.payload?.from_user_id;
+        if (authStore.user && fromId && fromId !== authStore.user.id) {
+          incomingRematchFrom.value = fromId;
+        }
+      } else if (data.type === 'RematchDeclined') {
+        if (outgoingRematchSent.value) {
+          toastStore.info('Opponent declined the rematch.');
+        }
+        incomingRematchFrom.value = null;
+        outgoingRematchSent.value = false;
+      } else if (data.type === 'RematchAccepted') {
+        // Both participants of the old game navigate to the new room.
+        // Spectators (anyone not in {white_user_id, black_user_id}) get
+        // a passive toast instead — they can refresh if they want to
+        // watch the new game.
+        const newId = data.payload?.new_game_id;
+        const w = data.payload?.white_user_id;
+        const b = data.payload?.black_user_id;
+        const me = authStore.user?.id;
+        incomingRematchFrom.value = null;
+        outgoingRematchSent.value = false;
+        if (newId && me && (me === w || me === b)) {
+          router.push(`/game/${newId}`);
+        } else if (newId) {
+          toastStore.info('Players started a rematch.');
+        }
       } else if (data.type === 'Assessment') {
         const a = data.payload as Assessment;
         assessments.value[a.ply] = a;
@@ -590,6 +628,41 @@ const takebackDecline = async () => {
     toastStore.info('Takeback declined.');
   } catch (e: any) {
     toastStore.error('Could not decline takeback: ' + (e?.message || e));
+  }
+};
+
+const rematchOffer = async () => {
+  try {
+    await api.rematchOffer(props.id);
+    outgoingRematchSent.value = true;
+    toastStore.info('Rematch offer sent.');
+  } catch (e: any) {
+    toastStore.error('Could not offer rematch: ' + (e?.message || e));
+  }
+};
+
+const rematchAccept = async () => {
+  try {
+    const { game_id } = await api.rematchAccept(props.id);
+    incomingRematchFrom.value = null;
+    outgoingRematchSent.value = false;
+    // Navigate from the HTTP response so the accepter doesn't have to
+    // wait on the RematchAccepted WS broadcast. The offerer takes the
+    // event-driven path (same handler 30 lines up) — both land in the
+    // new room within a tick of each other.
+    if (game_id) router.push(`/game/${game_id}`);
+  } catch (e: any) {
+    toastStore.error('Could not accept rematch: ' + (e?.message || e));
+  }
+};
+
+const rematchDecline = async () => {
+  try {
+    await api.rematchDecline(props.id);
+    incomingRematchFrom.value = null;
+    toastStore.info('Rematch declined.');
+  } catch (e: any) {
+    toastStore.error('Could not decline rematch: ' + (e?.message || e));
   }
 };
 

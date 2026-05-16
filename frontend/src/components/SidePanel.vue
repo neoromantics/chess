@@ -65,6 +65,15 @@
     </div>
     <div v-else-if="outgoingTakeback" class="prompt subtle">Takeback requested — waiting…</div>
 
+    <div v-if="!spectator && incomingRematch" class="prompt">
+      <div class="prompt-text">Opponent wants a rematch.</div>
+      <div class="prompt-actions">
+        <button class="btn primary" @click="$emit('rematch-accept')">Accept</button>
+        <button class="btn ghost" @click="$emit('rematch-decline')">Decline</button>
+      </div>
+    </div>
+    <div v-else-if="outgoingRematch" class="prompt subtle">Rematch offer sent — waiting…</div>
+
     <!-- Primary actions. Visible only while the game is live AND the
          caller is a participant; once terminal, the bottom CTA row
          (New Game / Replay) takes over. Spectators see no buttons —
@@ -178,7 +187,20 @@
          and Replay is reachable from /game/{id} (or a fresh tab) if
          they want it. -->
     <div v-if="!spectator" class="bottom-cta">
-      <button class="btn new-game" @click="$emit('new-game')">New Game</button>
+      <!-- Finished PvP rows take the Rematch path (mutual offer/accept,
+           fresh game row). Engine-only and ongoing games keep the
+           legacy in-place /api/new reset under "New Game". -->
+      <button
+        v-if="isFinishedPvP"
+        class="btn new-game"
+        :disabled="outgoingRematch"
+        @click="$emit('rematch-offer')"
+      >{{ outgoingRematch ? 'Waiting…' : 'Rematch' }}</button>
+      <button
+        v-else
+        class="btn new-game"
+        @click="$emit('new-game')"
+      >New Game</button>
       <button v-if="state?.status && state.status !== 'ongoing'" class="btn ghost replay-cta" @click="$emit('open-replay')" title="Open frame-by-frame replay">▶ Replay</button>
     </div>
 
@@ -222,6 +244,8 @@ const props = defineProps<{
   canRequestTakeback?: boolean;
   incomingTakeback?: boolean;
   outgoingTakeback?: boolean;
+  incomingRematch?: boolean;
+  outgoingRematch?: boolean;
   canEditPosition?: boolean;
   pgnDownloadUrl?: string;
   assessments?: Record<number, { ply: number; played: string; best: string; score: number; depth: number; cp_loss: number; class: string }>;
@@ -247,6 +271,9 @@ const emit = defineEmits<{
   (e: 'takeback-offer'): void;
   (e: 'takeback-accept'): void;
   (e: 'takeback-decline'): void;
+  (e: 'rematch-offer'): void;
+  (e: 'rematch-accept'): void;
+  (e: 'rematch-decline'): void;
   (e: 'edit-position'): void;
   (e: 'load-pgn', pgn: string): void;
   (e: 'analyze'): void;
@@ -254,6 +281,12 @@ const emit = defineEmits<{
 }>();
 
 const isPvP = computed(() => !!(props.state && props.state.white_user_id !== null && props.state.black_user_id !== null));
+// True for finished games where both sides have a user_id — covers
+// true PvP plus bot-fallback rows (which masquerade as PvP in the
+// snapshot). Engine-only rows have one user_id null and stay on
+// "New Game", which resets the same row.
+const isFinishedPvP = computed(() => !!(props.state && props.state.status && props.state.status !== 'ongoing'
+  && props.state.white_user_id !== null && props.state.black_user_id !== null));
 const plyCount = computed(() => props.state?.history?.length ?? 0);
 const assessedCount = computed(() => Object.keys(props.assessments ?? {}).length);
 

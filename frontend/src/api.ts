@@ -130,6 +130,13 @@ export const api = {
   takebackAccept: (gameId: string) => request<StateJSON>(`/api/takeback_accept?game_id=${gameId}`, { method: 'POST' }),
   takebackDecline: (gameId: string) => request<void>(`/api/takeback_decline?game_id=${gameId}`, { method: 'POST' }),
 
+  // ===== Rematch flow (finished PvP / bot games only) =====
+  // Accept returns the new game's StateJSON so the accepter can
+  // router.push immediately without a second /api/state round-trip.
+  rematchOffer: (gameId: string) => request<void>(`/api/rematch_offer?game_id=${gameId}`, { method: 'POST' }),
+  rematchAccept: (gameId: string) => request<{ game_id: string }>(`/api/rematch_accept?game_id=${gameId}`, { method: 'POST' }),
+  rematchDecline: (gameId: string) => request<void>(`/api/rematch_decline?game_id=${gameId}`, { method: 'POST' }),
+
   // ===== Spectator (durable games only) =====
   // Owner-only toggle. Backend rejects with 404 if the caller isn't a
   // participant. When true, /watch/{id} works and any signed-in user can

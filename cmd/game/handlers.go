@@ -373,6 +373,23 @@ func (s *GameService) handleHTTPNew(w http.ResponseWriter, r *http.Request) {
 		}
 		_ = json.NewDecoder(r.Body).Decode(&req)
 
+		// Lock-out for finished true-PvP rows. The legacy /api/new
+		// path reset the row in place, which let either side restart
+		// a finished PvP game without the opponent's consent and
+		// scribbled over the persisted history. Direct callers to the
+		// /api/rematch_offer flow instead (cmd/game/rematches.go),
+		// which creates a fresh row and requires a mutual handshake.
+		// Bot-match rows look like PvP via the SPA mask but stay on
+		// the in-place reset because the bot is the consent surrogate
+		// (auto-accepts via maybeScheduleBotRematchResponse).
+		// Engine-only games (one user_id nil) and ongoing PvP keep
+		// the legacy reset behaviour.
+		if rec.Status != "ongoing" &&
+			rec.WhiteUserID != nil && rec.BlackUserID != nil &&
+			!isBotMatch(rec) {
+			return userErr(http.StatusBadRequest, "finished PvP games can only restart via /api/rematch_offer")
+		}
+
 		// Bot-match rematch: the SPA can't tell this was a bot game
 		// (engine flags are masked in snapshotFromRecord), so it sends
 		// engine_white=false / engine_black=false. Honoring that would

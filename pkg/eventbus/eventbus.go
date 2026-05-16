@@ -109,6 +109,15 @@ const (
 	EvtDrawOffered  = "DrawOffered"
 	EvtDrawAccepted = "DrawAccepted"
 	EvtDrawDeclined = "DrawDeclined"
+	// Rematch offers fire on the per-game channel because both parties
+	// are still subscribed there at the finish screen — same pattern as
+	// draw/takeback. RematchAccepted carries the *new* game_id in its
+	// payload (along with both player IDs); GameView uses that to
+	// router.push participants to the new room and skip the redirect
+	// for spectators.
+	EvtRematchOffered  = "RematchOffered"
+	EvtRematchAccepted = "RematchAccepted"
+	EvtRematchDeclined = "RematchDeclined"
 	// EvtAssessment carries one per-ply analysis update so the SPA can
 	// decorate the move list as results arrive. Payload is one
 	// PlyAssessment object (ply, played, best, score, depth, cp_loss,

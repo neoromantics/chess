@@ -149,6 +149,9 @@ func main() {
 	mux.Handle("POST /api/takeback_offer", gw.injectAuthedUser(gameProxy))
 	mux.Handle("POST /api/takeback_accept", gw.injectAuthedUser(gameProxy))
 	mux.Handle("POST /api/takeback_decline", gw.injectAuthedUser(gameProxy))
+	mux.Handle("POST /api/rematch_offer", gw.injectAuthedUser(gameProxy))
+	mux.Handle("POST /api/rematch_accept", gw.injectAuthedUser(gameProxy))
+	mux.Handle("POST /api/rematch_decline", gw.injectAuthedUser(gameProxy))
 
 	// 4. New game (intent dispatch). Async: gateway publishes a Command
 	// onto the game:commands stream and returns the assigned game_id
