@@ -105,6 +105,7 @@ func main() {
 		mux.HandleFunc("POST /api/temp/set_players", s.handleTempSetPlayers)
 		mux.HandleFunc("POST /api/temp/set_position", s.handleTempSetPosition)
 		mux.HandleFunc("GET /api/temp/pgn", s.handleTempDownloadPGN)
+		mux.HandleFunc("GET /api/temp/replay", s.handleTempReplayData)
 		mux.HandleFunc("POST /api/temp/load_pgn", s.handleTempLoadPGN)
 		mux.HandleFunc("POST /api/temp/analyze", s.handleTempAnalyze)
 		// Internal-only — gateway calls this from handleSignup when

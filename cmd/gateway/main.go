@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/neoromantics/chess/pkg/auth"
@@ -377,9 +378,15 @@ func (gw *Gateway) handleReplay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Pull the JSON frames from game-service.
+	// Temp games live in a separate Redis namespace; route to the
+	// matching game-service endpoint. Durable IDs go to /api/replay,
+	// temp IDs (always prefixed "temp-") go to /api/temp/replay.
 	dataURL := *gw.gameSvcURL
-	dataURL.Path = "/api/replay"
+	if strings.HasPrefix(gameID, "temp-") {
+		dataURL.Path = "/api/temp/replay"
+	} else {
+		dataURL.Path = "/api/replay"
+	}
 	q := dataURL.Query()
 	q.Set("game_id", gameID)
 	dataURL.RawQuery = q.Encode()

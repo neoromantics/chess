@@ -40,19 +40,14 @@
         </div>
         <div v-if="busyMode === 'match'" class="spinner"></div>
       </button>
-
-      <button class="mode-card secondary" disabled>
-        <div class="mode-icon">⚙</div>
-        <div class="mode-body">
-          <div class="mode-title">Board Editor <span class="soon">soon</span></div>
-          <div class="mode-sub">
-            Set up arbitrary positions, paste FENs, study endgames
-            from the start position of your choice.
-          </div>
-          <div class="mode-meta">Coming back in a future release.</div>
-        </div>
-      </button>
     </div>
+
+    <!-- Board editor is reachable from inside a "Play vs Engine" game
+         (Setup button); no separate landing tile needed. -->
+    <p v-if="authReady" class="mode-hint">
+      Looking for the board editor? Start a "Play vs Engine" game and tap
+      <strong>Setup</strong> in the action row to load any FEN.
+    </p>
 
     <div v-if="authReady && !authStore.user" class="auth-row">
       <router-link to="/login" class="auth-link">Log in</router-link>
@@ -199,19 +194,15 @@ const goMatch = () => {
 .mode-meta { color: #6a8aa6; font-size: 12px; font-weight: 500; }
 .mode-card.secondary .mode-meta { color: #888; }
 
-.soon {
-  display: inline-block;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.6px;
-  text-transform: uppercase;
-  padding: 2px 6px;
-  border-radius: 4px;
-  background: #3a3a3a;
-  color: #aaa;
-  margin-left: 6px;
-  vertical-align: middle;
+.mode-hint {
+  color: #888;
+  font-size: 13px;
+  text-align: center;
+  max-width: 540px;
+  margin: 0;
+  line-height: 1.5;
 }
+.mode-hint strong { color: #cbd6e0; font-weight: 600; }
 
 .spinner {
   position: absolute;

@@ -968,6 +968,33 @@ func (s *GameService) applyTempEngineMove(ctx context.Context, resp eventbus.Eng
 	}
 }
 
+// handleTempReplayData mirrors handleReplayData but reads from the
+// temp Redis store. Returns the same ReplayFrame JSON so the existing
+// gateway handleReplay → replay.html template path works unchanged.
+// Auth-loose: a temp game ID is a UUID, so guessing one is the only
+// way for a non-owner to view a replay, which matches the durable-game
+// replay's same loose stance.
+func (s *GameService) handleTempReplayData(w http.ResponseWriter, r *http.Request) {
+	gameID := r.URL.Query().Get("game_id")
+	if gameID == "" {
+		http.Error(w, "missing game_id", http.StatusBadRequest)
+		return
+	}
+	store := newTempStore(s.bus.Rdb())
+	rec, err := store.get(r.Context(), gameID)
+	if err != nil {
+		http.Error(w, "temp store error", http.StatusInternalServerError)
+		return
+	}
+	if rec == nil {
+		http.Error(w, "temp game not found or expired", http.StatusNotFound)
+		return
+	}
+	gm := game.NewGame()
+	gm.Load(rec.StartFEN, rec.History, rec.EngineWhite, rec.EngineBlack)
+	writeJSON(w, gm.ReplayData())
+}
+
 // publishTempState fans the new snapshot out via Redis Pub/Sub on the
 // canonical game.evt.{id} channel — same channel durable games use, so
 // the gateway's hub PSUBSCRIBE picks it up with no extra wiring.

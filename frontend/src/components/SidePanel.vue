@@ -1,7 +1,9 @@
 <template>
   <div class="side-panel">
-    <!-- Compact toolbar: board / audio controls that aren't tied to
-         game state. Always present so the affordances don't move. -->
+    <!-- Compact toolbar: 3 always-visible board/audio toggles. Setup
+         moves into the actions row (it's a game action, not a board
+         control). Replay moves to a bottom CTA next to New Game (it's
+         a "what's next" action available only after the game ends). -->
     <div class="toolbar">
       <button class="tool" :class="{ on: soundEnabled }" @click="$emit('update:sound-enabled', !soundEnabled)" :title="soundEnabled ? 'Sound on (click to mute)' : 'Sound off (click to unmute)'">
         <span class="tool-icon" aria-hidden="true">{{ soundEnabled ? '🔊' : '🔇' }}</span>
@@ -10,14 +12,6 @@
       <button class="tool" @click="$emit('toggle-flip')" title="Flip board (F)">
         <span class="tool-icon" aria-hidden="true">⇅</span>
         <span class="tool-label">Flip</span>
-      </button>
-      <button v-if="state?.status !== 'ongoing'" class="tool" @click="$emit('open-replay')" title="Open replay viewer">
-        <span class="tool-icon" aria-hidden="true">▶</span>
-        <span class="tool-label">Replay</span>
-      </button>
-      <button v-if="canEditPosition" class="tool" @click="$emit('edit-position')" title="Set up a custom position (engine games only)">
-        <span class="tool-icon" aria-hidden="true">✎</span>
-        <span class="tool-label">Setup</span>
       </button>
       <button class="tool" :class="{ on: touchMove }" @click="$emit('update:touch-move', !touchMove)" :title="touchMove ? 'Touch-move ON: a touched piece must move (FIDE rule)' : 'Touch-move OFF (default)'">
         <span class="tool-icon" aria-hidden="true">☝</span>
@@ -46,10 +40,11 @@
     <div v-else-if="outgoingTakeback" class="prompt subtle">Takeback requested — waiting…</div>
 
     <!-- Primary actions. Visible only while the game is live; once
-         terminal, a single "New Game" CTA replaces the row. -->
+         terminal, the bottom CTA row (New Game / Replay) takes over. -->
     <div v-if="state?.status === 'ongoing'" class="actions">
       <button class="btn" :disabled="state?.thinking" @click="$emit('get-hint')">Hint</button>
       <button v-if="!isPvP" class="btn" :disabled="state?.thinking" @click="$emit('undo')">Undo</button>
+      <button v-if="canEditPosition" class="btn" @click="$emit('edit-position')" title="Set up a custom position (engine games only)">Setup</button>
       <button v-if="canRequestTakeback" class="btn" :disabled="outgoingTakeback" @click="$emit('takeback-offer')">Takeback</button>
       <button v-if="canOfferDraw" class="btn" :disabled="outgoingDraw" @click="$emit('draw-offer')">Offer Draw</button>
       <button class="btn danger" @click="$emit('resign')">Resign</button>
@@ -124,32 +119,40 @@
       </div>
     </section>
 
-    <!-- Bottom CTA: New Game. Always visible — it's the most common
-         next action after a game ends, and a useful reset escape
-         hatch during play. -->
-    <button class="btn new-game" @click="$emit('new-game')">New Game</button>
+    <!-- Save / Load. Lifted out of a disclosure so it's discoverable
+         without hunting; the standard chess export format is PGN, and
+         it's how engines and other sites round-trip games. Load is
+         engine-only (same rule as set_position) since replacing the
+         board mid-PvP would let one side undo their opponent's moves. -->
+    <section class="saveload">
+      <header><h3>Save / Load</h3></header>
+      <div class="saveload-actions">
+        <a v-if="pgnDownloadUrl" :href="pgnDownloadUrl" :download="pgnFilename" class="btn ghost" title="Download this game as a .pgn file">Save (.pgn)</a>
+        <button v-if="canEditPosition" class="btn ghost" @click="onPickFile" title="Load a .pgn file from disk">Load file…</button>
+        <button v-if="canEditPosition" class="btn ghost" @click="pgnImportOpen = !pgnImportOpen" title="Paste a PGN as text">
+          {{ pgnImportOpen ? 'Cancel paste' : 'Paste…' }}
+        </button>
+      </div>
+      <input ref="pgnFileInputEl" type="file" accept=".pgn,application/x-chess-pgn,text/plain" style="display:none" @change="onFilePicked"/>
+      <div v-if="pgnImportOpen" class="pgn-import">
+        <textarea v-model="pgnImportText" placeholder="Paste PGN here" rows="6"></textarea>
+        <button class="btn primary" :disabled="!pgnImportText.trim()" @click="onLoadPgn">Apply</button>
+      </div>
+    </section>
+
+    <!-- Bottom CTA row. "New Game" is the dominant next action; Replay
+         joins it only when the game is finished (avoids competing with
+         it during play). -->
+    <div class="bottom-cta">
+      <button class="btn new-game" @click="$emit('new-game')">New Game</button>
+      <button v-if="state?.status && state.status !== 'ongoing'" class="btn ghost replay-cta" @click="$emit('open-replay')" title="Open frame-by-frame replay">▶ Replay</button>
+    </div>
 
     <!-- FEN: hidden behind a disclosure. Power-user feature; most
          players don't care. -->
     <details class="fen-block">
       <summary>FEN</summary>
       <div class="fen">{{ state?.fen }}</div>
-    </details>
-
-    <!-- PGN export + import. Behind a disclosure since most players
-         don't care; load is engine-only (same rule as set_position). -->
-    <details class="fen-block">
-      <summary>PGN</summary>
-      <div class="pgn-actions">
-        <a v-if="pgnDownloadUrl" :href="pgnDownloadUrl" download class="btn ghost">Download</a>
-        <button v-if="canEditPosition" class="btn ghost" @click="pgnImportOpen = !pgnImportOpen">
-          {{ pgnImportOpen ? 'Cancel' : 'Load…' }}
-        </button>
-      </div>
-      <div v-if="pgnImportOpen" class="pgn-import">
-        <textarea v-model="pgnImportText" placeholder="Paste PGN here" rows="6"></textarea>
-        <button class="btn primary" :disabled="!pgnImportText.trim()" @click="onLoadPgn">Apply</button>
-      </div>
     </details>
   </div>
 </template>
@@ -254,6 +257,34 @@ const onLoadPgn = () => {
   pgnImportText.value = '';
   pgnImportOpen.value = false;
 };
+
+// File picker for PGN load. The hidden <input type="file"> is clicked
+// programmatically from the visible button so we get the standard OS
+// file dialog without an ugly default button.
+const pgnFileInputEl = ref<HTMLInputElement | null>(null);
+const onPickFile = () => { pgnFileInputEl.value?.click(); };
+const onFilePicked = async (e: Event) => {
+  const input = e.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) return;
+  try {
+    const text = await file.text();
+    if (text.trim()) emit('load-pgn', text);
+  } finally {
+    // Reset so picking the same file twice in a row still fires change.
+    input.value = '';
+  }
+};
+
+// Download filename: dated + short ID so a folder of saved games is
+// browsable. The href is the existing /api/pgn URL emitted by GameView.
+const pgnFilename = computed(() => {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `chess-${yyyy}${mm}${dd}.pgn`;
+});
 </script>
 
 <style scoped>
@@ -384,9 +415,32 @@ const onLoadPgn = () => {
 .analyze-row { padding: 8px 0 0; border-top: 1px solid #2f2f2f; margin-top: 8px; }
 .analyze-btn { width: 100%; font-size: 12px; }
 
-/* New game CTA */
+/* Save / Load card. Same visual weight as the move list — discoverable
+   without being pushy. */
+.saveload { background: #232323; border: 1px solid #2f2f2f; border-radius: 6px; padding: 10px 12px 12px; }
+.saveload header { margin-bottom: 8px; }
+.saveload h3 { margin: 0; font-size: 12px; color: #aaa; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
+.saveload-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.saveload-actions .btn { flex: 1 1 auto; text-align: center; text-decoration: none; padding: 7px 10px; font-size: 12px; min-width: 0; }
+.pgn-import { padding: 10px 0 0; display: flex; flex-direction: column; gap: 8px; }
+.pgn-import textarea {
+  width: 100%;
+  box-sizing: border-box;
+  background: #1c1c1c;
+  border: 1px solid #333;
+  color: #ddd;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 11px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  resize: vertical;
+}
+
+/* Bottom CTA row: New Game is the dominant action; Replay sits beside
+   it (smaller / ghost) only when the game is finished. */
+.bottom-cta { display: flex; gap: 8px; align-items: stretch; }
 .new-game {
-  flex: none;
+  flex: 1 1 auto;
   background: #2d5a2d;
   border-color: #3a703a;
   color: #fff;
@@ -395,6 +449,7 @@ const onLoadPgn = () => {
   font-size: 14px;
 }
 .new-game:hover { background: #347a34; }
+.replay-cta { flex: 0 0 auto; padding: 12px 16px; font-size: 13px; }
 
 /* FEN disclosure */
 .fen-block {
@@ -415,20 +470,4 @@ const onLoadPgn = () => {
 .fen-block > summary::after { content: '▸'; float: right; transition: transform 120ms ease; color: #666; }
 .fen-block[open] > summary::after { transform: rotate(90deg); }
 .fen { padding: 0 12px 12px; font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: #888; word-break: break-all; }
-
-.pgn-actions { display: flex; gap: 6px; padding: 0 12px 8px; }
-.pgn-actions .btn { flex: 1 1 auto; text-align: center; text-decoration: none; padding: 6px 10px; font-size: 12px; }
-.pgn-import { padding: 0 12px 12px; display: flex; flex-direction: column; gap: 8px; }
-.pgn-import textarea {
-  width: 100%;
-  box-sizing: border-box;
-  background: #1c1c1c;
-  border: 1px solid #333;
-  color: #ddd;
-  font-family: ui-monospace, Menlo, monospace;
-  font-size: 11px;
-  padding: 6px 8px;
-  border-radius: 4px;
-  resize: vertical;
-}
 </style>
