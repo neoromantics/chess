@@ -58,6 +58,20 @@ type AdminSignup struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
+// AdminAction is one row of the audit log. ActorUserID/TargetUserID
+// can be NULL (deleted users), so use pointers to distinguish "absent"
+// from "id 0".
+type AdminAction struct {
+	ID             int64     `json:"id"`
+	ActorUserID    *int64    `json:"actor_user_id,omitempty"`
+	ActorUsername  string    `json:"actor_username"`
+	Action         string    `json:"action"`
+	TargetUserID   *int64    `json:"target_user_id,omitempty"`
+	TargetUsername string    `json:"target_username"`
+	Detail         string    `json:"detail"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
 // UserSummary is the public view of another user (no PII, no hash).
 // Returned by username search for invites and shown in profile cards.
 type UserSummary struct {
@@ -178,13 +192,18 @@ type Store interface {
 	// ListBots returns the seeded bot pool ordered by rating ASC.
 	ListBots() ([]BotUser, error)
 
-	// Admin dashboard (read-only). Cheap aggregate queries that power
-	// /api/admin/overview and /api/admin/signups. Queue-depth Redis
-	// reads live on the gateway, not here.
+	// Admin dashboard. Read-aggregates power /api/admin/overview and
+	// /api/admin/signups; queue-depth Redis reads live on the gateway.
+	// Delete + audit are the write side — every destructive call must
+	// pair InsertAdminAction with the mutation it logs, so the audit
+	// row survives a crashed cascade.
 	CountUsers() (int64, error)
 	CountRecentSignups() (day int64, week int64, err error)
 	ListRecentSignups() ([]AdminSignup, error)
 	CountActiveGames() (int64, error)
+	DeleteUser(id int64) (int64, error)
+	InsertAdminAction(actorID *int64, actorUsername, action string, targetID *int64, targetUsername, detail string) error
+	ListAdminActions() ([]AdminAction, error)
 
 	// Game management
 	SaveGame(g *GameRecord) error

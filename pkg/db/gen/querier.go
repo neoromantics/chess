@@ -47,6 +47,15 @@ type Querier interface {
 	// Authorization is enforced by the handler via getGame() before this runs,
 	// so we delete strictly by primary key.
 	DeleteGame(ctx context.Context, id string) (int64, error)
+	// Hard-delete a user. Relies on the schema's existing FK behaviour:
+	//   games.{white,black}_user_id  ON DELETE SET NULL  (preserves the
+	//     game history with the slot anonymized — both players' replays
+	//     stay readable; the opponent sees "deleted user" on the seat).
+	//   invites.{from,to}_user_id    ON DELETE CASCADE   (pending invites
+	//     to/from the deleted user are removed outright).
+	// Wrap in an audit-log write at the handler level; this query is
+	// intentionally bare so the caller controls the transaction.
+	DeleteUser(ctx context.Context, id int64) (int64, error)
 	// Called periodically by the leader-elected invite sweeper. RETURNING
 	// gives us the affected rows in one trip so we can publish per-invite
 	// expired events without a second SELECT.
@@ -55,6 +64,16 @@ type Querier interface {
 	GetInvite(ctx context.Context, id uuid.UUID) (Invite, error)
 	GetUserByID(ctx context.Context, id int64) (User, error)
 	GetUserByUsername(ctx context.Context, username string) (User, error)
+	// Audit row written by every destructive /api/admin/* call. Both the
+	// actor's username and the target's username are denormalized at
+	// write time so a later cleanup deleting either user doesn't void
+	// the history. detail is a free-form JSON or plain string the handler
+	// can set per-action ("confirm_username mismatch", "cascade rows=N").
+	InsertAdminAction(ctx context.Context, arg InsertAdminActionParams) error
+	// Most recent 50 actions, for the audit panel. Anything older is
+	// archived implicitly by the index + LIMIT — we don't expect this
+	// table to grow fast enough to need pagination yet.
+	ListAdminActions(ctx context.Context) ([]AdminAction, error)
 	// Read-side of the bot pool. Game-service calls this at boot to warm
 	// its in-memory bot cache. Cheap (small N, indexable predicate) and
 	// only runs at startup; we don't poll.

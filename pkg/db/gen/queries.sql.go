@@ -270,6 +270,28 @@ func (q *Queries) DeleteGame(ctx context.Context, id string) (int64, error) {
 	return result.RowsAffected()
 }
 
+const deleteUser = `-- name: DeleteUser :execrows
+DELETE FROM users WHERE id = $1
+`
+
+// Hard-delete a user. Relies on the schema's existing FK behaviour:
+//
+//	games.{white,black}_user_id  ON DELETE SET NULL  (preserves the
+//	  game history with the slot anonymized — both players' replays
+//	  stay readable; the opponent sees "deleted user" on the seat).
+//	invites.{from,to}_user_id    ON DELETE CASCADE   (pending invites
+//	  to/from the deleted user are removed outright).
+//
+// Wrap in an audit-log write at the handler level; this query is
+// intentionally bare so the caller controls the transaction.
+func (q *Queries) DeleteUser(ctx context.Context, id int64) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteUser, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const expireStaleInvites = `-- name: ExpireStaleInvites :many
 UPDATE invites
 SET status      = 'expired',
@@ -468,6 +490,83 @@ func (q *Queries) GetUserByUsername(ctx context.Context, username string) (User,
 		&i.IsAdmin,
 	)
 	return i, err
+}
+
+const insertAdminAction = `-- name: InsertAdminAction :exec
+INSERT INTO admin_actions (
+    actor_user_id, actor_username, action,
+    target_user_id, target_username, detail
+)
+VALUES ($1, $2, $3, $4, $5, $6)
+`
+
+type InsertAdminActionParams struct {
+	ActorUserID    sql.NullInt64 `json:"actor_user_id"`
+	ActorUsername  string        `json:"actor_username"`
+	Action         string        `json:"action"`
+	TargetUserID   sql.NullInt64 `json:"target_user_id"`
+	TargetUsername string        `json:"target_username"`
+	Detail         string        `json:"detail"`
+}
+
+// Audit row written by every destructive /api/admin/* call. Both the
+// actor's username and the target's username are denormalized at
+// write time so a later cleanup deleting either user doesn't void
+// the history. detail is a free-form JSON or plain string the handler
+// can set per-action ("confirm_username mismatch", "cascade rows=N").
+func (q *Queries) InsertAdminAction(ctx context.Context, arg InsertAdminActionParams) error {
+	_, err := q.db.ExecContext(ctx, insertAdminAction,
+		arg.ActorUserID,
+		arg.ActorUsername,
+		arg.Action,
+		arg.TargetUserID,
+		arg.TargetUsername,
+		arg.Detail,
+	)
+	return err
+}
+
+const listAdminActions = `-- name: ListAdminActions :many
+SELECT id, actor_user_id, actor_username, action,
+       target_user_id, target_username, detail, created_at
+FROM admin_actions
+ORDER BY created_at DESC
+LIMIT 50
+`
+
+// Most recent 50 actions, for the audit panel. Anything older is
+// archived implicitly by the index + LIMIT — we don't expect this
+// table to grow fast enough to need pagination yet.
+func (q *Queries) ListAdminActions(ctx context.Context) ([]AdminAction, error) {
+	rows, err := q.db.QueryContext(ctx, listAdminActions)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AdminAction{}
+	for rows.Next() {
+		var i AdminAction
+		if err := rows.Scan(
+			&i.ID,
+			&i.ActorUserID,
+			&i.ActorUsername,
+			&i.Action,
+			&i.TargetUserID,
+			&i.TargetUsername,
+			&i.Detail,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listBots = `-- name: ListBots :many

@@ -322,6 +322,42 @@ func (s *PostgresStore) CountActiveGames() (int64, error) {
 	return s.q.CountActiveGames(context.Background())
 }
 
+func (s *PostgresStore) DeleteUser(id int64) (int64, error) {
+	return s.q.DeleteUser(context.Background(), id)
+}
+
+func (s *PostgresStore) InsertAdminAction(actorID *int64, actorUsername, action string, targetID *int64, targetUsername, detail string) error {
+	return s.q.InsertAdminAction(context.Background(), gen.InsertAdminActionParams{
+		ActorUserID:    int64PtrToNull(actorID),
+		ActorUsername:  actorUsername,
+		Action:         action,
+		TargetUserID:   int64PtrToNull(targetID),
+		TargetUsername: targetUsername,
+		Detail:         detail,
+	})
+}
+
+func (s *PostgresStore) ListAdminActions() ([]AdminAction, error) {
+	rows, err := s.q.ListAdminActions(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	out := make([]AdminAction, len(rows))
+	for i, r := range rows {
+		out[i] = AdminAction{
+			ID:             r.ID,
+			ActorUserID:    nullToInt64Ptr(r.ActorUserID),
+			ActorUsername:  r.ActorUsername,
+			Action:         r.Action,
+			TargetUserID:   nullToInt64Ptr(r.TargetUserID),
+			TargetUsername: r.TargetUsername,
+			Detail:         r.Detail,
+			CreatedAt:      r.CreatedAt,
+		}
+	}
+	return out, nil
+}
+
 // === GAMES ===
 
 // defaultListGamesLimit is the per-page cap when the caller doesn't

@@ -133,3 +133,22 @@ CREATE TABLE IF NOT EXISTS invites (
   expires_at   TIMESTAMPTZ NOT NULL,
   resolved_at  TIMESTAMPTZ
 );
+
+-- Admin action audit log. Written before every destructive admin op so
+-- the trail survives even if the op itself crashes mid-cascade. The
+-- target_user_id intentionally is NOT a foreign key — a delete-user
+-- action's whole point is that the target row goes away, and we want
+-- the audit row to outlive it. actor_user_id IS an FK with SET NULL so
+-- a deleted admin (cleanup case) doesn't blow up history either; we
+-- duplicate actor_username at write time for the same reason.
+CREATE TABLE IF NOT EXISTS admin_actions (
+    id              BIGSERIAL   PRIMARY KEY,
+    actor_user_id   BIGINT      REFERENCES users(id) ON DELETE SET NULL,
+    actor_username  TEXT        NOT NULL,
+    action          TEXT        NOT NULL,
+    target_user_id  BIGINT,
+    target_username TEXT        NOT NULL DEFAULT '',
+    detail          TEXT        NOT NULL DEFAULT '',
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS admin_actions_created_idx ON admin_actions (created_at DESC);

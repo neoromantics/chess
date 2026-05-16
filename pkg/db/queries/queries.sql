@@ -269,3 +269,36 @@ LIMIT 20;
 SELECT COUNT(*)::BIGINT AS active
 FROM games
 WHERE status = 'ongoing';
+
+-- name: InsertAdminAction :exec
+-- Audit row written by every destructive /api/admin/* call. Both the
+-- actor's username and the target's username are denormalized at
+-- write time so a later cleanup deleting either user doesn't void
+-- the history. detail is a free-form JSON or plain string the handler
+-- can set per-action ("confirm_username mismatch", "cascade rows=N").
+INSERT INTO admin_actions (
+    actor_user_id, actor_username, action,
+    target_user_id, target_username, detail
+)
+VALUES ($1, $2, $3, $4, $5, $6);
+
+-- name: ListAdminActions :many
+-- Most recent 50 actions, for the audit panel. Anything older is
+-- archived implicitly by the index + LIMIT — we don't expect this
+-- table to grow fast enough to need pagination yet.
+SELECT id, actor_user_id, actor_username, action,
+       target_user_id, target_username, detail, created_at
+FROM admin_actions
+ORDER BY created_at DESC
+LIMIT 50;
+
+-- name: DeleteUser :execrows
+-- Hard-delete a user. Relies on the schema's existing FK behaviour:
+--   games.{white,black}_user_id  ON DELETE SET NULL  (preserves the
+--     game history with the slot anonymized — both players' replays
+--     stay readable; the opponent sees "deleted user" on the seat).
+--   invites.{from,to}_user_id    ON DELETE CASCADE   (pending invites
+--     to/from the deleted user are removed outright).
+-- Wrap in an audit-log write at the handler level; this query is
+-- intentionally bare so the caller controls the transaction.
+DELETE FROM users WHERE id = $1;

@@ -120,6 +120,10 @@ func main() {
 	//   UPDATE users SET is_admin = TRUE WHERE username = '<you>';
 	mux.HandleFunc("GET /api/admin/overview", gw.handleAdminOverview)
 	mux.HandleFunc("GET /api/admin/signups", gw.handleAdminSignups)
+	mux.HandleFunc("GET /api/admin/actions", gw.handleAdminActions)
+	// DELETE /api/admin/users/{id} — body {"confirm_username": "..."}.
+	// adminOnly + self-deletion guard + bot guard + typed-confirm.
+	mux.HandleFunc("DELETE /api/admin/users/{id}", gw.handleAdminDeleteUser)
 
 	// 3. Reverse proxy to Game Service. Wrapped in injectAuthedUser so
 	// downstream services don't have to re-validate the JWT — they

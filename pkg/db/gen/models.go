@@ -11,6 +11,17 @@ import (
 	"github.com/google/uuid"
 )
 
+type AdminAction struct {
+	ID             int64         `json:"id"`
+	ActorUserID    sql.NullInt64 `json:"actor_user_id"`
+	ActorUsername  string        `json:"actor_username"`
+	Action         string        `json:"action"`
+	TargetUserID   sql.NullInt64 `json:"target_user_id"`
+	TargetUsername string        `json:"target_username"`
+	Detail         string        `json:"detail"`
+	CreatedAt      time.Time     `json:"created_at"`
+}
+
 type Game struct {
 	ID             string        `json:"id"`
 	Fen            string        `json:"fen"`

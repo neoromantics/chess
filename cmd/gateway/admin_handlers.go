@@ -22,8 +22,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/neoromantics/chess/pkg/auth"
@@ -121,4 +123,114 @@ func (gw *Gateway) handleAdminSignups(w http.ResponseWriter, r *http.Request) {
 	// it without unwrapping; the recent-signups panel cares about
 	// nothing more than this list.
 	writeJSONGW(w, rows)
+}
+
+func (gw *Gateway) handleAdminActions(w http.ResponseWriter, r *http.Request) {
+	if _, ok := gw.adminOnly(w, r); !ok {
+		return
+	}
+	rows, err := gw.db.ListAdminActions()
+	if err != nil {
+		slog.Error("admin actions: list failed", "error", err)
+		http.Error(w, "failed to list actions", http.StatusInternalServerError)
+		return
+	}
+	writeJSONGW(w, rows)
+}
+
+// handleAdminDeleteUser is the only destructive admin endpoint in the
+// first cut. Refuses self-deletion (irrecoverable; the operator would
+// 404 their own /admin route) and bot deletion (would orphan the
+// matchmaker pool). Requires `confirm_username` in the body to match
+// the target's username exactly — same typed-confirm pattern git uses
+// for branch deletes. Writes the audit row BEFORE the cascade so even
+// a crashed DELETE leaves a trail.
+//
+// FK cascade is defined in schema.sql:
+//
+//	games.{white,black}_user_id  → SET NULL  (history preserved,
+//	                                           slot anonymized)
+//	invites.{from,to}_user_id    → CASCADE   (pending invites removed)
+//	admin_actions.actor_user_id  → SET NULL  (target user as actor is
+//	                                           not a thing; included
+//	                                           for symmetry only)
+func (gw *Gateway) handleAdminDeleteUser(w http.ResponseWriter, r *http.Request) {
+	actor, ok := gw.adminOnly(w, r)
+	if !ok {
+		return
+	}
+	idStr := r.PathValue("id")
+	targetID, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil || targetID <= 0 {
+		http.Error(w, "bad id", http.StatusBadRequest)
+		return
+	}
+	if targetID == actor.ID {
+		http.Error(w, "cannot delete your own admin account", http.StatusBadRequest)
+		return
+	}
+	target, err := gw.db.GetUserByID(targetID)
+	if err != nil || target == nil {
+		http.NotFound(w, r)
+		return
+	}
+	// Block bot deletion: the matchmaker's in-memory pool would still
+	// point at the missing row and dispatch into a broken game.
+	// Removing a bot is a TODO-tagged matchmaker concern, not an
+	// admin one.
+	if isBotUsername(target.Username) {
+		http.Error(w, "bot accounts must be removed via the matchmaker code path", http.StatusBadRequest)
+		return
+	}
+	var body struct {
+		ConfirmUsername string `json:"confirm_username"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	if body.ConfirmUsername != target.Username {
+		http.Error(w, "confirm_username does not match target", http.StatusBadRequest)
+		return
+	}
+
+	// Write the audit row first; if the DELETE crashes we still know
+	// the attempt happened. Detail carries enough breadcrumbs to
+	// reconstruct the action without the target row.
+	actorID := actor.ID
+	if err := gw.db.InsertAdminAction(
+		&actorID, actor.Username, "delete_user",
+		&targetID, target.Username,
+		"target_rating="+strconv.Itoa(int(target.Rating)),
+	); err != nil {
+		slog.Error("admin delete: audit write failed", "actor", actor.Username, "target", target.Username, "error", err)
+		http.Error(w, "audit write failed", http.StatusInternalServerError)
+		return
+	}
+	n, err := gw.db.DeleteUser(targetID)
+	if err != nil {
+		slog.Error("admin delete: db failed", "actor", actor.Username, "target", target.Username, "error", err)
+		http.Error(w, "delete failed", http.StatusInternalServerError)
+		return
+	}
+	slog.Info("admin delete user",
+		"actor", actor.Username, "target", target.Username,
+		"target_id", targetID, "rows", n)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// isBotUsername mirrors cmd/game/bots.go:botSeeds at the gateway
+// boundary so we can reject bot-deletion without round-tripping. Kept
+// as a small literal set rather than re-using IsBot from the DB row —
+// the column is informational; the matchmaker tags by username pool
+// membership and that's the source of truth.
+// TODO(matchmaker-engine-fallback): delete with the bot pool.
+func isBotUsername(u string) bool {
+	switch u {
+	case "QueenKnight42", "PawnStorm91", "RookRunner_J", "BishopBlitz",
+		"Knightfall_88", "EnPassantE4", "CastleCrusher", "MattedKing",
+		"ZugzwangZee", "FianchettoFan", "TacticalT", "PrincessOfPawns":
+		return true
+	}
+	return false
 }

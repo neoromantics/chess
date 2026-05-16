@@ -48,6 +48,8 @@ Bootstrap the first admin via SQL: `UPDATE users SET is_admin = TRUE WHERE usern
 |---|---|---|---|---|
 | GET | `/api/admin/overview` | 🔐+admin | gateway | `api.adminOverview` (user count, signups 24h/7d, active games, queue depth per TC) |
 | GET | `/api/admin/signups` | 🔐+admin | gateway | `api.adminSignups` (20 most recent non-bot signups) |
+| GET | `/api/admin/actions` | 🔐+admin | gateway | `api.adminActions` (50 most recent audit-log rows) |
+| DELETE | `/api/admin/users/{id}` | 🔐+admin | gateway | `api.adminDeleteUser`. Body: `{confirm_username}` must match the target. Refuses self-delete + bot-pool members. Audit row written before the cascade. |
 
 ### Games (lifecycle)
 | Method | Path | Auth | Owner | Frontend caller |

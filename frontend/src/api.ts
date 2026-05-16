@@ -153,6 +153,24 @@ export const api = {
     rating: number;
     created_at: string;
   }>>('/api/admin/signups'),
+  adminActions: () => request<Array<{
+    id: number;
+    actor_user_id?: number;
+    actor_username: string;
+    action: string;
+    target_user_id?: number;
+    target_username: string;
+    detail: string;
+    created_at: string;
+  }>>('/api/admin/actions'),
+  // Hard-delete. Body has to carry confirm_username matching the
+  // target exactly — gateway 400s on mismatch as a typo guard.
+  adminDeleteUser: (id: number, confirmUsername: string) =>
+    request<void>(`/api/admin/users/${id}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirm_username: confirmUsername }),
+    }),
 
   // ===== Spectator (durable games only) =====
   // Owner-only toggle. Backend rejects with 404 if the caller isn't a

@@ -46,6 +46,7 @@
             <th>Country</th>
             <th>Rating</th>
             <th>Joined</th>
+            <th></th>
           </tr>
         </thead>
         <tbody>
@@ -57,17 +58,93 @@
             <td>{{ u.country || '—' }}</td>
             <td>{{ u.rating }}</td>
             <td :title="u.created_at">{{ formatRelative(u.created_at) }}</td>
+            <td>
+              <button
+                v-if="authStore.user && u.id !== authStore.user.id"
+                class="btn-delete"
+                title="Delete this user"
+                @click="openDelete(u)"
+              >Delete</button>
+            </td>
           </tr>
         </tbody>
       </table>
       <div v-else class="empty">No signups yet.</div>
     </section>
+
+    <section class="card">
+      <header class="card-header">
+        <h2>Recent admin actions</h2>
+        <span class="muted">{{ actions.length }} entries</span>
+      </header>
+      <table v-if="actions.length" class="signup-table">
+        <thead>
+          <tr>
+            <th>When</th>
+            <th>Actor</th>
+            <th>Action</th>
+            <th>Target</th>
+            <th>Detail</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="a in actions" :key="a.id">
+            <td :title="a.created_at">{{ formatRelative(a.created_at) }}</td>
+            <td class="username">{{ a.actor_username || '(deleted)' }}</td>
+            <td><span class="action-pill">{{ a.action }}</span></td>
+            <td>{{ a.target_username || '—' }}</td>
+            <td class="muted">{{ a.detail || '' }}</td>
+          </tr>
+        </tbody>
+      </table>
+      <div v-else class="empty">No admin actions recorded yet.</div>
+    </section>
+
+    <!-- Confirm-delete modal. Type the username to enable the
+         button — the gateway also re-validates the match so a typo
+         can't slip through, but mirroring it here is cheaper than a
+         400 round-trip. -->
+    <div v-if="deleteTarget" class="modal-backdrop" @click.self="closeDelete">
+      <div class="modal">
+        <h3>Delete user</h3>
+        <p>
+          This will hard-delete <strong>{{ deleteTarget.username }}</strong>.
+          Game history stays readable with their slot anonymized;
+          pending invites are removed.
+        </p>
+        <p class="warn">This cannot be undone.</p>
+        <label>Type <code>{{ deleteTarget.username }}</code> to confirm:</label>
+        <input v-model="deleteConfirm" autofocus />
+        <div class="modal-actions">
+          <button class="btn ghost" @click="closeDelete">Cancel</button>
+          <button
+            class="btn danger"
+            :disabled="deleteConfirm !== deleteTarget.username || deleting"
+            @click="confirmDelete"
+          >{{ deleting ? 'Deleting…' : 'Delete user' }}</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 import { api } from '../api';
+import { useAuthStore } from '../stores/auth';
+import { useToastStore } from '../stores/toast';
+
+const authStore = useAuthStore();
+const toastStore = useToastStore();
+
+type Signup = {
+  id: number;
+  username: string;
+  display_name: string;
+  country: string;
+  rating: number;
+  created_at: string;
+};
 
 // Local state for the read-only dashboard. We poll on mount only; the
 // operator can refresh the page (or the Retry button on error) when
@@ -80,26 +157,66 @@ const overview = ref<{
   active_games: number;
   queue_depth: Record<string, number>;
 } | null>(null);
-const signups = ref<Array<{
+const signups = ref<Signup[]>([]);
+const actions = ref<Array<{
   id: number;
-  username: string;
-  display_name: string;
-  country: string;
-  rating: number;
+  actor_user_id?: number;
+  actor_username: string;
+  action: string;
+  target_user_id?: number;
+  target_username: string;
+  detail: string;
   created_at: string;
 }>>([]);
 const loadError = ref<string | null>(null);
+
+// Delete-confirm modal state. Single-target at a time keeps the UI
+// dead simple; bulk-delete would need a multi-confirm flow we don't
+// need yet.
+const deleteTarget = ref<Signup | null>(null);
+const deleteConfirm = ref('');
+const deleting = ref(false);
 
 const queueDepth = computed(() => overview.value?.queue_depth ?? {});
 
 const loadAll = async () => {
   loadError.value = null;
   try {
-    const [ov, sg] = await Promise.all([api.adminOverview(), api.adminSignups()]);
+    const [ov, sg, ac] = await Promise.all([
+      api.adminOverview(),
+      api.adminSignups(),
+      api.adminActions(),
+    ]);
     overview.value = ov;
     signups.value = sg || [];
+    actions.value = ac || [];
   } catch (e: any) {
     loadError.value = e?.message || 'unknown error';
+  }
+};
+
+const openDelete = (u: Signup) => {
+  deleteTarget.value = u;
+  deleteConfirm.value = '';
+};
+const closeDelete = () => {
+  deleteTarget.value = null;
+  deleteConfirm.value = '';
+};
+const confirmDelete = async () => {
+  if (!deleteTarget.value) return;
+  deleting.value = true;
+  try {
+    await api.adminDeleteUser(deleteTarget.value.id, deleteConfirm.value);
+    toastStore.success(`Deleted ${deleteTarget.value.username}`);
+    closeDelete();
+    // Reload everything (signups dropped a row; actions gained one;
+    // overview's user-count is now stale by one).
+    await loadAll();
+  } catch (e: any) {
+    toastStore.error('Delete failed: ' + (e?.message || e));
+  } finally {
+    deleting.value = false;
   }
 };
 
@@ -176,7 +293,67 @@ onMounted(loadAll);
   padding: 8px 14px;
   border-radius: 6px;
   cursor: pointer;
-  margin-top: 8px;
 }
 .btn:hover { border-color: #4a6b8a; }
+.btn.ghost { background: transparent; }
+.btn.danger { background: #5a2a2a; border-color: #7a3a3a; color: #f3c2c2; }
+.btn.danger:hover:not(:disabled) { background: #6a3a3a; }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.btn-delete {
+  background: transparent;
+  border: 1px solid #5a2a2a;
+  color: #c98c8c;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.btn-delete:hover { background: #5a2a2a; color: #fff; }
+
+.action-pill {
+  display: inline-block;
+  background: #1f2933;
+  border: 1px solid #2d3e50;
+  color: #9bb3cc;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-family: ui-monospace, Menlo, monospace;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.modal {
+  background: #2b2b2b;
+  border: 1px solid #3d3d3d;
+  border-radius: 10px;
+  padding: 22px;
+  width: 100%;
+  max-width: 440px;
+  color: #ddd;
+}
+.modal h3 { margin: 0 0 10px; font-size: 18px; }
+.modal p { margin: 0 0 10px; font-size: 13px; line-height: 1.5; color: #bbb; }
+.modal .warn { color: #d4544c; font-weight: 600; }
+.modal label { display: block; font-size: 12px; color: #aaa; margin: 10px 0 4px; }
+.modal code { font-family: ui-monospace, Menlo, monospace; background: #1f1f1f; padding: 1px 6px; border-radius: 3px; }
+.modal input {
+  width: 100%;
+  background: #1f1f1f;
+  border: 1px solid #3a3a3a;
+  color: #fff;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 14px;
+  box-sizing: border-box;
+}
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 </style>
