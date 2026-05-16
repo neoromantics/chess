@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	mathrand "math/rand"
 	"os"
 	"strconv"
 	"time"
@@ -80,13 +81,29 @@ const (
 	mmEngineFallbackAfter = 10 * time.Second
 )
 
-// engineFallbackThinkMS maps a queue's time control to the engine's
-// per-move think budget. Roughly proportional to the human's clock so
-// the game feels paced. Defaults to 1000ms for any TC not enumerated.
-var engineFallbackThinkMS = map[string]int{
-	"3+0":  600,
-	"10+0": 1500,
+// engineFallbackThinkMS is the engine's per-move search budget for bot
+// matches. Kept small (the bot strength is mostly controlled here) —
+// the visible "reaction time" comes from botReactionDelays below, not
+// from making the engine think longer. A weak-but-fast bot that *waits*
+// before moving reads as human; a strong, instant bot does not.
+const engineFallbackThinkMS = 600
+
+// botReactionDelays is the set of total wall-clock reaction times the
+// bot picks from on each move, in addition to the engine search. The
+// engine search itself is ~600ms; the chosen delay is appended on the
+// result-dispatch side so the user perceives a 3–10s "think". Two
+// discrete values (instead of a range) produces noticeable cadence
+// variation across moves without telegraphing a formula.
+var botReactionDelays = []time.Duration{
+	3 * time.Second,
+	10 * time.Second,
 }
+
+// botSentinelTTL is the upper bound on how long the SPA's "thinking"
+// spinner persists for a bot move. Must exceed max(botReactionDelays)
+// plus a safety margin so triggerEngineForBotMatch's TTL doesn't
+// expire mid-delay and let the user click during the bot's "think".
+const botSentinelTTL = 15 * time.Second
 
 // queueKey / joinedKey return the per-TC Redis keys. `queue` is a
 // sorted set scored by rating; `joined` is a hash mapping user_id →
@@ -296,10 +313,6 @@ func (s *GameService) tryEngineFallback(ctx context.Context, tc string) {
 // makes this unnecessary. See the comment block at the top.
 func (s *GameService) dispatchEngineFallback(ctx context.Context, uid int64, tc string) {
 	gameID := uuid.New().String()
-	thinkMS, ok := engineFallbackThinkMS[tc]
-	if !ok {
-		thinkMS = 1000
-	}
 
 	// Look up the human's rating so we pick a bot in the same band.
 	// If the user fetch fails, fall back to 1500 (the seed midpoint)
@@ -314,20 +327,37 @@ func (s *GameService) dispatchEngineFallback(ctx context.Context, uid int64, tc 
 		return
 	}
 
+	// Randomize the human's color 50/50. Always-white would be a tell
+	// across multiple sessions; mixing colors makes the bot indistinguishable
+	// from the matchmaking lottery a real opponent would produce. If the
+	// human draws black, we trigger the engine search immediately at the
+	// bottom of this function so the bot opens with white.
+	userIsWhite := mathrand.Intn(2) == 0
+	var whiteID, blackID int64
+	var engineWhite, engineBlack bool
+	var userColor string
+	if userIsWhite {
+		whiteID, blackID = uid, bot.ID
+		engineBlack = true
+		userColor = "white"
+	} else {
+		whiteID, blackID = bot.ID, uid
+		engineWhite = true
+		userColor = "black"
+	}
+
 	gm := game.NewGame()
-	white := uid
-	black := bot.ID
 	rec := &db.GameRecord{
 		ID:             gameID,
-		WhiteUserID:    &white,
-		BlackUserID:    &black,
+		WhiteUserID:    &whiteID,
+		BlackUserID:    &blackID,
 		FEN:            gm.Board.FEN(),
 		History:        "[]",
 		HistorySAN:     "[]",
-		EngineWhite:    false,
-		EngineBlack:    true,
-		WhiteThinkTime: thinkMS,
-		BlackThinkTime: thinkMS,
+		EngineWhite:    engineWhite,
+		EngineBlack:    engineBlack,
+		WhiteThinkTime: engineFallbackThinkMS,
+		BlackThinkTime: engineFallbackThinkMS,
 		TimeControl:    tc,
 		Rated:          false,
 		Status:         "ongoing",
@@ -345,10 +375,11 @@ func (s *GameService) dispatchEngineFallback(ctx context.Context, uid int64, tc 
 
 	slog.Info("matchmaker: engine fallback dispatched",
 		"user_id", uid, "bot_id", bot.ID, "bot_name", bot.Username,
-		"tc", tc, "game_id", gameID, "wait_threshold", mmEngineFallbackAfter)
+		"user_color", userColor, "tc", tc, "game_id", gameID,
+		"wait_threshold", mmEngineFallbackAfter)
 
 	payload, _ := json.Marshal(eventbus.MatchFoundEvt{
-		GameID: gameID, WhiteUserID: uid, BlackUserID: bot.ID, Color: "white",
+		GameID: gameID, WhiteUserID: whiteID, BlackUserID: blackID, Color: userColor,
 	})
 	s.bus.PublishUserEvent(ctx, uid, eventbus.Event{
 		Type: eventbus.EvtMatchFound, GameID: gameID, Payload: payload,
@@ -358,6 +389,15 @@ func (s *GameService) dispatchEngineFallback(ctx context.Context, uid int64, tc 
 		Type:   eventbus.EvtGameStarted,
 		GameID: gameID,
 	})
+
+	// If the bot drew white, it has the opening move — fire the engine
+	// search now so the user lands in a "bot is thinking" state instead
+	// of an empty waiting-for-input. handleNewGame's usual flow does this
+	// via withLockedMutation, but bot-fallback creation bypasses that
+	// helper, so we replicate the trigger explicitly here.
+	if engineWhite {
+		s.triggerEngineForMove(rec, gm)
+	}
 }
 
 func (s *GameService) dispatchPaired(ctx context.Context, u1, u2 int64, tc string) {

@@ -32,6 +32,7 @@ import (
 	mathrand "math/rand"
 	"sort"
 	"sync/atomic"
+	"time"
 
 	"github.com/neoromantics/chess/pkg/auth"
 	"github.com/neoromantics/chess/pkg/db"
@@ -158,6 +159,17 @@ func isBotMatch(rec *db.GameRecord) bool {
 		return true
 	}
 	return false
+}
+
+// pickBotReactionDelay returns one of the configured bot reaction
+// times at random. Source is botReactionDelays in matchmaker.go;
+// kept here so all bot helpers live in one place.
+// TODO(matchmaker-engine-fallback): delete with the bot pool.
+func pickBotReactionDelay() time.Duration {
+	if len(botReactionDelays) == 0 {
+		return 0
+	}
+	return botReactionDelays[mathrand.Intn(len(botReactionDelays))]
 }
 
 func abs(x int) int {

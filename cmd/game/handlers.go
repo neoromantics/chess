@@ -229,6 +229,16 @@ func (s *GameService) triggerEngineForMove(rec *db.GameRecord, gm *game.Game) {
 	// search legitimately takes that long, the sentinel re-expires
 	// itself when the result lands.
 	ttl := 2*moveTime + 2*time.Second
+	// Bot-fallback games hold the spinner across a 3–10s humanizing
+	// delay added in processEngineResult before the MakeMove dispatch
+	// (see cmd/game/matchmaker.go: botReactionDelays). The default
+	// TTL above would expire mid-delay and let the SPA drop the
+	// spinner / unlock clicks. Bump to botSentinelTTL (15s) so we cover
+	// max(delay) + safety margin.
+	// TODO(matchmaker-engine-fallback): remove with the bot pool.
+	if isBotMatch(rec) {
+		ttl = botSentinelTTL
+	}
 	_ = s.bus.Rdb().Set(context.Background(), "game:thinking:"+rec.ID, "1", ttl).Err()
 
 	req := eventbus.EngineRequest{
@@ -362,9 +372,25 @@ func (s *GameService) handleHTTPNew(w http.ResponseWriter, r *http.Request) {
 			EngineBlack bool `json:"engine_black"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&req)
+
+		// Bot-match rematch: the SPA can't tell this was a bot game
+		// (engine flags are masked in snapshotFromRecord), so it sends
+		// engine_white=false / engine_black=false. Honoring that would
+		// strip the bot's engine flag, leaving the row in a "PvP with
+		// a phantom user who can never move" state. Preserve the
+		// original bot-side assignment instead — same opponent, same
+		// colors, fresh board. The user gets an instant rematch with
+		// the bot "accepting".
+		// TODO(matchmaker-engine-fallback): remove with the bot pool.
+		wasBot := isBotMatch(rec)
 		gm.Reset()
-		gm.EngineWhite = req.EngineWhite
-		gm.EngineBlack = req.EngineBlack
+		if wasBot {
+			gm.EngineWhite = rec.EngineWhite
+			gm.EngineBlack = rec.EngineBlack
+		} else {
+			gm.EngineWhite = req.EngineWhite
+			gm.EngineBlack = req.EngineBlack
+		}
 		// Wipe and re-initialize the clock from the row's time_control.
 		// withLockedMutation will overwrite rec.Status to "ongoing"
 		// (gm.Status is reset), so the new clock starts fresh.
