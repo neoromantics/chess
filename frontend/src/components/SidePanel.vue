@@ -65,9 +65,14 @@
     </div>
     <div v-else-if="outgoingTakeback" class="prompt subtle">Takeback requested — waiting…</div>
 
-    <!-- Primary actions. Visible only while the game is live; once
-         terminal, the bottom CTA row (New Game / Replay) takes over. -->
-    <div v-if="state?.status === 'ongoing'" class="actions">
+    <!-- Primary actions. Visible only while the game is live AND the
+         caller is a participant; once terminal, the bottom CTA row
+         (New Game / Replay) takes over. Spectators see no buttons —
+         they can read the board, move list, and clock, but every
+         mutation surface (hint/undo/draw/resign/setup/takeback) is
+         participant-only, both client-side here and server-side via
+         userOwnsGame. -->
+    <div v-if="!spectator && state?.status === 'ongoing'" class="actions">
       <button class="btn" :disabled="state?.thinking" @click="$emit('get-hint')">Hint</button>
       <button v-if="!isPvP" class="btn" :disabled="state?.thinking" @click="$emit('undo')">Undo</button>
       <button v-if="canEditPosition" class="btn" @click="$emit('edit-position')" title="Set up a custom position (engine games only)">Setup</button>
@@ -80,7 +85,7 @@
          play, leave; only revealed via the disclosure. Collapsed
          when the game is not engine-against-anything (PvP) since
          the toggles wouldn't do anything useful there. -->
-    <details v-if="!isPvP" class="settings" :open="settingsOpen">
+    <details v-if="!spectator && !isPvP" class="settings" :open="settingsOpen">
       <summary @click.prevent="settingsOpen = !settingsOpen">Engine settings</summary>
       <div class="settings-body">
         <div class="setting-row">
@@ -149,27 +154,30 @@
          without hunting; the standard chess export format is PGN, and
          it's how engines and other sites round-trip games. Load is
          engine-only (same rule as set_position) since replacing the
-         board mid-PvP would let one side undo their opponent's moves. -->
+         board mid-PvP would let one side undo their opponent's moves.
+         Spectators can still Save (.pgn) — it's a read-only download. -->
     <section class="saveload">
       <header><h3>Save / Load</h3></header>
       <div class="saveload-actions">
         <a v-if="pgnDownloadUrl" :href="pgnDownloadUrl" :download="pgnFilename" class="btn ghost" title="Download this game as a .pgn file">Save (.pgn)</a>
-        <button v-if="canEditPosition" class="btn ghost" @click="onPickFile" title="Load a .pgn file from disk">Load file…</button>
-        <button v-if="canEditPosition" class="btn ghost" @click="pgnImportOpen = !pgnImportOpen" title="Paste a PGN as text">
+        <button v-if="!spectator && canEditPosition" class="btn ghost" @click="onPickFile" title="Load a .pgn file from disk">Load file…</button>
+        <button v-if="!spectator && canEditPosition" class="btn ghost" @click="pgnImportOpen = !pgnImportOpen" title="Paste a PGN as text">
           {{ pgnImportOpen ? 'Cancel paste' : 'Paste…' }}
         </button>
       </div>
       <input ref="pgnFileInputEl" type="file" accept=".pgn,application/x-chess-pgn,text/plain" style="display:none" @change="onFilePicked"/>
-      <div v-if="pgnImportOpen" class="pgn-import">
+      <div v-if="!spectator && pgnImportOpen" class="pgn-import">
         <textarea v-model="pgnImportText" placeholder="Paste PGN here" rows="6"></textarea>
         <button class="btn primary" :disabled="!pgnImportText.trim()" @click="onLoadPgn">Apply</button>
       </div>
     </section>
 
-    <!-- Bottom CTA row. "New Game" is the dominant next action; Replay
-         joins it only when the game is finished (avoids competing with
-         it during play). -->
-    <div class="bottom-cta">
+    <!-- Bottom CTA row. "New Game" is the dominant next action;
+         Replay joins it only when the game is finished. Spectators
+         see neither — they can't start a game in someone else's slot,
+         and Replay is reachable from /game/{id} (or a fresh tab) if
+         they want it. -->
+    <div v-if="!spectator" class="bottom-cta">
       <button class="btn new-game" @click="$emit('new-game')">New Game</button>
       <button v-if="state?.status && state.status !== 'ongoing'" class="btn ghost replay-cta" @click="$emit('open-replay')" title="Open frame-by-frame replay">▶ Replay</button>
     </div>
