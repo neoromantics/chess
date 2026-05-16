@@ -138,6 +138,12 @@ const router = useRouter();
 // fighting the user if they manually toggle Flip.
 let didAutoOrient = false;
 
+// Highest snapshot Rev applied so far. Drops late-arriving stale
+// updates (HTTP response landing after a WS event that was already
+// for a newer state) — the classic engine-toggle "board reverts to
+// pre-move position" race. Reset when navigating to a different game.
+let lastSnapshotRev = 0;
+
 // User's color in this game, or null in engine-only / spectator views.
 // Computed once we've seen the first StateJSON.
 const myColor = ref<'white' | 'black' | null>(null);
@@ -372,6 +378,17 @@ const historyPairs = computed(() => {
 
 // Methods
 const updateState = (s: StateJSON) => {
+  // Drop stale snapshots. Rev is set server-side from rec.UpdatedAt
+  // and is strictly increasing per game row (the per-game lock
+  // serializes writes). Without this, a fast WS StateUpdated event
+  // could land before the in-flight HTTP response for an earlier
+  // state, and updateState would happily overwrite the newer board
+  // with the older one. Legacy snapshots without a rev (rev === 0
+  // or undefined) skip the check — better to apply than to silently
+  // miss state on a partial-deploy mismatch.
+  if (s.rev && s.rev <= lastSnapshotRev) return;
+  if (s.rev) lastSnapshotRev = s.rev;
+
   state.value = s;
   whitePlayerType.value = s.engine_white ? 'e' : 'h';
   blackPlayerType.value = s.engine_black ? 'e' : 'h';
@@ -974,6 +991,14 @@ const editApply = async () => {
 };
 
 watch(flipped, (val) => localStorage.setItem('chess-flipped', val ? '1' : '0'));
+
+// Reset the snapshot-rev gate when navigating between games (router
+// reuses GameView with different props.id). Without this, an older
+// game's high rev would block a fresh game's first snapshot.
+watch(() => props.id, () => {
+  lastSnapshotRev = 0;
+  didAutoOrient = false;
+});
 
 const onKeyDown = (e: KeyboardEvent) => {
   primeAudio();

@@ -200,9 +200,19 @@ type stateJSON struct {
 	// return the snapshot directly and the SPA learns its game ID
 	// without a second request. Durable-game snapshots leave it
 	// empty (the SPA already knows the ID — it's in the URL).
-	ID             string    `json:"id,omitempty"`
-	FEN            string    `json:"fen"`
-	Turn           string    `json:"turn"`
+	ID   string `json:"id,omitempty"`
+	FEN  string `json:"fen"`
+	Turn string `json:"turn"`
+	// Rev is a monotonic version stamp the SPA uses to reject stale
+	// snapshots. Set to rec.UpdatedAt.UnixNano() — every persisted
+	// mutation bumps UpdatedAt and the per-game lock serializes writes,
+	// so the value is strictly increasing per row. Same snapshot arriving
+	// twice (HTTP response + WS pub/sub) has the same Rev → the second
+	// no-ops on the client. A newer snapshot via WS that races an older
+	// one via HTTP wins instead of being overwritten by the slower
+	// channel, which was the "engine moves then board reverts" bug.
+	// Zero is treated as "unrevved" on the client (legacy snapshots).
+	Rev            int64     `json:"rev,omitempty"`
 	EngineWhite    bool      `json:"engine_white"`
 	EngineBlack    bool      `json:"engine_black"`
 	EngineToMove   bool      `json:"engine_to_move"`
@@ -462,6 +472,7 @@ func (s *GameService) snapshotFromRecord(ctx context.Context, rec *db.GameRecord
 	snap := stateJSON{
 		FEN:            gm.Board.FEN(),
 		Turn:           turn,
+		Rev:            rec.UpdatedAt.UnixNano(),
 		EngineWhite:    engineWhiteOut,
 		EngineBlack:    engineBlackOut,
 		EngineToMove:   engineToMoveOut,

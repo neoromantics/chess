@@ -7,6 +7,13 @@ export interface StateJSON {
   // Set on temp-game snapshots; durable game snapshots leave it
   // undefined since the SPA already has the ID from the URL.
   id?: string;
+  // Monotonic version stamp from rec.UpdatedAt.UnixNano(). The SPA
+  // uses it to reject stale snapshots: the same row's snapshot
+  // arriving twice (HTTP response + WS pub/sub) has the same rev,
+  // and a fast WS event for a newer state followed by the older HTTP
+  // response no longer reverts the board because the older snapshot
+  // is dropped. Optional for legacy snapshots that predate the field.
+  rev?: number;
   fen: string;
   turn: 'w' | 'b';
   engine_white: boolean;

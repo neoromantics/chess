@@ -481,18 +481,13 @@ func (s *GameService) handleHTTPSetPlayers(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	snapshot := s.snapshotFromRecord(r.Context(), rec)
-	snapPayload, _ := json.Marshal(snapshot)
-	_, _ = s.bus.EmitEvent(r.Context(), eventbus.Event{
-		Type: eventbus.EvtStateUpdated, GameID: rec.ID, Payload: snapPayload,
-	})
-
-	// Edge case: user just toggled an idle side INTO being an engine
-	// (e.g. switching black from human → engine while black is on the
-	// move and no search is running). In that case nothing else will
-	// kick off a search, so we trigger one ourselves — but only if no
-	// search is already in flight, otherwise we'd recreate the
-	// duplicate-search bug this whole function exists to avoid.
+	// Trigger BEFORE snapshot so the snapshot's `thinking` flag reflects
+	// the just-set sentinel. Previously this ran after the snapshot, so
+	// the SPA saw {engine_to_move: true, thinking: false} for one tick
+	// and the spinner never appeared. Side effect: the WS pub/sub event
+	// + the HTTP response now both carry the same post-trigger Rev, so
+	// a fast engine reply still produces a strictly-higher Rev for the
+	// next snapshot.
 	engineAssignmentChanged := wasEngineWhite != rec.EngineWhite || wasEngineBlack != rec.EngineBlack
 	if engineAssignmentChanged && rec.Status == "ongoing" {
 		gm := game.NewGame()
@@ -505,6 +500,12 @@ func (s *GameService) handleHTTPSetPlayers(w http.ResponseWriter, r *http.Reques
 			}
 		}
 	}
+
+	snapshot := s.snapshotFromRecord(r.Context(), rec)
+	snapPayload, _ := json.Marshal(snapshot)
+	_, _ = s.bus.EmitEvent(r.Context(), eventbus.Event{
+		Type: eventbus.EvtStateUpdated, GameID: rec.ID, Payload: snapPayload,
+	})
 
 	writeJSON(w, snapshot)
 }
