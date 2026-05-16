@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -72,15 +73,28 @@ func main() {
 
 	// Tiny HTTP server for /metrics + /health probes. Worker is otherwise
 	// a pure stream consumer with no inbound traffic.
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte("OK"))
+	})
+	mux.Handle("/metrics", metrics.Handler())
+	srv := &http.Server{
+		Addr:    ":8080",
+		Handler: metrics.HTTPMiddleware("engine-worker", mux),
+	}
 	go func() {
-		mux := http.NewServeMux()
-		mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(200)
-			w.Write([]byte("OK"))
-		})
-		mux.Handle("/metrics", metrics.Handler())
-		_ = http.ListenAndServe(":8080", metrics.HTTPMiddleware("engine-worker", mux))
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Printf("Worker: HTTP server failed: %v", err)
+		}
 	}()
+
+	// inFlight tracks goroutines spawned per accepted search. On
+	// shutdown we wait for them to finish their current search and ack
+	// before exiting, so the consumer group's pending-entries list
+	// doesn't grow with orphaned messages that the next pod's pendingMS
+	// reclaim has to mop up.
+	var inFlight sync.WaitGroup
 
 	go func() {
 		<-sigChan
@@ -88,10 +102,11 @@ func main() {
 		cancel()
 	}()
 
+readLoop:
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			break readLoop
 		case sem <- struct{}{}:
 			msgs, err := bus.ReadEngineRequests(ctx, "engine-worker-group", hostname, 5*time.Second)
 			if err != nil {
@@ -121,7 +136,9 @@ func main() {
 				continue
 			}
 
+			inFlight.Add(1)
 			go func(r eventbus.EngineRequest, streamID string) {
+				defer inFlight.Done()
 				defer func() { <-sem }()
 				defer bus.Ack(context.Background(), eventbus.StreamEngineRequests, "engine-worker-group", streamID)
 
@@ -139,6 +156,24 @@ func main() {
 			}(req, msg.ID)
 		}
 	}
+
+	// Signal every active search to abandon its remaining depth and
+	// return whatever best-move it already has. Without this the worker
+	// pod sits in Terminating until kube SIGKILLs it.
+	activeSearches.Range(func(_, v any) bool {
+		if stop, ok := v.(*atomic.Bool); ok {
+			stop.Store(true)
+		}
+		return true
+	})
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer shutdownCancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("Worker: HTTP shutdown error: %v", err)
+	}
+	inFlight.Wait()
+	log.Println("Worker: clean shutdown complete")
 }
 
 // ProcessRequest runs the engine on the given position.

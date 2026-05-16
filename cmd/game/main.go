@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
@@ -42,99 +44,137 @@ func main() {
 	defer store.Close()
 
 	bus := eventbus.NewClient(redisAddr)
+	defer bus.Close()
 	s := &GameService{db: store, bus: bus}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-sigChan
-		cancel()
-	}()
+	// rootCtx cancellation propagates to every background goroutine
+	// (Run/listenToEngineResults/sweepers/rating-updater) so they exit
+	// promptly on SIGTERM. The HTTP server uses its own Shutdown call
+	// to drain in-flight requests with a separate timeout.
+	rootCtx, rootCancel := context.WithCancel(context.Background())
+	defer rootCancel()
 
 	// Health check and API server. All /api/invites/* routes assume the
 	// gateway has already JWT-validated the caller and injected
 	// ?user_id=N — no service downstream re-checks the token.
-	go func() {
-		mux := http.NewServeMux()
-		mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(200)
-			w.Write([]byte("OK"))
-		})
-		mux.HandleFunc("GET /api/state", s.handleState)
-		mux.HandleFunc("GET /api/games", s.handleListGames)
-		mux.HandleFunc("GET /api/replay", s.handleReplayData)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte("OK"))
+	})
+	mux.HandleFunc("GET /api/state", s.handleState)
+	mux.HandleFunc("GET /api/games", s.handleListGames)
+	mux.HandleFunc("GET /api/replay", s.handleReplayData)
 
-		// Sync game-mutation HTTP. See cmd/game/handlers.go for the
-		// shared lock + ownership pattern. These are the contract the
-		// monolith exposed; the SPA was written for them.
-		mux.HandleFunc("POST /api/move", s.handleHTTPMove)
-		mux.HandleFunc("POST /api/resign", s.handleHTTPResign)
-		mux.HandleFunc("POST /api/new", s.handleHTTPNew)
-		mux.HandleFunc("POST /api/set_players", s.handleHTTPSetPlayers)
-		mux.HandleFunc("POST /api/set_position", s.handleHTTPSetPosition)
-		mux.HandleFunc("GET /api/pgn", s.handleHTTPDownloadPGN)
-		mux.HandleFunc("POST /api/load_pgn", s.handleHTTPLoadPGN)
-		mux.HandleFunc("POST /api/analyze", s.handleHTTPAnalyze)
-		mux.HandleFunc("POST /api/undo", s.handleHTTPUndo)
-		mux.HandleFunc("DELETE /api/games/delete", s.handleHTTPDelete)
-		mux.HandleFunc("POST /api/hint", s.handleHTTPHint)
-		mux.HandleFunc("POST /api/draw_offer", s.handleDrawOffer)
-		mux.HandleFunc("POST /api/draw_accept", s.handleDrawAccept)
-		mux.HandleFunc("POST /api/draw_decline", s.handleDrawDecline)
-		mux.HandleFunc("POST /api/takeback_offer", s.handleTakebackOffer)
-		mux.HandleFunc("POST /api/takeback_accept", s.handleTakebackAccept)
-		mux.HandleFunc("POST /api/takeback_decline", s.handleTakebackDecline)
+	// Sync game-mutation HTTP. See cmd/game/handlers.go for the
+	// shared lock + ownership pattern. These are the contract the
+	// monolith exposed; the SPA was written for them.
+	mux.HandleFunc("POST /api/move", s.handleHTTPMove)
+	mux.HandleFunc("POST /api/resign", s.handleHTTPResign)
+	mux.HandleFunc("POST /api/new", s.handleHTTPNew)
+	mux.HandleFunc("POST /api/set_players", s.handleHTTPSetPlayers)
+	mux.HandleFunc("POST /api/set_position", s.handleHTTPSetPosition)
+	mux.HandleFunc("GET /api/pgn", s.handleHTTPDownloadPGN)
+	mux.HandleFunc("POST /api/load_pgn", s.handleHTTPLoadPGN)
+	mux.HandleFunc("POST /api/analyze", s.handleHTTPAnalyze)
+	mux.HandleFunc("POST /api/undo", s.handleHTTPUndo)
+	mux.HandleFunc("DELETE /api/games/delete", s.handleHTTPDelete)
+	mux.HandleFunc("POST /api/hint", s.handleHTTPHint)
+	mux.HandleFunc("POST /api/draw_offer", s.handleDrawOffer)
+	mux.HandleFunc("POST /api/draw_accept", s.handleDrawAccept)
+	mux.HandleFunc("POST /api/draw_decline", s.handleDrawDecline)
+	mux.HandleFunc("POST /api/takeback_offer", s.handleTakebackOffer)
+	mux.HandleFunc("POST /api/takeback_accept", s.handleTakebackAccept)
+	mux.HandleFunc("POST /api/takeback_decline", s.handleTakebackDecline)
 
-		mux.HandleFunc("POST /api/invites/send", s.handleSendInvite)
-		mux.HandleFunc("GET /api/invites/pending", s.handleListPendingInvites)
-		mux.HandleFunc("POST /api/invites/{id}/accept", s.handleAcceptInvite)
-		mux.HandleFunc("POST /api/invites/{id}/decline", s.handleDeclineInvite)
-		mux.HandleFunc("POST /api/invites/{id}/cancel", s.handleCancelInvite)
+	mux.HandleFunc("POST /api/invites/send", s.handleSendInvite)
+	mux.HandleFunc("GET /api/invites/pending", s.handleListPendingInvites)
+	mux.HandleFunc("POST /api/invites/{id}/accept", s.handleAcceptInvite)
+	mux.HandleFunc("POST /api/invites/{id}/decline", s.handleDeclineInvite)
+	mux.HandleFunc("POST /api/invites/{id}/cancel", s.handleCancelInvite)
 
-		// Temp game (anonymous, Redis-only, 10-min sliding TTL). See cmd/game/temp.go.
-		mux.HandleFunc("POST /api/temp/session", s.handleTempSession)
-		mux.HandleFunc("GET /api/temp/state", s.handleTempState)
-		mux.HandleFunc("POST /api/temp/move", s.handleTempMove)
-		mux.HandleFunc("POST /api/temp/new", s.handleTempNew)
-		mux.HandleFunc("POST /api/temp/resign", s.handleTempResign)
-		mux.HandleFunc("POST /api/temp/undo", s.handleTempUndo)
-		mux.HandleFunc("POST /api/temp/hint", s.handleTempHint)
-		mux.HandleFunc("POST /api/temp/set_players", s.handleTempSetPlayers)
-		mux.HandleFunc("POST /api/temp/set_position", s.handleTempSetPosition)
-		mux.HandleFunc("GET /api/temp/pgn", s.handleTempDownloadPGN)
-		mux.HandleFunc("GET /api/temp/replay", s.handleTempReplayData)
-		mux.HandleFunc("POST /api/temp/load_pgn", s.handleTempLoadPGN)
-		mux.HandleFunc("POST /api/temp/analyze", s.handleTempAnalyze)
-		// Internal-only — gateway calls this from handleSignup when
-		// the signup request carried a chess-anon cookie. Not in the
-		// public proxy table.
-		mux.HandleFunc("POST /api/temp/upgrade", s.handleTempUpgrade)
+	// Temp game (anonymous, Redis-only, 10-min sliding TTL). See cmd/game/temp.go.
+	mux.HandleFunc("POST /api/temp/session", s.handleTempSession)
+	mux.HandleFunc("GET /api/temp/state", s.handleTempState)
+	mux.HandleFunc("POST /api/temp/move", s.handleTempMove)
+	mux.HandleFunc("POST /api/temp/new", s.handleTempNew)
+	mux.HandleFunc("POST /api/temp/resign", s.handleTempResign)
+	mux.HandleFunc("POST /api/temp/undo", s.handleTempUndo)
+	mux.HandleFunc("POST /api/temp/hint", s.handleTempHint)
+	mux.HandleFunc("POST /api/temp/set_players", s.handleTempSetPlayers)
+	mux.HandleFunc("POST /api/temp/set_position", s.handleTempSetPosition)
+	mux.HandleFunc("GET /api/temp/pgn", s.handleTempDownloadPGN)
+	mux.HandleFunc("GET /api/temp/replay", s.handleTempReplayData)
+	mux.HandleFunc("POST /api/temp/load_pgn", s.handleTempLoadPGN)
+	mux.HandleFunc("POST /api/temp/analyze", s.handleTempAnalyze)
+	// Internal-only — gateway calls this from handleSignup when
+	// the signup request carried a chess-anon cookie. Not in the
+	// public proxy table.
+	mux.HandleFunc("POST /api/temp/upgrade", s.handleTempUpgrade)
 
-		mux.Handle("/metrics", metrics.Handler())
+	mux.Handle("/metrics", metrics.Handler())
 
-		http.ListenAndServe(":8080", metrics.HTTPMiddleware("game-service", mux))
-	}()
+	srv := &http.Server{
+		Addr:    ":8080",
+		Handler: metrics.HTTPMiddleware("game-service", mux),
+	}
+
+	var wg sync.WaitGroup
+	startBg := func(name string, fn func(context.Context)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			fn(rootCtx)
+			slog.Info("background goroutine exited", "name", name)
+		}()
+	}
 
 	slog.Info("Game Service starting (Command Processor)...")
-	go s.listenToEngineResults(ctx)
-	go s.runInviteSweeper(ctx)
+	startBg("engine-results", s.listenToEngineResults)
+	startBg("invite-sweeper", s.runInviteSweeper)
 	// Matchmaker absorbed from the former cmd/matchmaker pod. The
 	// pairing loop is Redis-leader-elected so multiple game-service
 	// replicas don't race the queue. See cmd/game/matchmaker.go.
-	go s.runPairingLoop(ctx)
+	startBg("pairing", s.runPairingLoop)
 	// Clock flag-fall sweeper. Per-game lock makes the work idempotent
 	// across replicas — no leader election needed at this scale. See
 	// cmd/game/clocks.go.
-	go s.runClockFallSweeper(ctx)
+	startBg("clock-fall", s.runClockFallSweeper)
 	// Glicko-2 rating updater. Consumes game:events (rating-updater-group)
 	// and applies a one-game-per-period update on every rated GameFinished.
 	// pkg/rating is numerically verified against the paper's worked
 	// example — see pkg/rating/glicko2_test.go.
-	go s.runRatingUpdater(ctx)
-	s.Run(ctx)
+	startBg("rating-updater", s.runRatingUpdater)
+	startBg("command-processor", s.Run)
+
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("game-service HTTP server failed: %v", err)
+		}
+	}()
+
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	sig := <-sigChan
+	slog.Info("shutdown signal received; draining", "signal", sig.String())
+
+	// 1) Stop accepting new HTTP connections and let in-flight requests
+	//    finish. 15s matches the readiness-probe grace under our Traefik
+	//    config — long enough for any single mutation, short enough that
+	//    the kube terminationGracePeriod (30s default) absorbs both this
+	//    drain and the goroutine wait below.
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer shutdownCancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		slog.Warn("HTTP shutdown error", "error", err)
+	}
+
+	// 2) Cancel rootCtx so every background consumer / sweeper exits.
+	//    Consume() returns at the next read deadline (≤5s); sweepers'
+	//    tickers fall through their select.
+	rootCancel()
+	wg.Wait()
+	slog.Info("clean shutdown complete")
 }
 
 // stateJSON is the contract the SPA expects from /api/state. The DB

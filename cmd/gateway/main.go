@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"log/slog"
@@ -11,8 +12,12 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
+	"syscall"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/neoromantics/chess/pkg/auth"
@@ -48,6 +53,7 @@ func main() {
 		redisAddr = "localhost:6379"
 	}
 	bus := eventbus.NewClient(redisAddr)
+	defer bus.Close()
 	hub := NewHub(bus)
 
 	// Gateway absorbed user-service in the 6→3 pod consolidation. It
@@ -69,8 +75,19 @@ func main() {
 		hub:        hub,
 	}
 
+	// rootCtx cancellation propagates to the hub and its forward
+	// goroutines so they exit promptly on SIGTERM. The HTTP server
+	// uses its own Shutdown call for in-flight request draining.
+	rootCtx, rootCancel := context.WithCancel(context.Background())
+	defer rootCancel()
+
 	// Start WebSocket Hub
-	go hub.Run(context.Background())
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		hub.Run(rootCtx)
+	}()
 
 	mux := http.NewServeMux()
 
@@ -175,7 +192,36 @@ func main() {
 	// request including the unauthenticated ones (signup, login, /metrics
 	// itself, the SPA index). auth.Middleware is the inner wrap because
 	// the metrics labels don't care about who the user is.
-	log.Fatal(http.ListenAndServe(":"+port, metrics.HTTPMiddleware("gateway", auth.Middleware(mux))))
+	srv := &http.Server{
+		Addr:    ":" + port,
+		Handler: metrics.HTTPMiddleware("gateway", auth.Middleware(mux)),
+	}
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("gateway HTTP server failed: %v", err)
+		}
+	}()
+
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	sig := <-sigChan
+	slog.Info("shutdown signal received; draining", "signal", sig.String())
+
+	// 1) Stop accepting new HTTP connections; drain in-flight requests.
+	//    WebSocket connections held open by Hijack will be closed by the
+	//    server's connection-state callback when their TCP conn drops —
+	//    Shutdown can't drain them, so 5s is plenty for HTTP requests.
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer shutdownCancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		slog.Warn("HTTP shutdown error", "error", err)
+	}
+
+	// 2) Cancel rootCtx so the hub's forward goroutines and per-PubSub
+	//    readers exit cleanly.
+	rootCancel()
+	wg.Wait()
+	slog.Info("clean shutdown complete")
 }
 
 func (gw *Gateway) handleCreateGame(w http.ResponseWriter, r *http.Request) {
