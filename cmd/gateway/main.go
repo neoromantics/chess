@@ -457,7 +457,16 @@ func (gw *Gateway) handleReplay(w http.ResponseWriter, r *http.Request) {
 	q := dataURL.Query()
 	q.Set("game_id", gameID)
 	dataURL.RawQuery = q.Encode()
-	resp, err := http.Get(dataURL.String())
+	// Forward the caller's identity so game-service can enforce the same
+	// userMayRead check it does on /api/state. Without this, a private
+	// game's replay was reachable to anyone who knew the UUID — the
+	// spectator-mode flag (commit 2b6fb78) silently stopped applying
+	// because the conditional auth in handleReplayData never fired.
+	req, _ := http.NewRequestWithContext(r.Context(), http.MethodGet, dataURL.String(), nil)
+	if user, ok := auth.GetUser(r.Context()); ok {
+		req.Header.Set("X-User-ID", strconv.FormatInt(user.UserID, 10))
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		slog.Warn("replay: fetch frames failed", "error", err)
 		http.Error(w, "replay unavailable", http.StatusBadGateway)

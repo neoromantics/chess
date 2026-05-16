@@ -516,11 +516,17 @@ func (s *GameService) handleReplayData(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "game not found", 404)
 		return
 	}
-	if uid, ok := authedUserID(r); ok {
-		if !userOwnsGame(uid, rec) {
-			http.Error(w, "game not found", 404)
-			return
-		}
+	// Mirror /api/state's userMayRead policy: public games are readable
+	// by anyone (anonymous viewers included), private games only by
+	// participants. The previous "only check when uid is present" branch
+	// gave anonymous callers full access — and the gateway's
+	// handleReplay never forwarded identity, so that branch was the
+	// default path even for the owner. Use 404 (not 403) so missing
+	// game vs. private game stay indistinguishable.
+	uid, _ := authedUserID(r)
+	if !userMayRead(uid, rec) {
+		http.Error(w, "game not found", 404)
+		return
 	}
 	var history []string
 	if rec.History != "" {
