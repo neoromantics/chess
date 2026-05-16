@@ -23,7 +23,6 @@ const (
 	// stream with a consumer group so at-least-once delivery applies
 	// in both directions of the engine round-trip.
 	StreamEngineResults = "engine:results"
-	ChannelUserEvents   = "user:events:" // Prefix: user:events:{userID}
 )
 
 // EngineRequest represents a request for the engine to calculate a move.

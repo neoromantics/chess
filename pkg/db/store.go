@@ -135,15 +135,13 @@ type Store interface {
 	GetInvite(id uuid.UUID) (*Invite, error)
 	ListPendingInvitesForUser(userID int64) ([]Invite, error)
 	ListPendingInvitesFromUser(userID int64) ([]Invite, error)
-	AcceptInvite(inviteID uuid.UUID, toUserID int64, gameID string) (int64, error)
 	// AcceptInviteWithGame atomically upserts the new game row AND flips
 	// the invite to accepted in a single transaction. Returns the number
 	// of invite rows updated (0 means the invite was no longer pending —
 	// e.g. expired, declined, or already accepted — and the transaction
-	// is rolled back so no orphan game is left behind). Use this in
-	// preference to the bare AcceptInvite + SaveGame pair, which has a
-	// failure window where the invite is marked accepted but the game
-	// row is missing.
+	// is rolled back so no orphan game is left behind). The earlier bare
+	// AcceptInvite + SaveGame pair had a failure window where the invite
+	// was marked accepted but the game row was missing, and was removed.
 	AcceptInviteWithGame(inviteID uuid.UUID, toUserID int64, game *GameRecord) (int64, error)
 	DeclineInvite(inviteID uuid.UUID, toUserID int64) (int64, error)
 	CancelInvite(inviteID uuid.UUID, fromUserID int64) (int64, error)

@@ -9,10 +9,11 @@ permissions:
   contents: read
   packages: write
 
-# Silence the Sept-2026 Node-20 deprecation warning that fires on every
-# checkout/setup-node@v4 step. Forcing Node 24 today matches what those
-# actions will default to anyway after June 2026; opt-out lever still
-# available via ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION if needed.
+# Backstop for any JS action that still targets Node 20 (Sept-2026
+# deprecation). The two named offenders — actions/checkout and
+# actions/setup-node — are pinned to @v5 below, which is native Node 24;
+# this env var only kicks in if a transitive update regresses or a new
+# Node-20 action sneaks in.
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
@@ -21,7 +22,7 @@ jobs:
   backend:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25'
@@ -62,8 +63,8 @@ jobs:
   frontend:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: 'npm'
@@ -81,7 +82,7 @@ jobs:
     needs: [backend, frontend]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
@@ -115,7 +116,7 @@ jobs:
     needs: [docker]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Deploy Unified Fleet
         run: |

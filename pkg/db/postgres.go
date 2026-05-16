@@ -51,19 +51,21 @@ type PostgresStore struct {
 //
 // Pool sizing here matters for distributed deployments: many small API
 // pods sharing one Postgres mean we must cap each pod's open connections
-// or we'll DoS the database under load. With chess-db raised to
-// max_connections=500 and 3 services * up-to-6 replicas via HPA, the
-// safe ceiling per pod is roughly 500 / 18 ≈ 27. The defaults below
-// leave headroom; PG_MAX_OPEN_CONNS / PG_MAX_IDLE_CONNS lets ops tune
-// without a code change when the topology shifts.
+// or we'll DoS the database under load. Only gateway and game-service
+// open a pool (engine-worker is PG-free), so at HPA max we have
+// 8 + 6 = 14 PG-using pods. With chess-db raised to max_connections=500
+// the safe per-pod ceiling is 500 / 14 ≈ 35; we leave a buffer for
+// PG-internal reservations (superuser + autovacuum). PG_MAX_OPEN_CONNS
+// / PG_MAX_IDLE_CONNS lets ops tune without a code change when the
+// topology shifts.
 func OpenPostgres(dsn string) (Store, error) {
 	sqlDB, err := sql.Open("postgres", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open postgres: %w", err)
 	}
 
-	sqlDB.SetMaxOpenConns(envInt("PG_MAX_OPEN_CONNS", 25))
-	sqlDB.SetMaxIdleConns(envInt("PG_MAX_IDLE_CONNS", 5))
+	sqlDB.SetMaxOpenConns(envInt("PG_MAX_OPEN_CONNS", 30))
+	sqlDB.SetMaxIdleConns(envInt("PG_MAX_IDLE_CONNS", 10))
 	sqlDB.SetConnMaxLifetime(30 * time.Minute)
 	sqlDB.SetConnMaxIdleTime(5 * time.Minute)
 
@@ -347,14 +349,6 @@ func (s *PostgresStore) ListPendingInvitesFromUser(userID int64) ([]Invite, erro
 		out[i] = *inviteFromRow(r)
 	}
 	return out, nil
-}
-
-func (s *PostgresStore) AcceptInvite(inviteID uuid.UUID, toUserID int64, gameID string) (int64, error) {
-	return s.q.AcceptInvite(context.Background(), gen.AcceptInviteParams{
-		ID:       inviteID,
-		ToUserID: toUserID,
-		GameID:   sql.NullString{String: gameID, Valid: gameID != ""},
-	})
 }
 
 // AcceptInviteWithGame wraps UpsertGame + AcceptInvite in a single

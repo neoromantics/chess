@@ -26,7 +26,6 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE TABLE IF NOT EXISTS games (
     id                TEXT      PRIMARY KEY,
-    session_id        TEXT      NOT NULL DEFAULT '',
     fen               TEXT      NOT NULL,
     history           TEXT      NOT NULL DEFAULT '[]',
     history_san       TEXT      NOT NULL DEFAULT '[]',
@@ -52,6 +51,10 @@ CREATE TABLE IF NOT EXISTS games (
 );
 -- Idempotent add for clusters that predate the start_fen column.
 ALTER TABLE games ADD COLUMN IF NOT EXISTS start_fen TEXT NOT NULL DEFAULT '';
+-- Drop the pre-SPA session_id column on clusters that still have it.
+-- The column was never read or written by the current code path; this
+-- is the rare "deliberate, idempotent drop" CLAUDE.md permits.
+ALTER TABLE games DROP COLUMN IF EXISTS session_id;
 
 -- Index support for ListGames (WHERE white_user_id=$1 OR black_user_id=$1
 -- ORDER BY updated_at DESC). Without these, every Match-page load and

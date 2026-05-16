@@ -48,6 +48,20 @@ The session that produced this roadmap shipped ~40 commits restructuring the pla
 
 Nothing right now — the platform is in a stable state. Pick the next item below.
 
+Recent ops/cleanup (2026-05-15):
+- ✅ Dropped the dead `games.session_id` column (pre-SPA holdover).
+  Removed from `schema.sql` + added an idempotent `DROP COLUMN IF
+  EXISTS` for clusters that still have it; `sqlc` regenerated.
+- ✅ Narrowed the `Store` interface — removed the unused
+  `AcceptInvite(...)` wrapper; the only path now is the atomic
+  `AcceptInviteWithGame(...)`. Also dropped the dead
+  `eventbus.ChannelUserEvents` constant (services build the channel
+  name directly via `fmt.Sprintf("user.evt.%d", uid)`).
+- ✅ CI: bumped `actions/checkout` and `actions/setup-node` to `@v5`
+  (native Node 24) so the Sept-2026 Node-20 deprecation warning stops
+  firing. The `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24` env var stays as a
+  backstop for any future Node-20 action.
+
 ---
 
 ## Queued — Restore deleted features (2026-05-14 cleanup pass)
@@ -131,9 +145,13 @@ rest are deferred with reasons.
       `games.black_user_id`, `games.updated_at DESC`, `games.status`,
       and partial indices on `invites` for pending / per-user lookups.
       Idempotent in `pkg/db/schema.sql`.
-- ✅ **Env-tunable connection pool.** `PG_MAX_OPEN_CONNS` /
-      `PG_MAX_IDLE_CONNS` so ops can move the 25-per-pod default
-      without a code change.
+- ✅ **Env-tunable connection pool + bumped defaults.**
+      `PG_MAX_OPEN_CONNS` / `PG_MAX_IDLE_CONNS` so ops can move the
+      per-pod ceiling without a code change. Defaults bumped
+      2026-05-15: open 25→30, idle 5→10. Engine-worker has no PG pool,
+      so the live ceiling is 8 (gateway HPA max) + 6 (game-service HPA
+      max) = 14 pods × 30 = 420 client conns vs. `max_connections=500`
+      — leaving ~80 for autovacuum and superuser reservations.
 
 **Deliberately deferred (real bottlenecks at 10k pair scale, but not
 worth pre-building):**

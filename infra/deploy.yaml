@@ -30,14 +30,16 @@ spec:
       containers:
       - name: postgres
         image: postgres:16-alpine
-        # max_connections raised from PG default 100 to 500 so 6
-        # services × 2 replicas × MaxOpenConns=25 = 300 client conns
-        # fits comfortably. ~10MB RAM per connection, so 500 caps at
-        # ~5GB — well within the chess-db pod's working set on a
-        # modestly-sized node. If we ever need real connection
-        # pooling, the right next move is to build our own pgbouncer
-        # image (the dependency on external pgbouncer images was a
-        # repeated tag-not-found footgun).
+        # max_connections raised from PG default 100 to 500. Only
+        # gateway (HPA max 8) and game-service (HPA max 6) open PG
+        # pools — engine-worker is PG-free — so at HPA max we have
+        # 14 PG-using pods × MaxOpenConns=30 = 420 client conns, with
+        # ~80 headroom for autovacuum and superuser reservations.
+        # ~10MB RAM per connection so 500 caps at ~5GB — well within
+        # the chess-db pod's working set. If we ever need real
+        # connection pooling, the right next move is to build our own
+        # pgbouncer image (the dependency on external pgbouncer images
+        # was a repeated tag-not-found footgun).
         args: ["-c", "max_connections=500"]
         ports:
         - containerPort: 5432
@@ -85,11 +87,11 @@ spec:
 # pgbouncer was removed after four failed deploy cycles chasing the
 # right published Docker Hub tag (edoburu 1.23.0/1.23.1, bitnami 1.23.1,
 # bitnami:latest — all returned manifest-not-found). At our actual
-# scale (single VM, 6 services × 2 replicas × MaxOpenConns=25 = 300
-# possible client conns), the simpler fix is the chess-db
-# max_connections=500 setting above. When we cross 500 real conns
-# (genuine multi-node, thousands of pods), the right move is to
-# build our own pgbouncer image rather than depend on a published one.
+# scale (single VM, 14 PG-using pods × MaxOpenConns=30 = 420 possible
+# client conns under max_connections=500), the simpler fix is the
+# chess-db max_connections tuning above. When we cross 500 real conns
+# (genuine multi-node, thousands of pods), the right move is to build
+# our own pgbouncer image rather than depend on a published one.
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim

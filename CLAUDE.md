@@ -109,7 +109,7 @@ CI does this in the backend job to avoid an npm round-trip when only Go changed.
 
 - Schema lives in **one file**: `pkg/db/schema.sql`. There is no `migrations/` directory.
 - `OpenPostgres` applies the schema on every service boot under a Postgres advisory lock (`schemaLockID`), so racing replicas serialize the apply safely. The schema is idempotent (`CREATE TABLE IF NOT EXISTS`).
-- Editing the schema: prefer additive `ADD COLUMN IF NOT EXISTS`. Column drops or renames need a deliberate one-off applied via `kubectl exec` against the live DB, since there's no migration runner.
+- Editing the schema: prefer additive `ADD COLUMN IF NOT EXISTS`. Column drops or renames need to be deliberate and idempotent — the canonical pattern is `ALTER TABLE … DROP COLUMN IF EXISTS …;` appended after the `CREATE TABLE`, so the next boot's schema-apply removes the column on any cluster that still has it. Only do this when nothing reads or writes the column anywhere in the code (grep first).
 - After editing `pkg/db/queries/queries.sql`, run `sqlc generate -f infra/sqlc.yaml` to regenerate `pkg/db/gen/*`. Never hand-edit generated code.
 
 ## Secrets & deployment
@@ -117,7 +117,7 @@ CI does this in the backend job to avoid an npm round-trip when only Go changed.
 - **Secrets live in k3s**, owned by the cluster. Bootstrap a fresh cluster with `./infra/bootstrap-secrets.sh` (random openssl-generated values). Rotate via `kubectl edit secret chess-secrets -n chess` then `kubectl rollout restart …`.
 - **CI never sees prod secrets.** The deploy job is `kubectl apply -k infra/` + `kubectl rollout restart`. The self-hosted runner runs on the VM.
 - All manifests live in `infra/deploy.yaml` (a single file with all three services + ingress + PVCs). Kustomize at `infra/kustomization.yaml` sets `namespace: chess`.
-- **Postgres `max_connections` is raised to 500** via `args: ["-c", "max_connections=500"]` on the chess-db Deployment. 6 services × 2 replicas × 25 max conns = 300 ceiling — we tried PGBouncer but burned four deploy cycles on broken Docker Hub tags; tuning PG itself is the simpler win at this scale.
+- **Postgres `max_connections` is raised to 500** via `args: ["-c", "max_connections=500"]` on the chess-db Deployment. Engine-worker doesn't open a PG pool, so the live ceiling is `(gateway HPA max 8) + (game-service HPA max 6) = 14 pods × MaxOpenConns=30 = 420 client conns`, leaving ~80 for autovacuum + superuser reservations. Per-pod sizing is env-tunable via `PG_MAX_OPEN_CONNS` / `PG_MAX_IDLE_CONNS`. We tried PGBouncer but burned four deploy cycles on broken Docker Hub tags; tuning PG itself is the simpler win at this scale.
 - **Rotating Postgres credentials requires also wiping `chess-db-pvc`**, since Postgres only honors `POSTGRES_USER`/`PASSWORD` on the first init of the data dir.
 
 ## Production debugging cheatsheet
