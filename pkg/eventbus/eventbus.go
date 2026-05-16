@@ -111,7 +111,9 @@ const (
 	EvtDrawDeclined = "DrawDeclined"
 	// EvtAssessment carries one per-ply analysis update so the SPA can
 	// decorate the move list as results arrive. Payload is one
-	// PlyAssessment object (ply, played, best, score, class).
+	// PlyAssessment object (ply, played, best, score, depth, cp_loss,
+	// class). Class ∈ {best, only, great, good, inaccuracy, mistake,
+	// blunder}. See cmd/game/analysis.go for the classifier.
 	EvtAssessment = "Assessment"
 
 	// User-channel events (user.evt.{id}). snake_case matches what

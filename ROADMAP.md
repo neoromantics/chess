@@ -155,12 +155,18 @@ likely-to-return ones:
       until it makes a legal move; can't switch to a different piece or
       deselect. localStorage-persisted, applies to PvP + engine games.
       Pure SPA — no backend churn.
-- ✅ **Move assessment** (2026-05-15, phase 1) — `POST /api/analyze`
-      replays the game ply-by-ply and fires a 200ms engine search per
-      pre-move position; per-ply `EvtAssessment` streams over the
-      per-game WS channel. SidePanel renders ✓ / ? / ★ (best / alt /
-      only-legal) next to each SAN. Centipawn-loss classification +
-      stored `rec.Assessments` persistence are follow-up phases.
+- ✅ **Move assessment** (2026-05-15 phase 1; 2026-05-16 phase 2) —
+      `POST /api/analyze` replays the game ply-by-ply and dispatches a
+      200ms engine search per pre-move position PLUS one terminal
+      anchor at the post-last-move position. cp_loss is computed from
+      consecutive search scores (`pre.Score + post.Score`, additive
+      under negamax) and bucketed into `best / only / great / good /
+      inaccuracy / mistake / blunder` (lichess-calibrated thresholds).
+      Per-ply `EvtAssessment` streams over the per-game WS channel;
+      multi-replica dedupe via `analyze:emitted:{game_id}:{ply}`
+      SETNX. SidePanel decorates the move list with ✓ / ★ / ! / !? /
+      ? / ?? glyphs + color spectrum + cp-loss tooltips. Stored
+      `rec.Assessments` persistence still queued.
 - ✅ **Time controls** (2026-05-15, 2026-05-16) — restored as
       `1+0, 2+1, 3+0, 3+2, 5+0, 5+3, 10+0, 10+5, 15+10, 30+0`, then
       trimmed back to `3+0` + `10+0` on 2026-05-16 because the

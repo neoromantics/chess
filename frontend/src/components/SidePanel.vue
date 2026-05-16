@@ -224,7 +224,7 @@ const props = defineProps<{
   outgoingTakeback?: boolean;
   canEditPosition?: boolean;
   pgnDownloadUrl?: string;
-  assessments?: Record<number, { ply: number; played: string; best: string; score: number; depth: number; class: string }>;
+  assessments?: Record<number, { ply: number; played: string; best: string; score: number; depth: number; cp_loss: number; class: string }>;
   analyzing?: boolean;
 }>();
 
@@ -262,19 +262,38 @@ const moveClass = (idx: number) => {
   if (!a) return '';
   return 'assess-' + a.class;
 };
+// Per-class marker. Symbols chosen so they're visually distinct in a
+// monospace move list — green-check stays for "best", star for the
+// rare "only-legal", and the loss tiers pick up familiar coaching
+// glyphs (!? = inaccuracy, ? = mistake, ?? = blunder).
 const moveMarker = (idx: number) => {
   const a = props.assessments?.[idx];
   if (!a) return '';
-  if (a.class === 'best') return ' ✓';
-  if (a.class === 'only') return ' ★';
-  return ' ?';
+  switch (a.class) {
+    case 'best': return ' ✓';
+    case 'only': return ' ★';
+    case 'great': return ' !';
+    case 'good': return '';
+    case 'inaccuracy': return ' !?';
+    case 'mistake': return ' ?';
+    case 'blunder': return ' ??';
+    default: return '';
+  }
 };
 const moveTooltip = (mv: { san: string; lan: string; idx: number }) => {
   const a = props.assessments?.[mv.idx];
   if (!a) return mv.lan;
   if (a.class === 'best') return `${mv.lan} — engine's pick (eval ${a.score / 100}, depth ${a.depth})`;
   if (a.class === 'only') return `${mv.lan} — only legal move`;
-  return `${mv.lan} — engine preferred ${a.best} (eval ${a.score / 100}, depth ${a.depth})`;
+  const loss = (a.cp_loss / 100).toFixed(2);
+  const verdict =
+    a.class === 'great' ? 'nearly best' :
+    a.class === 'good' ? 'reasonable' :
+    a.class === 'inaccuracy' ? 'inaccuracy' :
+    a.class === 'mistake' ? 'mistake' :
+    a.class === 'blunder' ? 'blunder' :
+    a.class;
+  return `${mv.lan} — ${verdict} (cp loss ${loss}, engine preferred ${a.best}, depth ${a.depth})`;
 };
 
 // Engine settings collapsed by default. Stored in localStorage so a
@@ -480,9 +499,19 @@ const copyWatchLink = async () => {
 .move-cell { min-width: 60px; }
 .move-san { color: #e0e0e0; padding: 0 2px; border-radius: 2px; }
 .move-empty { color: #666; font-style: italic; padding: 8px 0; font-family: inherit; }
-.move-san.assess-best { color: #6ec77a; }
-.move-san.assess-alt  { color: #e4b15a; }
-.move-san.assess-only { color: #c2bfff; }
+/* Assessment classes. Color choice mirrors the loss spectrum:
+ * green = great, neutral = good, yellow = inaccuracy, orange = mistake,
+ * red = blunder. `assess-alt` is kept around as a fallback so a stale
+ * backend (still emitting the Phase-1 "alt" verdict) doesn't render
+ * unstyled. */
+.move-san.assess-best       { color: #6ec77a; }
+.move-san.assess-only       { color: #c2bfff; }
+.move-san.assess-great      { color: #6ec77a; }
+.move-san.assess-good       { color: #ddd; }
+.move-san.assess-inaccuracy { color: #e4b15a; }
+.move-san.assess-mistake    { color: #e08648; }
+.move-san.assess-blunder    { color: #d35454; }
+.move-san.assess-alt        { color: #e4b15a; }
 
 .analyze-row { padding: 8px 0 0; border-top: 1px solid #2f2f2f; margin-top: 8px; }
 .analyze-btn { width: 100%; font-size: 12px; }

@@ -204,7 +204,7 @@ const pgnDownloadUrl = computed(() => api.pgnDownloadUrl(props.id));
 // "Analyze". Keyed by ply index. Cleared on every state mutation that
 // changes the history (new game / undo / load PGN) since the indices
 // no longer refer to the same moves.
-type Assessment = { ply: number; played: string; best: string; score: number; depth: number; class: string };
+type Assessment = { ply: number; played: string; best: string; score: number; depth: number; cp_loss: number; class: string };
 const assessments = ref<Record<number, Assessment>>({});
 const analyzing = ref(false);
 const editMode = ref(false);

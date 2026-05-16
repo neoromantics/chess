@@ -182,6 +182,7 @@ Forgetting this breaks every WS upgrade silently with
 | `TakebackRequested` | PvP casual game; one side asked for a takeback | `{from_user_id, game_id, plies}` | (literal — defined in cmd/game/takebacks.go) | `GameView.connectWS` → set incoming-takeback banner |
 | `TakebackDeclined` | opponent declined a takeback | `{by_user_id, game_id}` | (literal) | toast + clear banner |
 | `TakebackAccepted` | opponent accepted; history rolled back N plies | `stateJSON` | (literal) | (companion to StateUpdated; SPA clears banner) |
+| `Assessment` | one per-ply analysis result (cmd/game/analysis.go) | `PlyAssessment {ply, played, best, score, depth, cp_loss, class}` where `class ∈ {best, only, great, good, inaccuracy, mistake, blunder}` | `eventbus.EvtAssessment` | `GameView.connectWS` → `assessments[ply] = a` |
 
 ### `/ws/user` (user.evt.{user_id})
 
@@ -285,7 +286,7 @@ the cleanup. The `chess-paused-features` memory tracks the full list.
 |---|---|
 | Server clocks | Shipped 2026-05-15. PvP games initialize a `clock:{id}` Redis hash from `time_control` (e.g. "15+10"); `clocks.go` deducts elapsed wall time + adds increment per move; flag-fall sweeper finalizes timeouts. Engine games still use `white_think_time`/`black_think_time` — those are engine search budgets, not a game clock. |
 | Touch-move | `pkg/game/Touch`, `TouchMove`, `TouchedSq`, `TouchLost`, `StatusTouchLost`, `/api/touch`, `/api/touch_move`, SPA toggle |
-| Move assessment | Restored 2026-05-15 as on-demand. `POST /api/analyze?game_id=X` replays the game ply-by-ply, dispatches one engine search per pre-move position (Context="assess", 200ms each), and streams per-ply `EvtAssessment` events over `game.evt.{id}`. Coarse classification: `best` (matched engine pick) / `alt` / `only` (single legal move). Centipawn-loss classification is a follow-up. |
+| Move assessment | Restored 2026-05-15 as on-demand; CP-loss classification added 2026-05-16 (Phase 2). `POST /api/analyze?game_id=X` replays the game ply-by-ply and dispatches one engine search per pre-move position PLUS one terminal-anchor search at the post-last-move position (Context="assess", 200ms each). For each ply k, cp_loss is computed from consecutive search scores (`pre.Score + post.Score` — additive under negamax) and bucketed: `best` (matched engine pick) / `only` (single legal move) / `great` (<0.30 pawn) / `good` (<0.80) / `inaccuracy` (<1.50) / `mistake` (<3.00) / `blunder` (else). Per-ply results stream as `EvtAssessment` over `game.evt.{id}`; multi-replica dedupe via `analyze:emitted:{game_id}:{ply}` SETNX. |
 | Board editor | Restored 2026-05-15. `EditPanel.vue` is back; `POST /api/set_position` (engine games only) replaces the position with a user-supplied FEN, persisted as `start_fen` on the `games` row. PvP games are rejected server-side. |
 | Save / load PGN file + FEN paste | PGN restored 2026-05-15 via `GET /api/pgn` (download) + `POST /api/load_pgn` (paste, engine games only). FEN paste is still available via `/api/set_position`. |
 | Draw offer / accept / decline | SPA emit sites in `SidePanel`, `GameView` handlers |
