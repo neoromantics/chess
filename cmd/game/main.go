@@ -63,9 +63,9 @@ func main() {
 			w.WriteHeader(200)
 			w.Write([]byte("OK"))
 		})
-		mux.HandleFunc("/api/state", s.handleState)
-		mux.HandleFunc("/api/games", s.handleListGames)
-		mux.HandleFunc("/api/replay", s.handleReplayData)
+		mux.HandleFunc("GET /api/state", s.handleState)
+		mux.HandleFunc("GET /api/games", s.handleListGames)
+		mux.HandleFunc("GET /api/replay", s.handleReplayData)
 
 		// Sync game-mutation HTTP. See cmd/game/handlers.go for the
 		// shared lock + ownership pattern. These are the contract the
@@ -529,8 +529,6 @@ func (s *GameService) processCommand(ctx context.Context, msg redis.XMessage) {
 		s.handleNewGame(ctx, cmd)
 	case eventbus.CmdCreatePvPGame:
 		s.handleCreatePvPGame(ctx, cmd)
-	case eventbus.CmdHint:
-		s.handleHint(ctx, cmd)
 	case eventbus.CmdJoinQueue:
 		s.handleJoinQueue(ctx, cmd)
 	case eventbus.CmdLeaveQueue:
@@ -643,26 +641,6 @@ func (s *GameService) handleCreatePvPGame(ctx context.Context, cmd eventbus.Comm
 		Type:   "GameStarted",
 		GameID: id,
 	})
-}
-
-func (s *GameService) handleHint(ctx context.Context, cmd eventbus.Command) {
-	rec, err := s.getGameCached(ctx, cmd.GameID)
-	if err != nil {
-		return
-	}
-	gm := game.NewGame()
-	var history []string
-	json.Unmarshal([]byte(rec.History), &history)
-	gm.Load(rec.StartFEN, history, rec.EngineWhite, rec.EngineBlack)
-
-	req := eventbus.EngineRequest{
-		GameID:   cmd.GameID,
-		FEN:      gm.Board.FEN(),
-		History:  game.CopyHistory(gm.HistoryHash()),
-		MoveTime: 1 * time.Second,
-		Context:  "hint",
-	}
-	s.bus.SendEngineRequest(ctx, req)
 }
 
 func (s *GameService) handleMakeMove(ctx context.Context, cmd eventbus.Command) {

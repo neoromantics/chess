@@ -55,23 +55,25 @@ SET rating       = $2,
     draws        = draws  + $7
 WHERE id = $1;
 
--- name: CountUserGames :one
--- Explicit BIGINT cast on $1 so sqlc infers int64 (not sql.NullInt64) for
--- the param — white_user_id is nullable but the user-id we filter by is not.
-SELECT COUNT(*) FROM games
+-- name: CountUserGameStats :one
+-- Single-trip stats aggregation. Replaces the prior three separate COUNT
+-- queries (played / wins / draws). FILTER clauses run inside the same
+-- table scan, so the planner reads the games rows once and emits four
+-- counters; losses are derived on the Go side as played-(wins+draws).
+-- Explicit BIGINT casts so sqlc infers int64 (not sql.NullInt64).
+SELECT
+  COUNT(*) AS played,
+  COUNT(*) FILTER (
+    WHERE (white_user_id = $1::BIGINT AND result = '1-0')
+       OR (black_user_id = $1::BIGINT AND result = '0-1')
+  ) AS wins,
+  COUNT(*) FILTER (
+    WHERE result = '1/2-1/2'
+       OR status IN ('stalemate', 'draw50', 'draw_repetition', 'draw_insufficient')
+  ) AS draws
+FROM games
 WHERE white_user_id = $1::BIGINT
    OR black_user_id = $1::BIGINT;
-
--- name: CountUserWins :one
-SELECT COUNT(*) FROM games
-WHERE (white_user_id = $1::BIGINT AND result = '1-0')
-   OR (black_user_id = $1::BIGINT AND result = '0-1');
-
--- name: CountUserDraws :one
-SELECT COUNT(*) FROM games
-WHERE (white_user_id = $1::BIGINT OR black_user_id = $1::BIGINT)
-  AND (result = '1/2-1/2'
-       OR status IN ('stalemate', 'draw50', 'draw_repetition', 'draw_insufficient'));
 
 -- name: UpsertGame :exec
 -- white_user_id / black_user_id supersede user_id. user_id has been dropped.

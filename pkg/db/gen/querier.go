@@ -16,11 +16,12 @@ type Querier interface {
 	AcceptInvite(ctx context.Context, arg AcceptInviteParams) (int64, error)
 	// Sender-initiated cancel; e.g. they closed the tab or sent by mistake.
 	CancelInvite(ctx context.Context, arg CancelInviteParams) (int64, error)
-	CountUserDraws(ctx context.Context, dollar_1 int64) (int64, error)
-	// Explicit BIGINT cast on $1 so sqlc infers int64 (not sql.NullInt64) for
-	// the param — white_user_id is nullable but the user-id we filter by is not.
-	CountUserGames(ctx context.Context, dollar_1 int64) (int64, error)
-	CountUserWins(ctx context.Context, dollar_1 int64) (int64, error)
+	// Single-trip stats aggregation. Replaces the prior three separate COUNT
+	// queries (played / wins / draws). FILTER clauses run inside the same
+	// table scan, so the planner reads the games rows once and emits four
+	// counters; losses are derived on the Go side as played-(wins+draws).
+	// Explicit BIGINT casts so sqlc infers int64 (not sql.NullInt64).
+	CountUserGameStats(ctx context.Context, dollar_1 int64) (CountUserGameStatsRow, error)
 	// === INVITES ===
 	// Direct user-to-user challenges. PG row is the durable record so a
 	// recipient who's offline sees the invite when they reconnect; Redis

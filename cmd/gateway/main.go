@@ -99,8 +99,8 @@ func main() {
 	// frontend has no business knowing it (and shouldn't be trusted to
 	// send it — that would let any caller list any user's games).
 	gameProxy := httputil.NewSingleHostReverseProxy(gameSvcURL)
-	mux.Handle("/api/state", gw.injectAuthedUser(gameProxy))
-	mux.Handle("/api/games", gw.injectAuthedUser(gameProxy))
+	mux.Handle("GET /api/state", gw.injectAuthedUser(gameProxy))
+	mux.Handle("GET /api/games", gw.injectAuthedUser(gameProxy))
 
 	// All single-game mutations now route through game-service over
 	// sync HTTP. Gateway only authenticates + injects user_id; game-
@@ -141,7 +141,9 @@ func main() {
 	// 5b. Invites (synchronous CRUD, not Command-based). Game-service
 	// owns the durable PG row and the realtime user.evt fan-out.
 	// injectAuthedUser appends ?user_id=N so game-service knows the
-	// caller without re-validating JWTs.
+	// caller without re-validating JWTs. Prefix-mounted because the
+	// subtree mixes GET (list) and POST (send/accept/decline/cancel);
+	// game-service's mux enforces methods on each leaf route.
 	mux.Handle("/api/invites/", gw.injectAuthedUser(gameProxy))
 
 	// 5c. Replay. Gateway owns the embedded replay.html template;

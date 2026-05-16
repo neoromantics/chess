@@ -197,17 +197,14 @@ func (s *PostgresStore) UpdateUserRating(u RatingUpdate) error {
 }
 
 func (s *PostgresStore) GetUserStats(id int64) (*UserStats, error) {
-	ctx := context.Background()
-	played, err := s.q.CountUserGames(ctx, id)
+	row, err := s.q.CountUserGameStats(context.Background(), id)
 	if err != nil {
 		return nil, err
 	}
-	wins, _ := s.q.CountUserWins(ctx, id)
-	draws, _ := s.q.CountUserDraws(ctx, id)
 	stats := &UserStats{
-		GamesPlayed: int(played),
-		Wins:        int(wins),
-		Draws:       int(draws),
+		GamesPlayed: int(row.Played),
+		Wins:        int(row.Wins),
+		Draws:       int(row.Draws),
 	}
 	stats.Losses = stats.GamesPlayed - stats.Wins - stats.Draws
 	if stats.Losses < 0 {
@@ -358,6 +355,60 @@ func (s *PostgresStore) AcceptInvite(inviteID uuid.UUID, toUserID int64, gameID 
 		ToUserID: toUserID,
 		GameID:   sql.NullString{String: gameID, Valid: gameID != ""},
 	})
+}
+
+// AcceptInviteWithGame wraps UpsertGame + AcceptInvite in a single
+// transaction. If AcceptInvite affects zero rows (invite no longer
+// pending), we roll back so no orphan game survives. The prior
+// implementation used a compensating SaveGame + AcceptInvite + best-
+// effort DeleteGame, which left an orphan if the delete itself failed.
+func (s *PostgresStore) AcceptInviteWithGame(inviteID uuid.UUID, toUserID int64, g *GameRecord) (int64, error) {
+	ctx := context.Background()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }() // no-op after Commit
+
+	qtx := s.q.WithTx(tx)
+	if err := qtx.UpsertGame(ctx, gen.UpsertGameParams{
+		ID:             g.ID,
+		WhiteUserID:    int64PtrToNull(g.WhiteUserID),
+		BlackUserID:    int64PtrToNull(g.BlackUserID),
+		Fen:            g.FEN,
+		History:        g.History,
+		HistorySan:     g.HistorySAN,
+		EngineWhite:    g.EngineWhite,
+		EngineBlack:    g.EngineBlack,
+		WhiteThinkTime: int32(g.WhiteThinkTime),
+		BlackThinkTime: int32(g.BlackThinkTime),
+		TimeControl:    g.TimeControl,
+		Rated:          g.Rated,
+		Status:         g.Status,
+		Result:         defaultString(g.Result, "*"),
+		Assessments:    g.Assessments,
+		CreatedAt:      g.CreatedAt,
+		UpdatedAt:      g.UpdatedAt,
+		StartFen:       g.StartFEN,
+	}); err != nil {
+		return 0, err
+	}
+	rows, err := qtx.AcceptInvite(ctx, gen.AcceptInviteParams{
+		ID:       inviteID,
+		ToUserID: toUserID,
+		GameID:   sql.NullString{String: g.ID, Valid: true},
+	})
+	if err != nil {
+		return 0, err
+	}
+	if rows == 0 {
+		// Invite no longer pending — let the deferred Rollback take it.
+		return 0, nil
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return rows, nil
 }
 
 func (s *PostgresStore) DeclineInvite(inviteID uuid.UUID, toUserID int64) (int64, error) {

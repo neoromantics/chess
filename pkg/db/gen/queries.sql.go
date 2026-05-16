@@ -58,46 +58,38 @@ func (q *Queries) CancelInvite(ctx context.Context, arg CancelInviteParams) (int
 	return result.RowsAffected()
 }
 
-const countUserDraws = `-- name: CountUserDraws :one
-SELECT COUNT(*) FROM games
-WHERE (white_user_id = $1::BIGINT OR black_user_id = $1::BIGINT)
-  AND (result = '1/2-1/2'
-       OR status IN ('stalemate', 'draw50', 'draw_repetition', 'draw_insufficient'))
-`
-
-func (q *Queries) CountUserDraws(ctx context.Context, dollar_1 int64) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countUserDraws, dollar_1)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
-const countUserGames = `-- name: CountUserGames :one
-SELECT COUNT(*) FROM games
+const countUserGameStats = `-- name: CountUserGameStats :one
+SELECT
+  COUNT(*) AS played,
+  COUNT(*) FILTER (
+    WHERE (white_user_id = $1::BIGINT AND result = '1-0')
+       OR (black_user_id = $1::BIGINT AND result = '0-1')
+  ) AS wins,
+  COUNT(*) FILTER (
+    WHERE result = '1/2-1/2'
+       OR status IN ('stalemate', 'draw50', 'draw_repetition', 'draw_insufficient')
+  ) AS draws
+FROM games
 WHERE white_user_id = $1::BIGINT
    OR black_user_id = $1::BIGINT
 `
 
-// Explicit BIGINT cast on $1 so sqlc infers int64 (not sql.NullInt64) for
-// the param — white_user_id is nullable but the user-id we filter by is not.
-func (q *Queries) CountUserGames(ctx context.Context, dollar_1 int64) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countUserGames, dollar_1)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
+type CountUserGameStatsRow struct {
+	Played int64 `json:"played"`
+	Wins   int64 `json:"wins"`
+	Draws  int64 `json:"draws"`
 }
 
-const countUserWins = `-- name: CountUserWins :one
-SELECT COUNT(*) FROM games
-WHERE (white_user_id = $1::BIGINT AND result = '1-0')
-   OR (black_user_id = $1::BIGINT AND result = '0-1')
-`
-
-func (q *Queries) CountUserWins(ctx context.Context, dollar_1 int64) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countUserWins, dollar_1)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
+// Single-trip stats aggregation. Replaces the prior three separate COUNT
+// queries (played / wins / draws). FILTER clauses run inside the same
+// table scan, so the planner reads the games rows once and emits four
+// counters; losses are derived on the Go side as played-(wins+draws).
+// Explicit BIGINT casts so sqlc infers int64 (not sql.NullInt64).
+func (q *Queries) CountUserGameStats(ctx context.Context, dollar_1 int64) (CountUserGameStatsRow, error) {
+	row := q.db.QueryRowContext(ctx, countUserGameStats, dollar_1)
+	var i CountUserGameStatsRow
+	err := row.Scan(&i.Played, &i.Wins, &i.Draws)
+	return i, err
 }
 
 const createInvite = `-- name: CreateInvite :one

@@ -53,7 +53,6 @@ const (
 	CmdOfferDraw     = "OfferDraw"
 	CmdAcceptDraw    = "AcceptDraw"
 	CmdDeclineDraw   = "DeclineDraw"
-	CmdHint          = "Hint"
 	CmdNewGame       = "NewGame"
 	CmdCreatePvPGame = "CreatePvPGame"
 

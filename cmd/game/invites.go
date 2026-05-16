@@ -184,24 +184,31 @@ func (s *GameService) handleAcceptInvite(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Create the game FIRST. If the AcceptInvite UPDATE then fails
-	// (race with expiry/decline), we delete the orphan game record.
-	// The opposite ordering would risk marking accepted with no game.
-	gameID, err := s.createPvPGameFromInvite(inv)
+	// Atomic accept: UpsertGame + AcceptInvite run in one PG tx.
+	// If the invite is no longer pending (race with expiry/decline),
+	// the tx rolls back and no orphan game row is left behind. The
+	// prior compensating-action approach (SaveGame, AcceptInvite,
+	// best-effort DeleteGame on failure) could leak the row if the
+	// delete itself failed.
+	rec := buildPvPGameRecord(inv)
+	rows, err := s.db.AcceptInviteWithGame(inv.ID, to, rec)
 	if err != nil {
-		slog.Error("create pvp game failed", "error", err)
-		http.Error(w, "failed to create game", http.StatusInternalServerError)
+		slog.Error("accept invite failed", "id", id, "error", err)
+		http.Error(w, "failed to accept", http.StatusInternalServerError)
 		return
 	}
-	rows, err := s.db.AcceptInvite(inv.ID, to, gameID)
-	if err != nil || rows == 0 {
-		_, _ = s.db.DeleteGame(gameID)
-		s.invalidateGameCache(r.Context(), gameID)
-		if err != nil {
-			slog.Error("accept invite failed", "id", id, "error", err)
-		}
+	if rows == 0 {
 		http.Error(w, "invite is no longer pending", http.StatusConflict)
 		return
+	}
+	gameID := rec.ID
+	// Now that PG has the row, warm the Redis cache + clock so the
+	// first /api/state from either client lands hot.
+	if err := s.writeCache(r.Context(), rec); err != nil {
+		slog.Warn("game cache write failed", "game_id", gameID, "error", err)
+	}
+	if err := initClock(r.Context(), s.bus.Rdb(), rec); err != nil {
+		slog.Error("clock init failed", "game_id", gameID, "error", err)
 	}
 
 	updated, err := s.db.GetInvite(inv.ID)
@@ -220,15 +227,18 @@ func (s *GameService) handleAcceptInvite(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, wire)
 }
 
-// createPvPGameFromInvite mirrors handleCreatePvPGame's body but
-// runs synchronously inside the accept handler so we can return the
-// game_id in the HTTP response (the SPA needs it to navigate).
-func (s *GameService) createPvPGameFromInvite(inv *db.Invite) (string, error) {
+// buildPvPGameRecord assembles the in-memory game row for a freshly-
+// accepted invite. No I/O — the actual persistence happens inside the
+// AcceptInviteWithGame transaction, which keeps the invite-flip and
+// row-create atomic. Clock + Redis cache warming run only after the tx
+// commits, so a rolled-back accept leaves no Redis residue either.
+func buildPvPGameRecord(inv *db.Invite) *db.GameRecord {
 	id := uuid.New().String()
 	gm := game.NewGame()
 	white := inv.FromUserID
 	black := inv.ToUserID
-	rec := &db.GameRecord{
+	now := time.Now()
+	return &db.GameRecord{
 		ID:             id,
 		WhiteUserID:    &white,
 		BlackUserID:    &black,
@@ -244,18 +254,9 @@ func (s *GameService) createPvPGameFromInvite(inv *db.Invite) (string, error) {
 		Status:         "ongoing",
 		Result:         "*",
 		Assessments:    "[]",
-		CreatedAt:      time.Now(),
-		UpdatedAt:      time.Now(),
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
-	// Use the cached save so a brand-new PvP game is hot in Redis
-	// before either client's first /api/state poll lands.
-	if err := s.saveGameCached(context.Background(), rec); err != nil {
-		return id, err
-	}
-	if err := initClock(context.Background(), s.bus.Rdb(), rec); err != nil {
-		slog.Error("clock init failed", "game_id", id, "error", err)
-	}
-	return id, nil
 }
 
 // ===== DECLINE / CANCEL =====
