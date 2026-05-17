@@ -29,7 +29,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/neoromantics/chess/pkg/auth"
 )
@@ -96,8 +95,12 @@ func (gw *Gateway) upgradeAnonGame(ctx context.Context, anonID string, userID in
 	}
 	req.Header.Set("X-Anon-ID", anonID)
 	req.Header.Set("X-User-ID", strconv.FormatInt(userID, 10))
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Do(req)
+	// Use the shared bounded upstream client (30s timeout, response-
+	// header deadline, dial timeout) instead of a one-off 5s client.
+	// The 5s here was both too short (slow first-write of a freshly-
+	// created game row could legitimately blow it) and too loose
+	// (no DialContext bound). Sharing the pool helps too.
+	resp, err := gw.upstream.Do(req)
 	if err != nil {
 		return "", err
 	}

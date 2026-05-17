@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -31,6 +32,12 @@ type Gateway struct {
 	bus        *eventbus.Client
 	db         db.Store
 	hub        *Hub
+	// upstream is the bounded HTTP client used for every explicit
+	// gateway→game-service call (can-watch preflight, replay frame
+	// fetch, anon-game upgrade). Shares its Transport with the reverse
+	// proxy so connection pooling is unified. See the construction in
+	// main() for the timeout rationale.
+	upstream *http.Client
 }
 
 func main() {
@@ -68,11 +75,46 @@ func main() {
 	}
 	defer store.Close()
 
+	// Bounded outbound HTTP transport. Shared by the reverse proxy and
+	// every explicit gateway→game-service call. Before this, an upstream
+	// hang let gateway goroutines pile up forever: http.DefaultTransport
+	// has no DialContext deadline and no ResponseHeaderTimeout, so a
+	// dead game-service pod would silently sink WS-upgrade preflights,
+	// replay frame fetches, and proxied API calls without timing out.
+	//
+	// Why these numbers:
+	//   - DialContext.Timeout=3s: in-cluster Service DNS resolution +
+	//     TCP handshake is sub-100ms on a healthy network; 3s is
+	//     generous head-room for transient blips.
+	//   - ResponseHeaderTimeout=30s: caps the slowest legitimate path.
+	//     /analyze dispatches engine jobs async and returns "ok" in
+	//     <200ms; every other endpoint is sub-second. 30s is the wall.
+	//   - Client.Timeout=30s: belt-and-suspenders for the explicit
+	//     gw.upstream.Do() callers. Reverse proxy ignores this (uses
+	//     the Transport directly), so /analyze's async-pattern dispatch
+	//     still works.
+	upstreamTransport := &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout:   3 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   50,
+		IdleConnTimeout:       90 * time.Second,
+		ResponseHeaderTimeout: 30 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+	upstreamClient := &http.Client{
+		Transport: upstreamTransport,
+		Timeout:   30 * time.Second,
+	}
+
 	gw := &Gateway{
 		gameSvcURL: gameSvcURL,
 		bus:        bus,
 		db:         store,
 		hub:        hub,
+		upstream:   upstreamClient,
 	}
 
 	// rootCtx cancellation propagates to the hub and its forward
@@ -179,6 +221,21 @@ func main() {
 	// frontend has no business knowing it (and shouldn't be trusted to
 	// send it — that would let any caller list any user's games).
 	gameProxy := httputil.NewSingleHostReverseProxy(gameSvcURL)
+	// Reuse the same bounded Transport the explicit-call client uses
+	// so the connection pool is shared. ErrorHandler turns upstream
+	// timeouts into a clean 504 instead of the default behaviour
+	// (which leaks the raw "context deadline exceeded" string).
+	gameProxy.Transport = upstreamTransport
+	gameProxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+		// Caller went away — no point answering. http.ErrAbortHandler
+		// would also fit here, but a quiet return is enough.
+		if errors.Is(err, context.Canceled) {
+			return
+		}
+		slog.Warn("gateway proxy: upstream error",
+			"method", r.Method, "path", r.URL.Path, "error", err)
+		http.Error(w, "upstream unavailable", http.StatusBadGateway)
+	}
 	mux.Handle("GET /api/games", gw.injectAuthedUser(gameProxy))
 
 	// Per-game endpoints are RESTfully nested under /api/games/{id}/<verb>.
@@ -478,7 +535,7 @@ func (gw *Gateway) userMayWatchGame(ctx context.Context, userID int64, gameID st
 	if userID > 0 {
 		req.Header.Set("X-User-ID", strconv.FormatInt(userID, 10))
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := gw.upstream.Do(req)
 	if err != nil {
 		slog.Warn("ws authz preflight failed", "error", err)
 		return false
@@ -524,7 +581,7 @@ func (gw *Gateway) handleReplay(w http.ResponseWriter, r *http.Request) {
 	if user, ok := auth.GetUser(r.Context()); ok {
 		req.Header.Set("X-User-ID", strconv.FormatInt(user.UserID, 10))
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := gw.upstream.Do(req)
 	if err != nil {
 		slog.Warn("replay: fetch frames failed", "error", err)
 		http.Error(w, "replay unavailable", http.StatusBadGateway)
