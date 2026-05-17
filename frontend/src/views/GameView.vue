@@ -8,6 +8,15 @@
   </div>
   <div v-else-if="!state" class="loading">Loading game...</div>
   <div v-else id="app-container">
+    <!-- Visible cue when the browser is gating audio behind a user
+         gesture. Triggered by a queued sound from playMoveSound — i.e.
+         the engine just moved but we have no permission to play it.
+         Clicking the banner runs primeAudio which resumes the context
+         (because the click IS a gesture) and flushes the parked sound. -->
+    <div v-if="audioBlocked" class="audio-blocked-banner" @click="primeAudio">
+      Tap to enable sound — your browser is muting moves until you
+      interact with the page.
+    </div>
     <ChessBoard
       :state="state"
       :flipped="flipped"
@@ -241,10 +250,14 @@ let audioCtx: AudioContext | null = null;
 // When a move sound is requested while the AudioContext is still
 // suspended (common right after a page refresh — the engine reply lands
 // before the user has clicked anything), we stash the latest kind here
-// and replay it on the first successful resume(). Without this, the
-// move sound for the first engine reply after a refresh is silently
-// dropped.
-let pendingSound: string | null = null;
+// and replay it on the first successful resume(). Reactive so the
+// "Tap to enable sound" banner shows up the moment a parked sound
+// proves audio is blocked, and disappears on the next successful
+// flush. Without the visible cue, a user who just sits and watches
+// (engine-vs-engine, or a refresh during the engine's turn) gets
+// silent moves and assumes sound is broken — even though pendingSound
+// is sitting there waiting for a click.
+const pendingSound = ref<string | null>(null);
 
 const ensureAudio = () => {
   if (!audioCtx) {
@@ -255,9 +268,9 @@ const ensureAudio = () => {
 };
 
 const flushPendingSound = () => {
-  if (!pendingSound) return;
-  const kind = pendingSound;
-  pendingSound = null;
+  if (!pendingSound.value) return;
+  const kind = pendingSound.value;
+  pendingSound.value = null;
   playMoveSound(kind);
 };
 
@@ -276,6 +289,10 @@ const primeAudio = () => {
     ctx.resume().then(flushPendingSound).catch(() => {});
   }
 };
+
+// Surfaces "Tap to enable sound" UI: true iff a sound was queued and
+// the browser is still gating us behind a gesture.
+const audioBlocked = computed(() => pendingSound.value !== null && soundEnabled.value);
 
 const playClick = (freq: number, dur: number, gain: number) => {
   if (!soundEnabled.value) return;
@@ -306,7 +323,7 @@ const playMoveSound = (kind: string) => {
   // Last-write-wins is intentional: only the most recent move is worth
   // catching up on once the speaker comes alive.
   if (ctx && ctx.state === 'suspended') {
-    pendingSound = kind;
+    pendingSound.value = kind;
     return;
   }
   if (kind === 'capture') playClick(220, 0.12, 0.15);
@@ -327,6 +344,31 @@ const refetchState = () => {
     stateFetchInFlight = false;
     if (stateFetchPending) { stateFetchPending = false; refetchState(); }
   });
+};
+
+// Periodic poll while the engine is on the clock. The WS is the
+// primary delivery channel for engine moves, but in two failure modes
+// it's insufficient on its own:
+//   - WS stays open while the engine search dies silently. The lazy
+//     retrigger in handleState only fires when /api/state is hit, so
+//     without a poll the SPA would sit on `thinking=true` forever.
+//   - A WS event lands during a transient reconnect we don't observe.
+// Polling every 4s while engine_to_move OR thinking is true bounds
+// the worst-case stuck window to ~4s; clears as soon as a human-to-
+// move snapshot lands. Pulses through the same coalescer above so we
+// don't stack concurrent fetches.
+let enginePollHandle: number | undefined;
+const enginePollIntervalMs = 4000;
+const ensureEnginePoll = () => {
+  const s = state.value;
+  const active = !!s && (s.thinking || s.engine_to_move) && s.status === 'ongoing';
+  if (active) {
+    if (enginePollHandle) return;
+    enginePollHandle = window.setInterval(refetchState, enginePollIntervalMs);
+  } else if (enginePollHandle) {
+    clearInterval(enginePollHandle);
+    enginePollHandle = undefined;
+  }
 };
 
 // Computed
@@ -453,6 +495,8 @@ const updateState = (s: StateJSON) => {
     incomingTakebackFrom.value = null;
     outgoingTakebackSent.value = false;
   }
+
+  ensureEnginePoll();
 };
 
 const connectWS = () => {
@@ -1032,6 +1076,10 @@ watch(() => props.id, async (newId, oldId) => {
     ws.close();
     ws = null;
   }
+  if (enginePollHandle) {
+    clearInterval(enginePollHandle);
+    enginePollHandle = undefined;
+  }
   try {
     const s = await api.getState(newId);
     lastSoundedHistoryLen = s.history ? s.history.length : 0;
@@ -1086,6 +1134,10 @@ onUnmounted(() => {
     unsubscribeHint();
     unsubscribeHint = null;
   }
+  if (enginePollHandle) {
+    clearInterval(enginePollHandle);
+    enginePollHandle = undefined;
+  }
   window.removeEventListener('keydown', onKeyDown);
   window.removeEventListener('pointerdown', primeAudio);
   window.removeEventListener('touchstart', primeAudio);
@@ -1093,6 +1145,29 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/* Audio-blocked banner. Spans the full app width above the board so
+   it's impossible to miss. Click anywhere on it to dismiss + flush
+   the queued move sound. */
+.audio-blocked-banner {
+  position: fixed;
+  top: 64px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  background: #3a3220;
+  color: #e4b15a;
+  border: 1px solid #56492a;
+  border-radius: 6px;
+  padding: 10px 18px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.4);
+  max-width: 90vw;
+  text-align: center;
+}
+.audio-blocked-banner:hover { background: #463b27; }
+
 #app-container { display: flex; gap: 32px; align-items: flex-start; justify-content: center; padding: 32px 20px; min-height: calc(100vh - 64px); width: 100%; }
 
 /* Below 1000px the SidePanel stacks under the board instead of
