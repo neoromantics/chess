@@ -21,7 +21,6 @@ import (
 	"net"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -116,11 +115,12 @@ var (
 func Handler() http.Handler { return promhttp.Handler() }
 
 // HTTPMiddleware records request count + latency per route. The route
-// label is derived from the matched http.Request.Pattern (Go 1.22+
-// enhanced ServeMux populates this), falling back to a templatized
-// version of the URL path that strips dynamic-looking segments so
-// /api/invites/<uuid>/accept becomes /api/invites/:id/accept rather
-// than minting a new metric series per UUID.
+// label is the matched http.Request.Pattern (Go 1.22+ enhanced ServeMux
+// populates this for both "METHOD /path/{id}" and prefix patterns like
+// "/api/invites/"). Requests that fall through without a Pattern are
+// bucketed as "<unknown>" — guarantees bounded cardinality, and a spike
+// in that label on the dashboard is the loud signal that a new handler
+// was registered without a Method+Pattern declaration.
 func HTTPMiddleware(service string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -129,7 +129,7 @@ func HTTPMiddleware(service string, next http.Handler) http.Handler {
 
 		route := r.Pattern
 		if route == "" {
-			route = templatize(r.URL.Path)
+			route = "<unknown>"
 		}
 		dur := time.Since(start).Seconds()
 		HTTPRequestsTotal.WithLabelValues(service, r.Method, route, strconv.Itoa(rec.status)).Inc()
@@ -177,29 +177,4 @@ func (r *statusRecorder) Flush() {
 	if f, ok := r.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
-}
-
-// templatize replaces obvious dynamic segments with :id. Best-effort
-// fallback for handlers registered without a Go-1.22 Pattern.
-func templatize(p string) string {
-	parts := strings.Split(p, "/")
-	for i, seg := range parts {
-		if isLikelyDynamic(seg) {
-			parts[i] = ":id"
-		}
-	}
-	return strings.Join(parts, "/")
-}
-
-// isLikelyDynamic guesses if a path segment is a UUID / int / etc. so
-// we collapse it to :id in the metric label. Conservative: only matches
-// segments that are obviously not route literals.
-func isLikelyDynamic(seg string) bool {
-	if len(seg) == 36 && strings.Count(seg, "-") == 4 {
-		return true // UUID
-	}
-	if len(seg) > 0 && seg[0] >= '0' && seg[0] <= '9' {
-		return true // int-ish
-	}
-	return false
 }
