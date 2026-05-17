@@ -41,23 +41,24 @@ Three pods scale horizontally; engine-worker has its own autoscaling profile bec
 - **Auth + profile.** Sign up / log in / log out with JWT cookies; profile + stats + password change; live Glicko-2 rating chip that updates over WS when a rated game finalizes.
 - **Anonymous play.** Land on `/`, pick "Play vs Engine" without signing in — you get a 10-minute sliding-TTL temp game. If you sign up mid-game, the gateway carries the temp game over into a durable row owned by your new account.
 - **Engine play.** Pick per-side think time, change it mid-game, swap human ↔ engine on either color, even let two engines play each other.
-- **Human vs human.** Invite by username, or **Find Game** matchmaking across ten time controls (bullet → classical). Expanding rating-window pairing (±50 grows to ±400). Board auto-flips for the black player.
+- **Human vs human.** Invite by username, or **Find Game** matchmaking on two time controls (3+0 Blitz, 10+0 Rapid — trimmed from ten on 2026-05-16 because the fan-out diluted the queue at our playerbase). Expanding rating-window pairing (±50 grows to ±400). Board auto-flips for the black player.
 - **Server-authoritative clocks.** `clock:{id}` Redis hash + 500ms flag-fall sweeper; SPA extrapolates locally between snapshots for smooth ticks.
 - **Live everything.** Move + last-move highlight + thinking spinner + clock all push over WebSocket; no refresh during a game.
 - **Draw / takeback.** Both round-trip via short-lived SETNX-protected offers; takeback is PvP-casual only, draw is PvP-only.
 - **Resign + replay.** Resign at any time; finished games replay frame-by-frame.
 - **Board editor + PGN.** Engine games can be set up from any FEN (`/api/set_position`), downloaded as PGN, or replaced by pasting a PGN. PGN encoder/decoder is round-trip tested.
-- **Move assessment.** Click "Analyze game" — backend dispatches a per-ply engine search; per-ply ✓ / ★ / ? markers stream into the move list over WS.
+- **Move assessment.** Click "Analyze game" — backend dispatches a per-ply engine search; per-ply ✓ / ★ / ? markers stream into the move list over WS and persist on the game row so a reopen shows the verdicts without re-running the engine.
+- **Spectator mode.** Owner flips `is_public` on a game; anyone can watch live at `/watch/:id` with read-only WS subscription.
+- **Observability.** Prometheus + Grafana at `/grafana/`; business metrics (moves/sec, engine search p95, queue depth, matchmaker wait p95, games finished/min, Glicko-2 update p95) wired alongside HTTP/WS metrics.
 - **Touch-move rule.** Client-side session toggle in the SidePanel; enforces FIDE 4.3 when ON.
 - **Glicko-2 ratings.** Numerically verified against the paper's worked example (`pkg/rating/glicko2_test.go`).
 
 ## What's missing (see [ROADMAP.md](ROADMAP.md) for the full list)
 
-- **Spectator mode** — read-only WS subscription for public games; needs an `is_public` flag.
-- **Centipawn-loss classification** for move assessment (Phase 2). Today's verdicts are coarse: best / alt / only-legal.
 - **PG read replicas** for `ListGames` / search / replay queries.
-- **KEDA on `engine:requests` stream depth** as the engine-worker HPA signal.
+- **Frontend hosted off the gateway** (CDN-served `dist/`) so SPA tweaks don't rebuild the gateway image.
 - **Redis HA via Sentinel** — deferred until the cluster has a second node.
+- **Postgres HA via Patroni** — same reasoning: single VM, single failure domain.
 
 ## Wire-protocol contract
 
@@ -67,7 +68,8 @@ Every HTTP endpoint, WebSocket event type, and JSON payload shape is enumerated 
 
 - **Per-game lock.** Every read-modify-write on the `games` table goes through `acquireGameLock` in `cmd/game/lock.go` (Redis SETNX + token + Lua release). Concurrent moves on the same game serialize across replicas.
 - **Postgres is durable truth; Redis is the hot cache.** `cmd/game/cache.go` wraps `game:state:{id}` as a write-through hash. Reads hit Redis, fall through to PG on miss.
-- **Gateway injects `?user_id=N` into proxied requests.** Downstream services trust the query param; nothing else re-validates the JWT.
+- **Gateway injects `X-User-ID` (and `X-Anon-ID` for temp games) on proxied requests.** Downstream services trust the gateway-set header; nothing else re-validates the JWT. Only `gateway` gets `JWT_SECRET`.
+- **Auth surface is rate-limited and body-capped.** Per-IP token-bucket on signup/login/profile/check-username + `http.MaxBytesReader` per route + a shared bounded upstream `http.Transport` so a hung game-service can't OOM the gateway. WS upgrade enforces same-origin + `ALLOWED_WS_ORIGINS` allow-list.
 - **Engine results are durable.** `engine:results` is a Stream with a consumer group, not Pub/Sub. A game-service restart no longer loses an in-flight move.
 - **No in-memory game state.** Every request hydrates from PG (via the cache). Multi-replica safety has no shared mutable state.
 - **`pkg/core` is zero-dependency Go.** The chess search is the core IP; don't add third-party deps.

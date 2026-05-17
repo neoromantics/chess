@@ -48,6 +48,95 @@ The session that produced this roadmap shipped ~40 commits restructuring the pla
 
 Nothing right now — the platform is in a stable state. Pick the next item below.
 
+Recent ops/cleanup (2026-05-17):
+- ✅ **In-theme confirm modal** (`1f8ba41`). Singleton Pinia store +
+  `ConfirmModal` mounted in `App.vue`; every `window.confirm` call
+  site now uses `useConfirmStore().ask({..., danger: true})`. Esc
+  cancels, Enter confirms, danger variant renders red. Same change
+  swapped 🔔 → SVG bell, dropped the ♞ from the brand, and added
+  the notification bell to the replay nav.
+- ✅ **Change-password + username min 5** (`be094f4`).
+  `POST /api/user/password` requires current password + new password
+  ≥ 8 chars and not in a small common-password set; live hint list
+  in `/profile` (length, common, contains-username,
+  differs-from-current). Signup username minimum bumped 3 → 5;
+  `handleSignup` + `handleCheckUsername` updated in lock-step with
+  the SPA's `Signup.vue`.
+- ✅ **Auth-surface hardening** (`40407ba`). Per-IP token-bucket
+  rate limiters via `golang.org/x/time/rate`: `authLim` (12/min,
+  burst 4 — login/signup/password), `signupLim` (6/hr, burst 2),
+  `probeLim` (10 burst @ 1 per 2s — check-username). Per-route
+  body caps via `http.MaxBytesReader` (`authBodyMax=4KB`,
+  `profileBodyMax=16KB`). `clientIP` honours `X-Real-IP` →
+  leftmost `X-Forwarded-For` → `RemoteAddr`. WS upgrade enforces
+  same-origin + env-driven `ALLOWED_WS_ORIGINS` allow-list
+  (CSWSH defense). Janitor goroutine evicts idle per-IP limiter
+  buckets every 5 min so the map can't grow unbounded.
+- ✅ **First game-service test suite** (`de8dd99`).
+  `cmd/game/testhelpers_test.go` ships a `panicStore` (35
+  panicking `db.Store` methods that loudly surface unintended DB
+  hits during a test) + `gameStore` (in-memory map with JSON
+  deep-copied saves) + `newTestService(t, store)` returning
+  `(*GameService, *miniredis.Miniredis)` using miniredis for the
+  Redis side. `lock_test.go` covers acquire/contend/release on
+  the per-game Redis lock; `handle_move_test.go` covers six
+  paths through `handleHTTPMove`. Tests surfaced a real bug:
+  `handleHTTPMove` was only checking `gm.Status()` (position-derived)
+  not `rec.Status` (player-action terminations like resign/timeout),
+  so a resigned player could keep moving. Fixed in the same commit
+  by mirroring the `if rec.Status != "" && rec.Status != "ongoing"`
+  guard from draws.go / takebacks.go / pgn.go / bot_actions.go.
+- ✅ **Bounded shared HTTP transport for upstream calls** (`2459d26`).
+  Gateway now owns a single `*http.Transport`
+  (`ResponseHeaderTimeout=30s`, dial timeout 3s,
+  `MaxIdleConns=100`, `MaxIdleConnsPerHost=50`) reused by both
+  the reverse proxy and `gw.upstream` (the explicit
+  `*http.Client` for upgrade calls). `ProxyErrorHandler` returns
+  504 on upstream error (silent on `context.Canceled`).
+  Previously each upgrade call minted a per-request 5s
+  `http.Client` and the reverse proxy used the package default,
+  so a hung game-service could backlog connections without bound.
+- ✅ **`cmd/game/main.go` 1131 → 189 lines** (`c30faa8`). Split
+  into four focused files: `main.go` (boot only — flag parse, DB
+  open, Redis open, leader election, goroutine launches, HTTP
+  serve), `state.go` (read surface — `handleState`,
+  `handleCanWatch`, `handleSetVisibility`, snapshot/replay
+  helpers, `writeJSON`), `commands.go` (the `game:commands`
+  stream consumer + `handleNewGame` / `handleCreatePvPGame` /
+  `handleMakeMove` / `emitGameFinished`), `engine_results.go`
+  (the `engine:results` consumer + `processEngineResult` +
+  `publishHint`). Pure mechanical extraction via `sed`; no
+  behaviour change. Backed by the new test suite above.
+- ✅ **Business metrics + Grafana panels** (`cf01776`). Six new
+  vectors in `pkg/metrics`: `chess_moves_applied_total{source}`,
+  `chess_engine_search_duration_seconds{context}`,
+  `chess_matchmaker_queue_depth{time_control}`,
+  `chess_matchmaker_wait_seconds{time_control,kind}`,
+  `chess_games_finished_total{result,rated}`,
+  `chess_rating_update_duration_seconds`. Wired at the right
+  funnels — moves at `handleHTTPMove` + `handleMakeMove`, search
+  duration around `ProcessRequest` in `cmd/engine-worker`,
+  queue depth in `matchmaker.holdAndPair` (ZCARD per pair-tick),
+  wait time in `tryPair` + `tryEngineFallback`, finished counter
+  in `rating.processRatingEvent` (one funnel that sees every
+  `GameFinished` exactly once across replicas, payload-parsed for
+  `result` + `rated` so no extra DB hit), and update duration as
+  a deferred Observe in `applyRatingUpdate`. Six matching panels
+  added to `chess-overview.json` in `infra/observability.yaml`
+  (ids 7-12).
+- ✅ **Dead-code + metric-cardinality cleanup** (`2fdd68c`).
+  Dropped the `session_id` cookie machinery from `pkg/auth/auth.go`
+  (nothing read `SessionContextKey` / `GetSessionID`; every guest
+  hit was minting a 365-day HttpOnly cookie no handler consumed —
+  the real anonymous-identity cookie is `chess-anon` on the
+  gateway side). Replaced the leaky `templatize` /
+  `isLikelyDynamic` fallback in `pkg/metrics/metrics.go` with a
+  fixed `"<unknown>"` bucket — all routes today register with Go
+  1.22 `Method /path/{id}` form (or prefix patterns like
+  `/api/invites/`), both of which populate `r.Pattern`; if a
+  future handler skips the pattern declaration the `<unknown>`
+  series will spike on the Grafana panel and surface itself.
+
 Recent ops/cleanup (2026-05-16):
 - ✅ **Holistic design-audit pass** (`6c464a5` … `2f6ebee`).
   - Dropped dead `users.elo` + `games.assessments` columns and the
