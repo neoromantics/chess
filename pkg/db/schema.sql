@@ -91,6 +91,13 @@ ALTER TABLE games ADD COLUMN IF NOT EXISTS is_public BOOLEAN NOT NULL DEFAULT FA
 -- it back. ADD ... IF NOT EXISTS so it's safe on clusters that still
 -- have it AND on clusters that don't.
 ALTER TABLE games ADD COLUMN IF NOT EXISTS assessments TEXT NOT NULL DEFAULT '[]';
+-- "imported" marks rows whose state was rewritten via /api/load_pgn.
+-- The PGN can encode any result for any historical game; if those
+-- rows counted toward wins/losses, anyone could load a Magnus PGN
+-- into their own engine row and pretend to have beaten him. Excluded
+-- from CountUserGameStats so stats only reflect rows the user actually
+-- played here. Reset to FALSE whenever /api/new wipes the row.
+ALTER TABLE games ADD COLUMN IF NOT EXISTS imported BOOLEAN NOT NULL DEFAULT FALSE;
 -- Drop the pre-SPA session_id column on clusters that still have it.
 -- The column was never read or written by the current code path; this
 -- is the rare "deliberate, idempotent drop" CLAUDE.md permits.

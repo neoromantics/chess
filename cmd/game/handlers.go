@@ -415,6 +415,10 @@ func (s *GameService) handleHTTPNew(w http.ResponseWriter, r *http.Request) {
 		if err := initClock(r.Context(), s.bus.Rdb(), rec); err != nil {
 			slog.Error("clock reinit failed", "game_id", rec.ID, "error", err)
 		}
+		// Reset the import flag — a fresh game played on this row id
+		// should count toward stats again, regardless of whether the
+		// previous use of the row was a load_pgn replay.
+		rec.Imported = false
 		return nil
 	})
 }

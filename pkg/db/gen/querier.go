@@ -32,6 +32,13 @@ type Querier interface {
 	// table scan, so the planner reads the games rows once and emits four
 	// counters; losses are derived on the Go side as played-(wins+draws).
 	// Explicit BIGINT casts so sqlc infers int64 (not sql.NullInt64).
+	//
+	// Excludes rows where imported=TRUE. Those rows have been rewritten via
+	// /api/load_pgn and carry whatever result the PGN encoded (often a famous
+	// master game); counting them would let any user inflate their stats by
+	// loading a winning PGN into one of their engine rows. The imported flag
+	// is reset to FALSE whenever /api/new wipes the row, so a fresh game
+	// played on the same row id starts counting again.
 	CountUserGameStats(ctx context.Context, dollar_1 int64) (CountUserGameStatsRow, error)
 	// Two counts in one trip via FILTER, so the admin overview can show
 	// "real signups" and "seeded bots" as separate numbers. The original

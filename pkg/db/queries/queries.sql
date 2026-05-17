@@ -86,6 +86,13 @@ WHERE id = $1;
 -- table scan, so the planner reads the games rows once and emits four
 -- counters; losses are derived on the Go side as played-(wins+draws).
 -- Explicit BIGINT casts so sqlc infers int64 (not sql.NullInt64).
+--
+-- Excludes rows where imported=TRUE. Those rows have been rewritten via
+-- /api/load_pgn and carry whatever result the PGN encoded (often a famous
+-- master game); counting them would let any user inflate their stats by
+-- loading a winning PGN into one of their engine rows. The imported flag
+-- is reset to FALSE whenever /api/new wipes the row, so a fresh game
+-- played on the same row id starts counting again.
 SELECT
   COUNT(*) AS played,
   COUNT(*) FILTER (
@@ -97,8 +104,8 @@ SELECT
        OR status IN ('stalemate', 'draw50', 'draw_repetition', 'draw_insufficient')
   ) AS draws
 FROM games
-WHERE white_user_id = $1::BIGINT
-   OR black_user_id = $1::BIGINT;
+WHERE (white_user_id = $1::BIGINT OR black_user_id = $1::BIGINT)
+  AND imported = FALSE;
 
 -- name: UpsertGame :exec
 INSERT INTO games (
@@ -106,9 +113,9 @@ INSERT INTO games (
     fen, history, history_san,
     engine_white, engine_black, white_think_time, black_think_time,
     time_control, rated, status, result,
-    created_at, updated_at, start_fen, is_public, assessments
+    created_at, updated_at, start_fen, is_public, assessments, imported
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
 ON CONFLICT (id) DO UPDATE SET
     white_user_id    = EXCLUDED.white_user_id,
     black_user_id    = EXCLUDED.black_user_id,
@@ -126,6 +133,7 @@ ON CONFLICT (id) DO UPDATE SET
     start_fen        = EXCLUDED.start_fen,
     is_public        = EXCLUDED.is_public,
     assessments      = EXCLUDED.assessments,
+    imported         = EXCLUDED.imported,
     updated_at       = EXCLUDED.updated_at;
 
 -- name: ListGames :many
@@ -138,7 +146,7 @@ SELECT id, white_user_id, black_user_id,
        fen, history, history_san,
        engine_white, engine_black, white_think_time, black_think_time,
        time_control, rated, status, result,
-       created_at, updated_at, start_fen, is_public, assessments
+       created_at, updated_at, start_fen, is_public, assessments, imported
 FROM games
 WHERE (white_user_id = $1::BIGINT OR black_user_id = $1::BIGINT)
   AND updated_at < COALESCE($2::TIMESTAMPTZ, NOW())
@@ -150,7 +158,7 @@ SELECT id, white_user_id, black_user_id,
        fen, history, history_san,
        engine_white, engine_black, white_think_time, black_think_time,
        time_control, rated, status, result,
-       created_at, updated_at, start_fen, is_public, assessments
+       created_at, updated_at, start_fen, is_public, assessments, imported
 FROM games
 WHERE id = $1;
 

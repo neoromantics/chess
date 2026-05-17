@@ -143,6 +143,13 @@ func (s *GameService) handleHTTPLoadPGN(w http.ResponseWriter, r *http.Request) 
 		rec.Result = "*"
 	}
 	rec.UpdatedAt = time.Now()
+	// Mark the row imported so its result doesn't count toward the
+	// loader's wins/losses. The PGN can encode any historical result
+	// for any historical game; without this gate, anyone could load
+	// a Magnus PGN and inflate their stats. CountUserGameStats filters
+	// on imported=FALSE; /api/new resets the flag when the row is
+	// wiped, so a fresh game played on the same row id counts again.
+	rec.Imported = true
 	if err := s.saveGameCached(r.Context(), rec); err != nil {
 		slog.Error("load_pgn save failed", "game_id", rec.ID, "error", err)
 		http.Error(w, "save failed", http.StatusInternalServerError)

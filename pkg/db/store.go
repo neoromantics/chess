@@ -163,6 +163,10 @@ type GameRecord struct {
 	// analyzed (or history changed since the last analysis). See
 	// cmd/game/analysis.go.
 	Assessments string `json:"assessments"`
+	// Imported is TRUE for rows whose state was rewritten via /api/load_pgn.
+	// CountUserGameStats skips these so a user can't load a famous PGN
+	// and pretend they played it. Reset to FALSE on /api/new.
+	Imported bool `json:"imported"`
 }
 
 // Invite represents a direct user-to-user challenge.

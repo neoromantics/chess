@@ -240,6 +240,12 @@ type stateJSON struct {
 	// read-only mode when the caller isn't a participant.
 	IsPublic bool `json:"is_public"`
 
+	// Imported is TRUE when the row's state was rewritten via
+	// /api/load_pgn. Surfaced to the SPA so past-games lists can
+	// render an "Imported — not counted" badge. Backend's
+	// CountUserGameStats already excludes these.
+	Imported bool `json:"imported,omitempty"`
+
 	// Persisted per-ply move-assessment verdicts. Only populated when
 	// the count matches the move-list length — a mismatched count
 	// means the persisted assessments are stale (e.g. the user took a
@@ -491,6 +497,7 @@ func (s *GameService) snapshotFromRecord(ctx context.Context, rec *db.GameRecord
 		TimeControl:    rec.TimeControl,
 		Rated:          rec.Rated,
 		IsPublic:       rec.IsPublic,
+		Imported:       rec.Imported,
 		Assessments:    assessmentsOut,
 	}
 
