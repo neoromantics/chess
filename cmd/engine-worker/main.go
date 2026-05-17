@@ -148,7 +148,12 @@ readLoop:
 				activeSearches.Store(r.GameID, stop)
 				defer activeSearches.Delete(r.GameID)
 
+				// Wall-clock latency per search, labeled by context so
+				// /analyze (assess) doesn't pollute the per-move p95.
+				t0 := time.Now()
 				resp := ProcessRequest(r, stop)
+				metrics.EngineSearchDuration.WithLabelValues(r.Context).Observe(time.Since(t0).Seconds())
+
 				if err := bus.SendEngineResponse(context.Background(), resp); err != nil {
 					log.Printf("Worker: failed to publish response: %v", err)
 				}

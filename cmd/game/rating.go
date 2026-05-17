@@ -22,9 +22,12 @@ import (
 	"encoding/json"
 	"log/slog"
 	"os"
+	"strconv"
+	"time"
 
 	"github.com/neoromantics/chess/pkg/db"
 	"github.com/neoromantics/chess/pkg/eventbus"
+	"github.com/neoromantics/chess/pkg/metrics"
 	"github.com/neoromantics/chess/pkg/rating"
 	"github.com/redis/go-redis/v9"
 )
@@ -48,6 +51,21 @@ func (s *GameService) processRatingEvent(ctx context.Context, msg redis.XMessage
 	if evt.Type != eventbus.EvtGameFinished {
 		return
 	}
+	// Bookkeep finalization. Emit sites send the full snapshot as
+	// payload (which carries both result + rated), so we can label the
+	// counter without a DB roundtrip. Falls back to unknown/false if
+	// the payload is missing the fields — shouldn't happen but the
+	// metric should never crash the consumer.
+	var meta struct {
+		Result string `json:"result"`
+		Rated  bool   `json:"rated"`
+	}
+	_ = json.Unmarshal(evt.Payload, &meta)
+	if meta.Result == "" {
+		meta.Result = "unknown"
+	}
+	metrics.GamesFinishedTotal.WithLabelValues(meta.Result, strconv.FormatBool(meta.Rated)).Inc()
+
 	s.applyRatingUpdate(ctx, evt)
 }
 
@@ -59,6 +77,11 @@ func (s *GameService) applyRatingUpdate(ctx context.Context, evt eventbus.Event)
 	if err != nil || rec == nil || !rec.Rated || rec.WhiteUserID == nil || rec.BlackUserID == nil {
 		return
 	}
+	// Timed scope covers the two PG UPDATEs + the Glicko math. The
+	// math is microseconds; the UPDATEs are the real cost — if this
+	// histogram's p95 ever climbs, PG is the suspect.
+	t0 := time.Now()
+	defer func() { metrics.RatingUpdateDuration.Observe(time.Since(t0).Seconds()) }()
 	// Only finalize once per game. If the row's Result is still "*"
 	// (open) we shouldn't be here — the only emitter is GameFinished,
 	// so this is defensive against duplicate stream delivery races.

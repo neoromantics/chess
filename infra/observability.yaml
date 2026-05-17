@@ -211,7 +211,11 @@ data:
 ---
 # Starter dashboard. Covers what we actually emit: chess_http_requests_total,
 # chess_http_request_duration_seconds, chess_ws_connections_active,
-# chess_redis_stream_pending_count. Add more panels as the metrics surface
+# chess_redis_stream_pending_count, plus the business-metric set
+# (chess_moves_applied_total, chess_engine_search_duration_seconds,
+# chess_matchmaker_queue_depth, chess_matchmaker_wait_seconds,
+# chess_games_finished_total, chess_rating_update_duration_seconds).
+# Add more panels as the metrics surface
 # grows. JSON is hand-written (not exported from Grafana UI) so it stays
 # diff-able.
 apiVersion: v1
@@ -292,6 +296,71 @@ data:
           "targets": [{
             "expr": "count by (service) (up{job=\"chess\"})",
             "legendFormat": "{{service}}",
+            "refId": "A"
+          }]
+        },
+        {
+          "id": 7,
+          "type": "timeseries",
+          "title": "Moves applied per second (by source)",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
+          "targets": [{
+            "expr": "sum by (source) (rate(chess_moves_applied_total[1m]))",
+            "legendFormat": "{{source}}",
+            "refId": "A"
+          }]
+        },
+        {
+          "id": 8,
+          "type": "timeseries",
+          "title": "Engine search latency p50/p95/p99 (s, by context)",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24},
+          "targets": [
+            {"expr": "histogram_quantile(0.50, sum by (le, context) (rate(chess_engine_search_duration_seconds_bucket[5m])))", "legendFormat": "p50 {{context}}", "refId": "A"},
+            {"expr": "histogram_quantile(0.95, sum by (le, context) (rate(chess_engine_search_duration_seconds_bucket[5m])))", "legendFormat": "p95 {{context}}", "refId": "B"},
+            {"expr": "histogram_quantile(0.99, sum by (le, context) (rate(chess_engine_search_duration_seconds_bucket[5m])))", "legendFormat": "p99 {{context}}", "refId": "C"}
+          ]
+        },
+        {
+          "id": 9,
+          "type": "timeseries",
+          "title": "Matchmaker queue depth (by time control)",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 32},
+          "targets": [{
+            "expr": "chess_matchmaker_queue_depth",
+            "legendFormat": "{{time_control}}",
+            "refId": "A"
+          }]
+        },
+        {
+          "id": 10,
+          "type": "timeseries",
+          "title": "Matchmaker wait p50/p95 (s, paired vs engine_fallback)",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 32},
+          "targets": [
+            {"expr": "histogram_quantile(0.50, sum by (le, time_control, kind) (rate(chess_matchmaker_wait_seconds_bucket[10m])))", "legendFormat": "p50 {{time_control}} {{kind}}", "refId": "A"},
+            {"expr": "histogram_quantile(0.95, sum by (le, time_control, kind) (rate(chess_matchmaker_wait_seconds_bucket[10m])))", "legendFormat": "p95 {{time_control}} {{kind}}", "refId": "B"}
+          ]
+        },
+        {
+          "id": 11,
+          "type": "timeseries",
+          "title": "Games finished per minute (by result)",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 40},
+          "targets": [{
+            "expr": "sum by (result, rated) (rate(chess_games_finished_total[5m])) * 60",
+            "legendFormat": "{{result}} (rated={{rated}})",
+            "refId": "A"
+          }]
+        },
+        {
+          "id": 12,
+          "type": "timeseries",
+          "title": "Glicko-2 update latency p95 (s)",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 40},
+          "targets": [{
+            "expr": "histogram_quantile(0.95, sum by (le) (rate(chess_rating_update_duration_seconds_bucket[5m])))",
+            "legendFormat": "p95",
             "refId": "A"
           }]
         }

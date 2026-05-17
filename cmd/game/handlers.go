@@ -32,6 +32,7 @@ import (
 	"github.com/neoromantics/chess/pkg/db"
 	"github.com/neoromantics/chess/pkg/eventbus"
 	"github.com/neoromantics/chess/pkg/game"
+	"github.com/neoromantics/chess/pkg/metrics"
 )
 
 // gameLockTTL bounds how long any single mutation can hold the lock.
@@ -318,6 +319,7 @@ func (s *GameService) handleHTTPMove(w http.ResponseWriter, r *http.Request) {
 			return userErr(http.StatusForbidden, "illegal move")
 		}
 		gm.PlayMove(matched)
+		metrics.MovesAppliedTotal.WithLabelValues("http").Inc()
 		return nil
 	})
 }

@@ -54,6 +54,62 @@ var (
 		Name: "chess_redis_stream_pending_count",
 		Help: "Number of unacked messages in a Redis stream's consumer group. Real autoscale signal for engine-worker when KEDA lands.",
 	}, []string{"service", "stream", "group"})
+
+	// ===== Business metrics =====
+	// HTTP latency + WS counts tell us "how fast is the gateway"; these
+	// tell us "how is the game system doing." Without them, a degraded
+	// engine-worker or a stuck matchmaker only surfaces via customer
+	// complaints.
+
+	// MovesAppliedTotal counts moves that successfully advanced a game
+	// row. Labeled by source so engine-driven moves can be split from
+	// human moves at query time.
+	MovesAppliedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "chess_moves_applied_total",
+		Help: "Total moves successfully applied to a game record. source=http for SPA-driven moves, source=engine for engine-result moves.",
+	}, []string{"source"})
+
+	// EngineSearchDuration measures how long ProcessRequest takes in
+	// engine-worker. Context distinguishes move/hint/assess so an
+	// /analyze burst doesn't pollute the per-move p95.
+	EngineSearchDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "chess_engine_search_duration_seconds",
+		Help:    "Engine search wall time per ProcessRequest, by request context (move/hint/assess).",
+		Buckets: prometheus.ExponentialBuckets(0.01, 2, 12), // 10ms .. ~40s
+	}, []string{"context"})
+
+	// MatchmakerQueueDepth is the live ZCARD of each per-TC queue.
+	// Set once per pair-tick by the leader-elected matchmaker loop.
+	MatchmakerQueueDepth = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "chess_matchmaker_queue_depth",
+		Help: "Players currently waiting in each time-control queue. Set per pair-tick by the matchmaker leader.",
+	}, []string{"time_control"})
+
+	// MatchmakerWaitSeconds is the wait between joining the queue and
+	// either being paired or falling through to the engine. kind splits
+	// real pairings from the engine-fallback path.
+	MatchmakerWaitSeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "chess_matchmaker_wait_seconds",
+		Help:    "Wait between join-queue and dispatch, by time control and kind (paired|engine_fallback).",
+		Buckets: prometheus.ExponentialBuckets(1, 2, 10), // 1s .. ~17min
+	}, []string{"time_control", "kind"})
+
+	// GamesFinishedTotal counts games that reached a terminal status.
+	// Labeled by result + rated so a Grafana panel can split rated
+	// wins/losses/draws from casual play.
+	GamesFinishedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "chess_games_finished_total",
+		Help: "Total games reaching a terminal status (checkmate/stalemate/resign/timeout/agreed/draw).",
+	}, []string{"result", "rated"})
+
+	// RatingUpdateDuration tracks how long the Glicko-2 update takes
+	// per finished rated game. Pure CPU + 2 PG updates; if it ever
+	// runs slow, suspect the DB.
+	RatingUpdateDuration = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "chess_rating_update_duration_seconds",
+		Help:    "Wall time for one Glicko-2 update pair (both players) after a finished rated game.",
+		Buckets: prometheus.ExponentialBuckets(0.001, 2, 12), // 1ms .. ~4s
+	})
 )
 
 // Handler exposes /metrics. Use it directly in any mux.

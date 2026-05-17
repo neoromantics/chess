@@ -23,6 +23,7 @@ import (
 	"github.com/neoromantics/chess/pkg/db"
 	"github.com/neoromantics/chess/pkg/eventbus"
 	"github.com/neoromantics/chess/pkg/game"
+	"github.com/neoromantics/chess/pkg/metrics"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -266,6 +267,15 @@ func (s *GameService) handleMakeMove(ctx context.Context, cmd eventbus.Command) 
 	}
 
 	gm.PlayMove(matched)
+	// Source label distinguishes engine-stream moves (this path) from
+	// SPA-driven moves (handlers.go handleHTTPMove). Counter increments
+	// after PlayMove returns — so abort paths above (illegal/finished/
+	// unauthorized) don't pollute the count.
+	moveSource := "engine"
+	if cmd.UserID != 0 {
+		moveSource = "http"
+	}
+	metrics.MovesAppliedTotal.WithLabelValues(moveSource).Inc()
 
 	// Server-authoritative clock update. PvP only — engine games carry
 	// no clock hash and loadClock returns nil silently.

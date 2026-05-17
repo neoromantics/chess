@@ -31,6 +31,7 @@ import (
 	"github.com/neoromantics/chess/pkg/db"
 	"github.com/neoromantics/chess/pkg/eventbus"
 	"github.com/neoromantics/chess/pkg/game"
+	"github.com/neoromantics/chess/pkg/metrics"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -183,6 +184,12 @@ func (s *GameService) holdAndPair(ctx context.Context, hostname string) {
 			s.bus.Rdb().Expire(ctx, "mm:leader", 15*time.Second)
 		case <-pair.C:
 			for _, tc := range supportedTCs {
+				// Cheap ZCARD per tick — single integer reply, no
+				// scanning. Surfaces "how close are we to the wait-
+				// cap" without a second pass over the queue.
+				if depth, err := s.bus.Rdb().ZCard(ctx, queueKey(tc)).Result(); err == nil {
+					metrics.MatchmakerQueueDepth.WithLabelValues(tc).Set(float64(depth))
+				}
 				s.tryPair(ctx, tc)
 				s.tryEngineFallback(ctx, tc)
 			}
@@ -238,6 +245,14 @@ func (s *GameService) tryPair(ctx context.Context, tc string) {
 				rdb.HDel(ctx, joinedKey(tc), aID, bID)
 				u1, _ := strconv.ParseInt(aID, 10, 64)
 				u2, _ := strconv.ParseInt(bID, 10, 64)
+				// Observe wait per paired player. joinedAt is unix sec
+				// from the HSET in handleJoinQueue; missing/malformed
+				// entries skip silently rather than poison the histogram.
+				for _, id := range []string{aID, bID} {
+					if t, err := strconv.ParseInt(joined[id], 10, 64); err == nil && t > 0 {
+						metrics.MatchmakerWaitSeconds.WithLabelValues(tc, "paired").Observe(float64(now - t))
+					}
+				}
 				s.dispatchPaired(ctx, u1, u2, tc)
 				pairedThisRound = true
 				i++ // skip past the paired-with neighbour
@@ -302,6 +317,11 @@ func (s *GameService) tryEngineFallback(ctx context.Context, tc string) {
 		if err != nil {
 			continue
 		}
+		// Wait-until-fallback observation. Splits the histogram from
+		// the "paired" series so a Grafana panel can show "how often
+		// is matchmaking failing to find a human" without conflating
+		// the two distributions.
+		metrics.MatchmakerWaitSeconds.WithLabelValues(tc, "engine_fallback").Observe(float64(now - t))
 		s.dispatchEngineFallback(ctx, uid, tc)
 	}
 }
