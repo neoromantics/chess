@@ -13,6 +13,30 @@
         <a href="/match">Match</a>
         <a href="/profile">Profile</a>
 
+        <!-- Sound toggle. Click counts as a user gesture so the
+             AudioContext can resume immediately; muted state persists
+             across the SPA via the shared chess-muted localStorage key. -->
+        <button
+          class="sound-btn"
+          :class="{ on: soundEnabled }"
+          :aria-pressed="soundEnabled"
+          :title="soundEnabled ? 'Sound on (click to mute)' : 'Sound off (click to unmute)'"
+          @click="toggleSound"
+        >
+          <svg v-if="soundEnabled" class="sound-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none"
+               stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M11 5L6 9H3v6h3l5 4z" />
+            <path d="M15.5 8.5a5 5 0 0 1 0 7" />
+            <path d="M18 6a8 8 0 0 1 0 12" />
+          </svg>
+          <svg v-else class="sound-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none"
+               stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M11 5L6 9H3v6h3l5 4z" />
+            <line x1="16" y1="9" x2="22" y2="15" />
+            <line x1="22" y1="9" x2="16" y2="15" />
+          </svg>
+        </button>
+
         <!-- Bell only renders once the pending-invites fetch resolves
              with a 2xx. A 401 (not signed in) leaves bellAvailable=false
              and the slot stays empty, so spectator viewers don't see a
@@ -112,7 +136,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, type DirectiveBinding } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch, type DirectiveBinding } from 'vue';
 import { PIECE, parseBoard } from './constants';
 import { ReplayFrame, InviteWire } from './types';
 
@@ -121,6 +145,59 @@ const idx = ref(0);
 const timer = ref<ReturnType<typeof setTimeout> | null>(null);
 const speed = ref(800);
 const flipped = ref(localStorage.getItem('chess-flipped') === '1');
+
+// Sound on/off — shares the chess-muted localStorage key with the main
+// SPA's GameView so the setting is unified across pages. Browser audio
+// is gated behind a user gesture; the very first replay step likely
+// happens before any click, so we'll silently skip until the user
+// interacts with the page. Toggling the speaker icon counts as a
+// gesture and primes the AudioContext immediately.
+const soundEnabled = ref(localStorage.getItem('chess-muted') !== '1');
+let audioCtx: AudioContext | null = null;
+const ensureAudio = (): AudioContext | null => {
+  if (typeof window === 'undefined' || typeof (window as any).AudioContext === 'undefined') return null;
+  if (!audioCtx) audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+  return audioCtx;
+};
+const playClick = (freq: number, dur: number, gain: number) => {
+  if (!soundEnabled.value) return;
+  const ctx = ensureAudio();
+  if (!ctx || ctx.state === 'suspended') return;
+  const osc = ctx.createOscillator();
+  const g = ctx.createGain();
+  osc.connect(g); g.connect(ctx.destination);
+  osc.type = 'triangle';
+  osc.frequency.value = freq;
+  g.gain.setValueAtTime(gain, ctx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + dur);
+  osc.start();
+  osc.stop(ctx.currentTime + dur);
+};
+const toggleSound = () => {
+  soundEnabled.value = !soundEnabled.value;
+  localStorage.setItem('chess-muted', soundEnabled.value ? '0' : '1');
+  // The toggle click itself is a gesture — resume() now so the next
+  // step plays audibly instead of waiting for another user action.
+  if (soundEnabled.value) {
+    const ctx = ensureAudio();
+    if (ctx && ctx.state === 'suspended') void ctx.resume();
+  }
+};
+// Single wiring point for every navigation path: auto-play, next/prev
+// buttons, arrow keys, click-to-jump in the move list, Home/End. Fires
+// on any idx change; the initial 0→0 of the first frame is skipped by
+// the !== oldIdx guard inherent to watch.
+watch(idx, (newIdx, oldIdx) => {
+  if (newIdx === oldIdx) return;
+  if (newIdx === 0) return; // jumping to start position isn't a "move"
+  const frame = frames.value[newIdx];
+  if (!frame) return;
+  const san = frame.san || '';
+  if (san.includes('#')) playClick(880, 0.12, 0.14);     // checkmate
+  else if (san.includes('+')) { playClick(880, 0.08, 0.12); setTimeout(() => playClick(660, 0.10, 0.10), 90); }
+  else if (san.includes('x')) playClick(220, 0.12, 0.15); // capture
+  else playClick(520, 0.06, 0.10);                        // quiet move
+});
 
 // ===== Notification bell =====
 // Replay is a standalone bundle; we reach into the same /api/invites/*
@@ -339,6 +416,15 @@ body { font-family: -apple-system, system-ui, sans-serif; background: #1e1e1e; c
 .replay-nav-links { display: flex; gap: 18px; align-items: center; }
 .replay-nav-links a { color: #aaa; text-decoration: none; font-size: 14px; transition: color 120ms ease; }
 .replay-nav-links a:hover { color: #fff; }
+
+/* Sound toggle. Same visual rhythm as the bell — transparent button
+   with a stroked SVG that picks up currentColor, so the on/off state
+   is just a color swap. */
+.sound-btn { background: transparent; border: 1px solid transparent; color: #777; cursor: pointer; padding: 4px 6px; border-radius: 6px; display: inline-flex; align-items: center; transition: color 120ms ease, background-color 120ms ease; }
+.sound-btn:hover { background: #333; color: #ddd; }
+.sound-btn.on { color: #aaa; }
+.sound-btn.on:hover { color: #fff; }
+.sound-icon { width: 18px; height: 18px; display: inline-block; vertical-align: middle; color: inherit; }
 
 /* Bell + dropdown — mirrors Navbar.vue. Replay's nav lives outside
    the SPA's component tree, so the styles are duplicated here rather

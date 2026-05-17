@@ -154,21 +154,27 @@ const handleLogout = async () => {
 </script>
 
 <style scoped>
-.navbar { background: #2b2b2b; border-bottom: 1px solid #333; height: 64px; display: flex; align-items: center; position: sticky; top: 0; z-index: 100; }
+/* Matches the standalone replay-nav so the chrome stays visually
+   consistent across the SPA and the standalone replay bundle. Both
+   live at 48px tall with the same border / padding / font weights;
+   if either is reskinned, update the other to match. The 16px height
+   reduction also frees up board space on short laptop screens — see
+   the --sq computation in App.vue. */
+.navbar { background: #2b2b2b; border-bottom: 1px solid #3d3d3d; height: 48px; display: flex; align-items: center; position: sticky; top: 0; z-index: 100; }
 .nav-content { width: 100%; max-width: 1200px; margin: 0 auto; padding: 0 20px; display: flex; justify-content: space-between; align-items: center; }
 
-.nav-brand { font-size: 20px; font-weight: 700; color: #ddd; text-decoration: none; }
+.nav-brand { font-size: 18px; font-weight: 700; color: #fff; text-decoration: none; letter-spacing: -0.2px; }
 .nav-brand:hover { color: #fff; }
 
-.nav-links { display: flex; align-items: center; gap: 20px; }
+.nav-links { display: flex; align-items: center; gap: 18px; }
 .user-link { text-decoration: none; }
-.user-greeting { font-size: 14px; color: #aaa; transition: color 0.2s; }
+.user-greeting { font-size: 13px; color: #aaa; transition: color 0.2s; }
 .user-link:hover .user-greeting { color: white; }
 
-.btn-text { background: transparent; border: none; color: #aaa; font-size: 14px; cursor: pointer; padding: 4px 8px; }
+.btn-text { background: transparent; border: none; color: #aaa; font-size: 13px; cursor: pointer; padding: 4px 6px; transition: color 120ms ease; }
 .btn-text:hover { color: white; }
 
-.btn-primary-small { background: #4a6b8a; color: white; border: none; padding: 6px 16px; border-radius: 4px; cursor: pointer; font-weight: 600; font-size: 14px; text-decoration: none; }
+.btn-primary-small { background: #4a6b8a; color: white; border: none; padding: 5px 14px; border-radius: 4px; cursor: pointer; font-weight: 600; font-size: 13px; text-decoration: none; }
 .btn-primary-small:hover { background: #5a7b9a; }
 
 .badge { background: #d4544c; color: white; font-size: 11px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; display: inline-flex; align-items: center; justify-content: center; font-weight: 700; }
@@ -182,15 +188,15 @@ const handleLogout = async () => {
   border: 1px solid transparent;
   color: #aaa;
   cursor: pointer;
-  padding: 4px 8px;
+  padding: 4px 6px;
   border-radius: 6px;
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 16px;
+  font-size: 14px;
   line-height: 1;
   position: relative;
-  transition: background-color 120ms ease, border-color 120ms ease;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
 }
 .bell-btn:hover { background: #333; color: #fff; }
 .bell-btn.active { background: #333; border-color: #4a6b8a; color: #fff; }

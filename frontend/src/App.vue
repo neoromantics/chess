@@ -53,11 +53,11 @@ onUnmounted(() => {
 /* Board cell sizing.
  *
  * The board is 8 × var(--sq) plus a thin coords strip on each axis.
- * The viewport budget has to subtract the sticky 64px navbar, the
+ * The viewport budget has to subtract the sticky 48px navbar, the
  * 32px top+bottom container padding (64px total), and ~30px for the
- * file-coordinates row + breathing room. That gives ~160px of
- * vertical chrome — anything more and the page scrolls on a 768p
- * laptop screen, which was the original complaint.
+ * file-coordinates row + breathing room. ~145px of vertical chrome —
+ * down from 160px when the navbar was 64px tall; we use the freed
+ * 16px to give the board a little more headroom on 768p laptops.
  *
  * The min() picks the smallest constraint so the board never overflows:
  *   - 112px      → hard cap on huge monitors (matches the original)
@@ -67,7 +67,7 @@ onUnmounted(() => {
 :root {
   --sq: min(
     112px,
-    calc((100vh - 160px) / 8.2),
+    calc((100vh - 145px) / 8.2),
     calc((100vw - 420px) / 8.2)
   );
 }
