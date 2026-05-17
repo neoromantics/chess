@@ -71,11 +71,11 @@
       <div v-else class="empty">No ongoing games right now.</div>
     </section>
 
-    <section class="card">
-      <header class="card-header">
+    <details class="card collapse">
+      <summary class="card-header collapse-summary">
         <h2>Seeded bots</h2>
         <span class="muted">{{ bots.length }} in pool</span>
-      </header>
+      </summary>
       <table v-if="bots.length" class="signup-table">
         <thead>
           <tr>
@@ -93,7 +93,7 @@
         </tbody>
       </table>
       <div v-else class="empty">No bots seeded.</div>
-    </section>
+    </details>
 
     <section class="card">
       <header class="card-header">
@@ -385,6 +385,26 @@ onMounted(loadAll);
 .card-header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 12px; }
 .card-header h2 { margin: 0; font-size: 16px; color: #ddd; font-weight: 600; }
 .muted { color: #777; font-size: 12px; }
+
+/* Collapsible card variant — used for low-frequency tables like the
+   seeded bot pool that the operator rarely needs to glance at. */
+.card.collapse { padding-bottom: 16px; }
+.collapse-summary {
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+  margin-bottom: 0;
+}
+.collapse-summary::-webkit-details-marker { display: none; }
+.collapse-summary::after {
+  content: '›';
+  color: #666;
+  margin-left: 10px;
+  font-size: 16px;
+  transition: transform 120ms ease;
+}
+.card.collapse[open] > .collapse-summary { margin-bottom: 12px; }
+.card.collapse[open] > .collapse-summary::after { transform: rotate(90deg); }
 
 .signup-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .signup-table th { text-align: left; color: #888; font-weight: 500; padding: 8px 6px; border-bottom: 1px solid #333; }

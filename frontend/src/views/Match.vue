@@ -52,23 +52,10 @@
       </ul>
     </section>
 
-    <section v-if="finishedGames.length > 0" class="card recents">
-      <div class="card-header">
-        <h2>Past games</h2>
-        <span class="muted">{{ finishedGames.length }}</span>
-      </div>
-      <ul class="game-list">
-        <li v-for="g in finishedGames" :key="g.id">
-          <a :href="`/api/replay.html?game_id=${g.id}`" target="_blank" class="game-link past">
-            <span class="game-type">{{ g.white_user_id && g.black_user_id ? 'PvP' : 'Engine' }}</span>
-            <span class="game-result" :class="resultClass(g)">{{ resultLabel(g) }}</span>
-            <span class="game-when">{{ formatDate(g.updated_at) }}</span>
-            <span class="game-status">{{ formatStatus(g.status) }}</span>
-          </a>
-          <button class="btn-delete" :title="'Delete ' + g.id" @click="deleteGame(g.id)">×</button>
-        </li>
-      </ul>
-    </section>
+    <p class="past-games-hint">
+      Looking for finished games?
+      <router-link to="/profile" class="inline-link">View past games on your profile</router-link>.
+    </p>
   </div>
 </template>
 
@@ -127,31 +114,6 @@ const loadGames = async () => {
 };
 
 const activeGames = computed(() => games.value.filter((g: any) => g.status === 'ongoing'));
-// listGames returns updated_at DESC, so freshly-finished games sit at
-// the top of this list — exactly what a "past games" view wants.
-const finishedGames = computed(() => games.value.filter((g: any) => g.status !== 'ongoing').slice(0, 50));
-
-const resultLabel = (g: any): string => {
-  const me = authStore.user?.id;
-  if (!me) return g.result || '*';
-  if (g.result === '1/2-1/2') return 'Draw';
-  if (g.result === '*' || !g.result) return '–';
-  const winnerWhite = g.result === '1-0';
-  const userIsWhite = g.white_user_id === me;
-  const userIsBlack = g.black_user_id === me;
-  if ((winnerWhite && userIsWhite) || (!winnerWhite && userIsBlack)) return 'Won';
-  if (userIsWhite || userIsBlack) return 'Lost';
-  return g.result;
-};
-
-const resultClass = (g: any): string => {
-  const me = authStore.user?.id;
-  if (!me || !g.result || g.result === '*') return '';
-  if (g.result === '1/2-1/2') return 'draw';
-  const winnerWhite = g.result === '1-0';
-  if ((winnerWhite && g.white_user_id === me) || (!winnerWhite && g.black_user_id === me)) return 'won';
-  return 'lost';
-};
 
 const startSearchTicker = () => {
   searchStartedAt.value = Date.now();
@@ -255,6 +217,14 @@ onUnmounted(() => {
 }
 .inline-link { color: #9bb3cc; text-decoration: none; }
 .inline-link:hover { text-decoration: underline; }
+
+.past-games-hint {
+  margin: 0;
+  color: #888;
+  font-size: 13px;
+  text-align: center;
+  padding: 6px 0;
+}
 
 .card {
   background: #2b2b2b;
