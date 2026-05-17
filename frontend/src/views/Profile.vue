@@ -34,6 +34,30 @@
       </div>
     </div>
 
+    <!-- Active games. Listed here in addition to /match so the profile
+         is a single landing for both "what am I playing now" and
+         "what did I play before". Each link routes into the live game;
+         delete tears the row down. Mirrors the Match.vue rendering
+         deliberately so users see the same list shape across surfaces. -->
+    <div v-if="authStore.user" class="past-card">
+      <div class="past-header">
+        <h2>Active games</h2>
+        <span v-if="activeGames.length" class="muted">{{ activeGames.length }}</span>
+      </div>
+      <ul v-if="activeGames.length" class="game-list">
+        <li v-for="g in activeGames" :key="g.id">
+          <router-link :to="`/game/${g.id}`" class="game-link active">
+            <span class="game-type">{{ g.white_user_id && g.black_user_id ? 'PvP' : 'Engine' }}</span>
+            <span class="game-id">{{ shortId(g.id) }}</span>
+            <span class="game-when">{{ formatDate(g.updated_at) }}</span>
+            <span class="game-status">{{ formatStatus(g.status) }}</span>
+          </router-link>
+          <button class="btn-delete" :title="'Delete ' + g.id" @click="deleteGame(g.id)">×</button>
+        </li>
+      </ul>
+      <p v-else class="empty">No games in progress.</p>
+    </div>
+
     <!-- Past games. Moved here from /match so the matchmaking page
          stays focused on "find your next game" and the history lives
          where the user already goes for self-introspection. PGN-
@@ -94,6 +118,7 @@ const loadGames = async () => {
   }
 };
 
+const activeGames = computed(() => games.value.filter((g: any) => g.status === 'ongoing'));
 // listGames returns updated_at DESC, so freshly-finished games sit at
 // the top of this list — exactly what a "past games" view wants. Cap
 // to 50 so a heavy user doesn't render a thousand-row table.
@@ -134,6 +159,7 @@ const deleteGame = async (id: string) => {
 
 const formatDate = (s: string) => new Date(s).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' });
 const formatStatus = (s: string) => s.charAt(0).toUpperCase() + s.slice(1).replace('_', ' ');
+const shortId = (id: string) => id.split('-')[0] + '…';
 
 const logout = async () => {
   await authStore.logout();
@@ -183,10 +209,10 @@ onMounted(async () => {
 
 .game-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .game-list li { display: flex; align-items: center; gap: 8px; }
-.game-link.past {
+.game-link.past,
+.game-link.active {
   flex: 1 1 auto;
   display: grid;
-  grid-template-columns: 60px 70px auto 1fr 120px;
   align-items: center;
   gap: 10px;
   background: #232323;
@@ -198,7 +224,11 @@ onMounted(async () => {
   font-size: 13px;
   transition: border-color 120ms ease;
 }
-.game-link.past:hover { border-color: #4a6b8a; }
+.game-link.past { grid-template-columns: 60px 70px auto 1fr 120px; }
+.game-link.active { grid-template-columns: 60px 100px 1fr 120px; }
+.game-link.past:hover,
+.game-link.active:hover { border-color: #4a6b8a; }
+.game-id { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: #888; }
 .game-type { font-weight: 600; color: #9bb3cc; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
 .game-when { color: #888; font-size: 12px; }
 .game-status { color: #aaa; font-size: 12px; text-align: right; }
@@ -227,7 +257,8 @@ onMounted(async () => {
 @media (max-width: 600px) {
   .stats-grid { grid-template-columns: 1fr 1fr; gap: 30px; }
   .profile-header { flex-direction: column; text-align: center; }
-  .game-link.past { grid-template-columns: 60px 1fr; }
-  .game-when, .game-status, .badge.imported { display: none; }
+  .game-link.past,
+  .game-link.active { grid-template-columns: 60px 1fr; }
+  .game-when, .game-status, .badge.imported, .game-id { display: none; }
 }
 </style>
