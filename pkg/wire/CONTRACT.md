@@ -60,33 +60,33 @@ Bootstrap the first admin via SQL: `UPDATE users SET is_admin = TRUE WHERE usern
 | GET | `/api/games` | 🔐 | gateway → game-svc | `api.listGames` |
 | DELETE | `/api/games/{id}` | 🔐+game | gateway → game-svc | `api.deleteGame` |
 
-### Games (state)
+### Games (state) — all nested under `/api/games/{id}/<verb>`
 | Method | Path | Auth | Owner | Frontend caller |
 |---|---|---|---|---|
-| GET | `/api/state?game_id=X` | 🔐?+game | gateway → game-svc | `api.getState` (auth-optional — public games readable by anyone) |
-| GET | `/api/can_watch?game_id=X` | 🔐?+game | gateway → game-svc | gateway WS-upgrade preflight (no SPA caller; anonymous viewers allowed on public games) |
-| POST | `/api/visibility?game_id=X` | 🔐+owner | gateway → game-svc | `api.setVisibility` (toggle `is_public`) |
-| POST | `/api/move?game_id=X` | 🔐+game | gateway → game-svc | `api.move` |
-| POST | `/api/resign?game_id=X` | 🔐+game | gateway → game-svc | `api.resign` |
-| POST | `/api/new?game_id=X` | 🔐+game | gateway → game-svc | `api.newGame` |
-| POST | `/api/undo?game_id=X` | 🔐+game | gateway → game-svc | `api.undo` |
-| POST | `/api/set_players?game_id=X` | 🔐+game | gateway → game-svc | `api.setPlayers` |
-| POST | `/api/set_position?game_id=X` | 🔐+game | gateway → game-svc | `api.setPosition` (engine games only) |
-| GET  | `/api/pgn?game_id=X` | 🔐+game | gateway → game-svc | `api.pgnDownloadUrl` (browser download) |
-| POST | `/api/load_pgn?game_id=X` | 🔐+game | gateway → game-svc | `api.loadPgn` (engine games only) |
-| POST | `/api/analyze?game_id=X` | 🔐+game | gateway → game-svc | `api.analyze` (kicks per-ply jobs, streams `Assessment` over WS) |
-| POST | `/api/hint?game_id=X` | 🔐+game | gateway → game-svc | `api.getHint` |
-| POST | `/api/draw_offer?game_id=X` | 🔐+game | gateway → game-svc | `api.drawOffer` |
-| POST | `/api/draw_accept?game_id=X` | 🔐+game | gateway → game-svc | `api.drawAccept` |
-| POST | `/api/draw_decline?game_id=X` | 🔐+game | gateway → game-svc | `api.drawDecline` |
-| POST | `/api/takeback_offer?game_id=X` | 🔐+game | gateway → game-svc | `api.takebackOffer` |
-| POST | `/api/takeback_accept?game_id=X` | 🔐+game | gateway → game-svc | `api.takebackAccept` |
-| POST | `/api/takeback_decline?game_id=X` | 🔐+game | gateway → game-svc | `api.takebackDecline` |
-| POST | `/api/rematch_offer?game_id=X` | 🔐+game | gateway → game-svc | `api.rematchOffer` (finished PvP / bot rows only) |
-| POST | `/api/rematch_accept?game_id=X` | 🔐+game | gateway → game-svc | `api.rematchAccept` → returns `{game_id}` of the new row |
-| POST | `/api/rematch_decline?game_id=X` | 🔐+game | gateway → game-svc | `api.rematchDecline` |
-| GET | `/api/replay?game_id=X` | 🔐+game | gateway → game-svc | (data fetched by gateway) |
-| GET | `/api/replay.html?game_id=X` | 🔐+game | gateway (template) | `Replay` button |
+| GET | `/api/games/{id}/state` | 🔐?+game | gateway → game-svc | `api.getState` (auth-optional — public games readable by anyone) |
+| GET | `/api/games/{id}/can_watch` | 🔐?+game | gateway → game-svc | gateway WS-upgrade preflight (no SPA caller; anonymous viewers allowed on public games) |
+| POST | `/api/games/{id}/visibility` | 🔐+owner | gateway → game-svc | `api.setVisibility` (toggle `is_public`) |
+| POST | `/api/games/{id}/move` | 🔐+game | gateway → game-svc | `api.move` |
+| POST | `/api/games/{id}/resign` | 🔐+game | gateway → game-svc | `api.resign` |
+| POST | `/api/games/{id}/new` | 🔐+game | gateway → game-svc | `api.newGame` |
+| POST | `/api/games/{id}/undo` | 🔐+game | gateway → game-svc | `api.undo` |
+| POST | `/api/games/{id}/set_players` | 🔐+game | gateway → game-svc | `api.setPlayers` |
+| POST | `/api/games/{id}/set_position` | 🔐+game | gateway → game-svc | `api.setPosition` (engine games only) |
+| GET  | `/api/games/{id}/pgn` | 🔐+game | gateway → game-svc | `api.pgnDownloadUrl` (browser download) |
+| POST | `/api/games/{id}/load_pgn` | 🔐+game | gateway → game-svc | `api.loadPgn` (engine games only) |
+| POST | `/api/games/{id}/analyze` | 🔐+game | gateway → game-svc | `api.analyze` (kicks per-ply jobs, streams `Assessment` over WS) |
+| POST | `/api/games/{id}/hint` | 🔐+game | gateway → game-svc | `api.getHint` |
+| POST | `/api/games/{id}/draw_offer` | 🔐+game | gateway → game-svc | `api.drawOffer` |
+| POST | `/api/games/{id}/draw_accept` | 🔐+game | gateway → game-svc | `api.drawAccept` |
+| POST | `/api/games/{id}/draw_decline` | 🔐+game | gateway → game-svc | `api.drawDecline` |
+| POST | `/api/games/{id}/takeback_offer` | 🔐+game | gateway → game-svc | `api.takebackOffer` |
+| POST | `/api/games/{id}/takeback_accept` | 🔐+game | gateway → game-svc | `api.takebackAccept` |
+| POST | `/api/games/{id}/takeback_decline` | 🔐+game | gateway → game-svc | `api.takebackDecline` |
+| POST | `/api/games/{id}/rematch_offer` | 🔐+game | gateway → game-svc | `api.rematchOffer` (finished PvP / bot rows only) |
+| POST | `/api/games/{id}/rematch_accept` | 🔐+game | gateway → game-svc | `api.rematchAccept` → returns `{game_id}` of the new row |
+| POST | `/api/games/{id}/rematch_decline` | 🔐+game | gateway → game-svc | `api.rematchDecline` |
+| GET | `/api/games/{id}/replay` | 🔐+game | gateway → game-svc | (data fetched by gateway) |
+| GET | `/api/replay.html?game_id=X` | 🔐+game | gateway (template) | `Replay` button (public entry URL kept as-is so external bookmarks survive) |
 
 ### Matchmaking & invites
 | Method | Path | Auth | Owner | Frontend caller |
@@ -109,16 +109,23 @@ use the JWT.
 | Method | Path | Auth | Owner | Frontend caller |
 |---|---|---|---|---|
 | POST | `/api/temp/session` | 🍪 | gateway → game-svc | `api.tempSession` |
-| GET | `/api/temp/state?game_id=X` | 🍪+game | gateway → game-svc | `api.getState` (auto-routed) |
-| POST | `/api/temp/move?game_id=X` | 🍪+game | gateway → game-svc | `api.move` (auto-routed) |
-| POST | `/api/temp/new?game_id=X` | 🍪+game | gateway → game-svc | `api.newGame` (auto-routed) |
-| POST | `/api/temp/undo?game_id=X` | 🍪+game | gateway → game-svc | `api.undo` (auto-routed) |
-| POST | `/api/temp/resign?game_id=X` | 🍪+game | gateway → game-svc | `api.resign` (auto-routed) |
-| POST | `/api/temp/hint?game_id=X` | 🍪+game | gateway → game-svc | `api.getHint` (auto-routed) |
+| GET | `/api/temp/{id}/state` | 🍪+game | gateway → game-svc | `api.getState` (auto-routed) |
+| POST | `/api/temp/{id}/move` | 🍪+game | gateway → game-svc | `api.move` (auto-routed) |
+| POST | `/api/temp/{id}/new` | 🍪+game | gateway → game-svc | `api.newGame` (auto-routed) |
+| POST | `/api/temp/{id}/undo` | 🍪+game | gateway → game-svc | `api.undo` (auto-routed) |
+| POST | `/api/temp/{id}/resign` | 🍪+game | gateway → game-svc | `api.resign` (auto-routed) |
+| POST | `/api/temp/{id}/hint` | 🍪+game | gateway → game-svc | `api.getHint` (auto-routed) |
+| POST | `/api/temp/{id}/set_players` | 🍪+game | gateway → game-svc | `api.setPlayers` (auto-routed) |
+| POST | `/api/temp/{id}/set_position` | 🍪+game | gateway → game-svc | `api.setPosition` (auto-routed) |
+| GET | `/api/temp/{id}/pgn` | 🍪+game | gateway → game-svc | `api.pgnDownloadUrl` (auto-routed) |
+| GET | `/api/temp/{id}/replay` | 🍪+game | gateway → game-svc | (data fetched by gateway) |
+| POST | `/api/temp/{id}/load_pgn` | 🍪+game | gateway → game-svc | `api.loadPgn` (auto-routed) |
+| POST | `/api/temp/{id}/analyze` | 🍪+game | gateway → game-svc | `api.analyze` (auto-routed) |
 
-`api.ts` routes by ID prefix: any game whose ID starts with `temp-`
-hits the `/api/temp/*` surface; everything else hits the durable
-`/api/*` surface. SPA components don't branch on this themselves.
+`api.ts:gameRoute(id, verb)` routes by ID prefix: any game whose ID
+starts with `temp-` hits `/api/temp/{id}/<verb>`; everything else
+hits `/api/games/{id}/<verb>`. SPA components don't branch on this
+themselves.
 
 ### Infra
 | Method | Path | Notes |

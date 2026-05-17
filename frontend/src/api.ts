@@ -78,26 +78,27 @@ export const api = {
   declineInvite: (id: string) => request<void>(`/api/invites/${id}/decline`, { method: 'POST' }),
   cancelInvite: (id: string) => request<void>(`/api/invites/${id}/cancel`, { method: 'POST' }),
 
-  // ===== In-game actions (require game_id) =====
-  // Each helper auto-routes to /api/temp/* when the gameId starts with
-  // "temp-" so GameView is unaware of the storage tier.
-  getState: (gameId: string) => request<StateJSON>(`${gameRoute(gameId, 'state')}?game_id=${gameId}`),
-  move: (gameId: string, move: string) => request<StateJSON>(`${gameRoute(gameId, 'move')}?game_id=${gameId}`, {
+  // ===== In-game actions (require game_id in the path) =====
+  // gameRoute() auto-namespaces to /api/temp/{id}/<verb> for temp games
+  // (id prefix "temp-") and /api/games/{id}/<verb> for durable games,
+  // so callers stay storage-tier-agnostic.
+  getState: (gameId: string) => request<StateJSON>(gameRoute(gameId, 'state')),
+  move: (gameId: string, move: string) => request<StateJSON>(gameRoute(gameId, 'move'), {
     method: 'POST',
     body: JSON.stringify({ move })
   }),
-  resign: (gameId: string) => request<StateJSON>(`${gameRoute(gameId, 'resign')}?game_id=${gameId}`, {
+  resign: (gameId: string) => request<StateJSON>(gameRoute(gameId, 'resign'), {
     method: 'POST',
   }),
-  newGame: (gameId: string, engine_white: boolean, engine_black: boolean) => request<StateJSON>(`${gameRoute(gameId, 'new')}?game_id=${gameId}`, {
+  newGame: (gameId: string, engine_white: boolean, engine_black: boolean) => request<StateJSON>(gameRoute(gameId, 'new'), {
     method: 'POST',
     body: JSON.stringify({ engine_white, engine_black })
   }),
-  setPlayers: (gameId: string, engine_white: boolean, engine_black: boolean, white_think_time: number, black_think_time: number) => request<StateJSON>(`${gameRoute(gameId, 'set_players')}?game_id=${gameId}`, {
+  setPlayers: (gameId: string, engine_white: boolean, engine_black: boolean, white_think_time: number, black_think_time: number) => request<StateJSON>(gameRoute(gameId, 'set_players'), {
     method: 'POST',
     body: JSON.stringify({ engine_white, engine_black, white_think_time, black_think_time })
   }),
-  setPosition: (gameId: string, fen: string) => request<StateJSON>(`${gameRoute(gameId, 'set_position')}?game_id=${gameId}`, {
+  setPosition: (gameId: string, fen: string) => request<StateJSON>(gameRoute(gameId, 'set_position'), {
     method: 'POST',
     body: JSON.stringify({ fen })
   }),
@@ -106,36 +107,36 @@ export const api = {
   // (returns a file download) — we don't need to round-trip through
   // request(). loadPgn replays a pasted PGN; same engine-only rule
   // as setPosition.
-  pgnDownloadUrl: (gameId: string) => `${API_BASE}${gameRoute(gameId, 'pgn')}?game_id=${gameId}`,
-  loadPgn: (gameId: string, pgn: string) => request<StateJSON>(`${gameRoute(gameId, 'load_pgn')}?game_id=${gameId}`, {
+  pgnDownloadUrl: (gameId: string) => `${API_BASE}${gameRoute(gameId, 'pgn')}`,
+  loadPgn: (gameId: string, pgn: string) => request<StateJSON>(gameRoute(gameId, 'load_pgn'), {
     method: 'POST',
     body: JSON.stringify({ pgn })
   }),
-  analyze: (gameId: string) => request<{ ok: boolean; plies: number }>(`${gameRoute(gameId, 'analyze')}?game_id=${gameId}`, {
+  analyze: (gameId: string) => request<{ ok: boolean; plies: number }>(gameRoute(gameId, 'analyze'), {
     method: 'POST',
   }),
-  undo: (gameId: string) => request<StateJSON>(`${gameRoute(gameId, 'undo')}?game_id=${gameId}`, { method: 'POST' }),
-  getHint: (gameId: string, movetime: number) => request<HintResponse>(`${gameRoute(gameId, 'hint')}?game_id=${gameId}`, {
+  undo: (gameId: string) => request<StateJSON>(gameRoute(gameId, 'undo'), { method: 'POST' }),
+  getHint: (gameId: string, movetime: number) => request<HintResponse>(gameRoute(gameId, 'hint'), {
     method: 'POST',
     body: JSON.stringify({ movetime })
   }),
 
-  // ===== Draw flow (PvP only) =====
-  drawOffer: (gameId: string) => request<void>(`/api/draw_offer?game_id=${gameId}`, { method: 'POST' }),
-  drawAccept: (gameId: string) => request<StateJSON>(`/api/draw_accept?game_id=${gameId}`, { method: 'POST' }),
-  drawDecline: (gameId: string) => request<void>(`/api/draw_decline?game_id=${gameId}`, { method: 'POST' }),
+  // ===== Draw flow (PvP only — temp games have no second player) =====
+  drawOffer: (gameId: string) => request<void>(`/api/games/${gameId}/draw_offer`, { method: 'POST' }),
+  drawAccept: (gameId: string) => request<StateJSON>(`/api/games/${gameId}/draw_accept`, { method: 'POST' }),
+  drawDecline: (gameId: string) => request<void>(`/api/games/${gameId}/draw_decline`, { method: 'POST' }),
 
   // ===== Takeback flow (PvP, casual only) =====
-  takebackOffer: (gameId: string) => request<void>(`/api/takeback_offer?game_id=${gameId}`, { method: 'POST' }),
-  takebackAccept: (gameId: string) => request<StateJSON>(`/api/takeback_accept?game_id=${gameId}`, { method: 'POST' }),
-  takebackDecline: (gameId: string) => request<void>(`/api/takeback_decline?game_id=${gameId}`, { method: 'POST' }),
+  takebackOffer: (gameId: string) => request<void>(`/api/games/${gameId}/takeback_offer`, { method: 'POST' }),
+  takebackAccept: (gameId: string) => request<StateJSON>(`/api/games/${gameId}/takeback_accept`, { method: 'POST' }),
+  takebackDecline: (gameId: string) => request<void>(`/api/games/${gameId}/takeback_decline`, { method: 'POST' }),
 
   // ===== Rematch flow (finished PvP / bot games only) =====
   // Accept returns the new game's StateJSON so the accepter can
   // router.push immediately without a second /api/state round-trip.
-  rematchOffer: (gameId: string) => request<void>(`/api/rematch_offer?game_id=${gameId}`, { method: 'POST' }),
-  rematchAccept: (gameId: string) => request<{ game_id: string }>(`/api/rematch_accept?game_id=${gameId}`, { method: 'POST' }),
-  rematchDecline: (gameId: string) => request<void>(`/api/rematch_decline?game_id=${gameId}`, { method: 'POST' }),
+  rematchOffer: (gameId: string) => request<void>(`/api/games/${gameId}/rematch_offer`, { method: 'POST' }),
+  rematchAccept: (gameId: string) => request<{ game_id: string }>(`/api/games/${gameId}/rematch_accept`, { method: 'POST' }),
+  rematchDecline: (gameId: string) => request<void>(`/api/games/${gameId}/rematch_decline`, { method: 'POST' }),
 
   // ===== Admin (is_admin gated; non-admins get 404) =====
   adminOverview: () => request<{
@@ -194,9 +195,9 @@ export const api = {
   // ===== Spectator (durable games only) =====
   // Owner-only toggle. Backend rejects with 404 if the caller isn't a
   // participant. When true, /watch/{id} works and any signed-in user can
-  // /api/state the row.
+  // /api/games/{id}/state the row.
   setVisibility: (gameId: string, is_public: boolean) =>
-    request<{ is_public: boolean }>(`/api/visibility?game_id=${gameId}`, {
+    request<{ is_public: boolean }>(`/api/games/${gameId}/visibility`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ is_public }),
@@ -217,9 +218,12 @@ export function isTempGameId(id: string): boolean {
   return id.startsWith('temp-');
 }
 
-// gameRoute picks /api/temp/<verb> for temp games and /api/<verb> for
-// durable games. Centralises the "which surface owns this game" decision
-// so callers don't sprinkle isTempGameId checks everywhere.
+// gameRoute returns the RESTful per-game endpoint for the given verb,
+// auto-namespaced by storage tier: /api/temp/{id}/<verb> for temp games
+// (id prefix "temp-") and /api/games/{id}/<verb> for durable games.
+// Centralises the "which surface owns this game" decision so callers
+// don't sprinkle isTempGameId checks everywhere.
 function gameRoute(id: string, verb: 'state' | 'move' | 'resign' | 'new' | 'hint' | 'undo' | 'set_players' | 'set_position' | 'pgn' | 'load_pgn' | 'analyze'): string {
-  return isTempGameId(id) ? `/api/temp/${verb}` : `/api/${verb}`;
+  const base = isTempGameId(id) ? '/api/temp' : '/api/games';
+  return `${base}/${encodeURIComponent(id)}/${verb}`;
 }

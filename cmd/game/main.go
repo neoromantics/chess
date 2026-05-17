@@ -62,35 +62,38 @@ func main() {
 		w.WriteHeader(200)
 		w.Write([]byte("OK"))
 	})
-	mux.HandleFunc("GET /api/state", s.handleState)
-	mux.HandleFunc("GET /api/can_watch", s.handleCanWatch)
 	mux.HandleFunc("GET /api/games", s.handleListGames)
-	mux.HandleFunc("GET /api/replay", s.handleReplayData)
-	mux.HandleFunc("POST /api/visibility", s.handleSetVisibility)
+	// Per-game endpoints are nested under /api/games/{id}/<verb>. The
+	// id arrives via PathValue("id") and is read by handlers through
+	// gameIDFrom(r), which falls back to the legacy ?game_id= query
+	// param so any straggler caller still works during the rollout.
+	mux.HandleFunc("GET /api/games/{id}/state", s.handleState)
+	mux.HandleFunc("GET /api/games/{id}/can_watch", s.handleCanWatch)
+	mux.HandleFunc("GET /api/games/{id}/replay", s.handleReplayData)
+	mux.HandleFunc("POST /api/games/{id}/visibility", s.handleSetVisibility)
 
 	// Sync game-mutation HTTP. See cmd/game/handlers.go for the
-	// shared lock + ownership pattern. These are the contract the
-	// monolith exposed; the SPA was written for them.
-	mux.HandleFunc("POST /api/move", s.handleHTTPMove)
-	mux.HandleFunc("POST /api/resign", s.handleHTTPResign)
-	mux.HandleFunc("POST /api/new", s.handleHTTPNew)
-	mux.HandleFunc("POST /api/set_players", s.handleHTTPSetPlayers)
-	mux.HandleFunc("POST /api/set_position", s.handleHTTPSetPosition)
-	mux.HandleFunc("GET /api/pgn", s.handleHTTPDownloadPGN)
-	mux.HandleFunc("POST /api/load_pgn", s.handleHTTPLoadPGN)
-	mux.HandleFunc("POST /api/analyze", s.handleHTTPAnalyze)
-	mux.HandleFunc("POST /api/undo", s.handleHTTPUndo)
+	// shared lock + ownership pattern.
+	mux.HandleFunc("POST /api/games/{id}/move", s.handleHTTPMove)
+	mux.HandleFunc("POST /api/games/{id}/resign", s.handleHTTPResign)
+	mux.HandleFunc("POST /api/games/{id}/new", s.handleHTTPNew)
+	mux.HandleFunc("POST /api/games/{id}/set_players", s.handleHTTPSetPlayers)
+	mux.HandleFunc("POST /api/games/{id}/set_position", s.handleHTTPSetPosition)
+	mux.HandleFunc("GET /api/games/{id}/pgn", s.handleHTTPDownloadPGN)
+	mux.HandleFunc("POST /api/games/{id}/load_pgn", s.handleHTTPLoadPGN)
+	mux.HandleFunc("POST /api/games/{id}/analyze", s.handleHTTPAnalyze)
+	mux.HandleFunc("POST /api/games/{id}/undo", s.handleHTTPUndo)
 	mux.HandleFunc("DELETE /api/games/{id}", s.handleHTTPDelete)
-	mux.HandleFunc("POST /api/hint", s.handleHTTPHint)
-	mux.HandleFunc("POST /api/draw_offer", s.handleDrawOffer)
-	mux.HandleFunc("POST /api/draw_accept", s.handleDrawAccept)
-	mux.HandleFunc("POST /api/draw_decline", s.handleDrawDecline)
-	mux.HandleFunc("POST /api/takeback_offer", s.handleTakebackOffer)
-	mux.HandleFunc("POST /api/takeback_accept", s.handleTakebackAccept)
-	mux.HandleFunc("POST /api/takeback_decline", s.handleTakebackDecline)
-	mux.HandleFunc("POST /api/rematch_offer", s.handleRematchOffer)
-	mux.HandleFunc("POST /api/rematch_accept", s.handleRematchAccept)
-	mux.HandleFunc("POST /api/rematch_decline", s.handleRematchDecline)
+	mux.HandleFunc("POST /api/games/{id}/hint", s.handleHTTPHint)
+	mux.HandleFunc("POST /api/games/{id}/draw_offer", s.handleDrawOffer)
+	mux.HandleFunc("POST /api/games/{id}/draw_accept", s.handleDrawAccept)
+	mux.HandleFunc("POST /api/games/{id}/draw_decline", s.handleDrawDecline)
+	mux.HandleFunc("POST /api/games/{id}/takeback_offer", s.handleTakebackOffer)
+	mux.HandleFunc("POST /api/games/{id}/takeback_accept", s.handleTakebackAccept)
+	mux.HandleFunc("POST /api/games/{id}/takeback_decline", s.handleTakebackDecline)
+	mux.HandleFunc("POST /api/games/{id}/rematch_offer", s.handleRematchOffer)
+	mux.HandleFunc("POST /api/games/{id}/rematch_accept", s.handleRematchAccept)
+	mux.HandleFunc("POST /api/games/{id}/rematch_decline", s.handleRematchDecline)
 
 	mux.HandleFunc("POST /api/invites/send", s.handleSendInvite)
 	mux.HandleFunc("GET /api/invites/pending", s.handleListPendingInvites)
@@ -99,19 +102,22 @@ func main() {
 	mux.HandleFunc("POST /api/invites/{id}/cancel", s.handleCancelInvite)
 
 	// Temp game (anonymous, Redis-only, 10-min sliding TTL). See cmd/game/temp.go.
+	// The whole /api/temp namespace IS the anonymous-games surface, so
+	// per-game endpoints nest under /api/temp/{id}/<verb> rather than
+	// /api/temp/games/{id}/<verb> — the "games" word would be redundant.
 	mux.HandleFunc("POST /api/temp/session", s.handleTempSession)
-	mux.HandleFunc("GET /api/temp/state", s.handleTempState)
-	mux.HandleFunc("POST /api/temp/move", s.handleTempMove)
-	mux.HandleFunc("POST /api/temp/new", s.handleTempNew)
-	mux.HandleFunc("POST /api/temp/resign", s.handleTempResign)
-	mux.HandleFunc("POST /api/temp/undo", s.handleTempUndo)
-	mux.HandleFunc("POST /api/temp/hint", s.handleTempHint)
-	mux.HandleFunc("POST /api/temp/set_players", s.handleTempSetPlayers)
-	mux.HandleFunc("POST /api/temp/set_position", s.handleTempSetPosition)
-	mux.HandleFunc("GET /api/temp/pgn", s.handleTempDownloadPGN)
-	mux.HandleFunc("GET /api/temp/replay", s.handleTempReplayData)
-	mux.HandleFunc("POST /api/temp/load_pgn", s.handleTempLoadPGN)
-	mux.HandleFunc("POST /api/temp/analyze", s.handleTempAnalyze)
+	mux.HandleFunc("GET /api/temp/{id}/state", s.handleTempState)
+	mux.HandleFunc("POST /api/temp/{id}/move", s.handleTempMove)
+	mux.HandleFunc("POST /api/temp/{id}/new", s.handleTempNew)
+	mux.HandleFunc("POST /api/temp/{id}/resign", s.handleTempResign)
+	mux.HandleFunc("POST /api/temp/{id}/undo", s.handleTempUndo)
+	mux.HandleFunc("POST /api/temp/{id}/hint", s.handleTempHint)
+	mux.HandleFunc("POST /api/temp/{id}/set_players", s.handleTempSetPlayers)
+	mux.HandleFunc("POST /api/temp/{id}/set_position", s.handleTempSetPosition)
+	mux.HandleFunc("GET /api/temp/{id}/pgn", s.handleTempDownloadPGN)
+	mux.HandleFunc("GET /api/temp/{id}/replay", s.handleTempReplayData)
+	mux.HandleFunc("POST /api/temp/{id}/load_pgn", s.handleTempLoadPGN)
+	mux.HandleFunc("POST /api/temp/{id}/analyze", s.handleTempAnalyze)
 	// Internal-only — gateway calls this from handleSignup when
 	// the signup request carried a chess-anon cookie. Not in the
 	// public proxy table.
@@ -271,7 +277,7 @@ type moveJSON struct {
 }
 
 func (s *GameService) handleState(w http.ResponseWriter, r *http.Request) {
-	gameID := r.URL.Query().Get("game_id")
+	gameID := gameIDFrom(r)
 	if gameID == "" {
 		http.Error(w, "missing game_id", 400)
 		return
@@ -337,7 +343,7 @@ func (s *GameService) maybeLazyEngineRetrigger(ctx context.Context, rec *db.Game
 // Used by the gateway's WS upgrade gate before promoting an HTTP
 // connection — at scale we burn enough CPU on WS opens to matter.
 func (s *GameService) handleCanWatch(w http.ResponseWriter, r *http.Request) {
-	gameID := r.URL.Query().Get("game_id")
+	gameID := gameIDFrom(r)
 	if gameID == "" {
 		http.Error(w, "missing game_id", 400)
 		return
@@ -361,7 +367,7 @@ func (s *GameService) handleCanWatch(w http.ResponseWriter, r *http.Request) {
 // flip it. Body: {"is_public": true|false}. Returns the updated row's
 // is_public for the SPA to reflect immediately.
 func (s *GameService) handleSetVisibility(w http.ResponseWriter, r *http.Request) {
-	gameID := r.URL.Query().Get("game_id")
+	gameID := gameIDFrom(r)
 	if gameID == "" {
 		http.Error(w, "missing game_id", 400)
 		return
@@ -566,7 +572,7 @@ func (s *GameService) snapshotFromRecord(ctx context.Context, rec *db.GameRecord
 // game so the gateway's replay.html template substitution has something
 // to embed. Pure JSON; gateway is responsible for wrapping it in HTML.
 func (s *GameService) handleReplayData(w http.ResponseWriter, r *http.Request) {
-	gameID := r.URL.Query().Get("game_id")
+	gameID := gameIDFrom(r)
 	if gameID == "" {
 		http.Error(w, "missing game_id", 400)
 		return

@@ -157,7 +157,7 @@ func (t *tempStore) refreshTTL(ctx context.Context, gameID, anonID string) {
 // and returns ok=false — handlers stop on a single line.
 func (s *GameService) requireTempAccess(w http.ResponseWriter, r *http.Request) (*tempGameRec, *tempStore, bool) {
 	anonID := authedAnonID(r)
-	gameID := r.URL.Query().Get("game_id")
+	gameID := gameIDFrom(r)
 	if anonID == "" {
 		http.Error(w, "missing anon_id", http.StatusBadRequest)
 		return nil, nil, false
@@ -970,7 +970,7 @@ func (s *GameService) applyTempEngineMove(ctx context.Context, resp eventbus.Eng
 // way for a non-owner to view a replay, which matches the durable-game
 // replay's same loose stance.
 func (s *GameService) handleTempReplayData(w http.ResponseWriter, r *http.Request) {
-	gameID := r.URL.Query().Get("game_id")
+	gameID := gameIDFrom(r)
 	if gameID == "" {
 		http.Error(w, "missing game_id", http.StatusBadRequest)
 		return

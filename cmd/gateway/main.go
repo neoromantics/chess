@@ -134,37 +134,39 @@ func main() {
 	// frontend has no business knowing it (and shouldn't be trusted to
 	// send it — that would let any caller list any user's games).
 	gameProxy := httputil.NewSingleHostReverseProxy(gameSvcURL)
-	// /api/state is auth-optional so anonymous spectator links work for
-	// public games. Game-service's handleState uses the spectator-aware
-	// userMayRead predicate — private games still 404 for non-owners.
-	mux.Handle("GET /api/state", gw.injectAuthedUserOptional(gameProxy))
 	mux.Handle("GET /api/games", gw.injectAuthedUser(gameProxy))
-	mux.Handle("POST /api/visibility", gw.injectAuthedUser(gameProxy))
 
-	// All single-game mutations now route through game-service over
-	// sync HTTP. Gateway only authenticates + injects user_id; game-
-	// service holds the per-game lock and owns the snapshot synthesis.
-	// See CLAUDE.md ("Streams vs HTTP") for why these aren't Commands.
-	mux.Handle("POST /api/move", gw.injectAuthedUser(gameProxy))
-	mux.Handle("POST /api/resign", gw.injectAuthedUser(gameProxy))
-	mux.Handle("POST /api/new", gw.injectAuthedUser(gameProxy))
-	mux.Handle("POST /api/set_players", gw.injectAuthedUser(gameProxy))
-	mux.Handle("POST /api/set_position", gw.injectAuthedUser(gameProxy))
-	mux.Handle("GET /api/pgn", gw.injectAuthedUser(gameProxy))
-	mux.Handle("POST /api/load_pgn", gw.injectAuthedUser(gameProxy))
-	mux.Handle("POST /api/analyze", gw.injectAuthedUser(gameProxy))
-	mux.Handle("POST /api/undo", gw.injectAuthedUser(gameProxy))
+	// Per-game endpoints are RESTfully nested under /api/games/{id}/<verb>.
+	// Gateway only authenticates + injects user_id; game-service holds the
+	// per-game lock and owns the snapshot synthesis. See CLAUDE.md ("Streams
+	// vs HTTP") for why these aren't Commands.
+	//
+	// /api/games/{id}/state is auth-optional so anonymous spectator links
+	// work for public games. game-service's handleState uses the
+	// spectator-aware userMayRead predicate — private games still 404 for
+	// non-owners.
+	mux.Handle("GET /api/games/{id}/state", gw.injectAuthedUserOptional(gameProxy))
+	mux.Handle("GET /api/games/{id}/pgn", gw.injectAuthedUser(gameProxy))
 	mux.Handle("DELETE /api/games/{id}", gw.injectAuthedUser(gameProxy))
-	mux.Handle("POST /api/hint", gw.injectAuthedUser(gameProxy))
-	mux.Handle("POST /api/draw_offer", gw.injectAuthedUser(gameProxy))
-	mux.Handle("POST /api/draw_accept", gw.injectAuthedUser(gameProxy))
-	mux.Handle("POST /api/draw_decline", gw.injectAuthedUser(gameProxy))
-	mux.Handle("POST /api/takeback_offer", gw.injectAuthedUser(gameProxy))
-	mux.Handle("POST /api/takeback_accept", gw.injectAuthedUser(gameProxy))
-	mux.Handle("POST /api/takeback_decline", gw.injectAuthedUser(gameProxy))
-	mux.Handle("POST /api/rematch_offer", gw.injectAuthedUser(gameProxy))
-	mux.Handle("POST /api/rematch_accept", gw.injectAuthedUser(gameProxy))
-	mux.Handle("POST /api/rematch_decline", gw.injectAuthedUser(gameProxy))
+	mux.Handle("POST /api/games/{id}/visibility", gw.injectAuthedUser(gameProxy))
+	mux.Handle("POST /api/games/{id}/move", gw.injectAuthedUser(gameProxy))
+	mux.Handle("POST /api/games/{id}/resign", gw.injectAuthedUser(gameProxy))
+	mux.Handle("POST /api/games/{id}/new", gw.injectAuthedUser(gameProxy))
+	mux.Handle("POST /api/games/{id}/set_players", gw.injectAuthedUser(gameProxy))
+	mux.Handle("POST /api/games/{id}/set_position", gw.injectAuthedUser(gameProxy))
+	mux.Handle("POST /api/games/{id}/load_pgn", gw.injectAuthedUser(gameProxy))
+	mux.Handle("POST /api/games/{id}/analyze", gw.injectAuthedUser(gameProxy))
+	mux.Handle("POST /api/games/{id}/undo", gw.injectAuthedUser(gameProxy))
+	mux.Handle("POST /api/games/{id}/hint", gw.injectAuthedUser(gameProxy))
+	mux.Handle("POST /api/games/{id}/draw_offer", gw.injectAuthedUser(gameProxy))
+	mux.Handle("POST /api/games/{id}/draw_accept", gw.injectAuthedUser(gameProxy))
+	mux.Handle("POST /api/games/{id}/draw_decline", gw.injectAuthedUser(gameProxy))
+	mux.Handle("POST /api/games/{id}/takeback_offer", gw.injectAuthedUser(gameProxy))
+	mux.Handle("POST /api/games/{id}/takeback_accept", gw.injectAuthedUser(gameProxy))
+	mux.Handle("POST /api/games/{id}/takeback_decline", gw.injectAuthedUser(gameProxy))
+	mux.Handle("POST /api/games/{id}/rematch_offer", gw.injectAuthedUser(gameProxy))
+	mux.Handle("POST /api/games/{id}/rematch_accept", gw.injectAuthedUser(gameProxy))
+	mux.Handle("POST /api/games/{id}/rematch_decline", gw.injectAuthedUser(gameProxy))
 
 	// 4. New game (intent dispatch). Async: gateway publishes a Command
 	// onto the game:commands stream and returns the assigned game_id
@@ -420,16 +422,13 @@ func (gw *Gateway) handleJoinQueue(w http.ResponseWriter, r *http.Request) {
 }
 
 // userMayWatchGame is the WS upgrade pre-flight that asks game-service
-// "may userID read gameID?". Hits /api/can_watch — a bare ownership
-// check, no snapshot synthesis. The game-service handler is spectator-
-// aware: signed-in participants pass on every game; anyone passes on
-// public games. Pass userID=0 for anonymous viewers.
+// "may userID read gameID?". Hits /api/games/{id}/can_watch — a bare
+// ownership check, no snapshot synthesis. The game-service handler is
+// spectator-aware: signed-in participants pass on every game; anyone
+// passes on public games. Pass userID=0 for anonymous viewers.
 func (gw *Gateway) userMayWatchGame(ctx context.Context, userID int64, gameID string) bool {
 	u := *gw.gameSvcURL
-	u.Path = "/api/can_watch"
-	q := u.Query()
-	q.Set("game_id", gameID)
-	u.RawQuery = q.Encode()
+	u.Path = "/api/games/" + gameID + "/can_watch"
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if userID > 0 {
 		req.Header.Set("X-User-ID", strconv.FormatInt(userID, 10))
@@ -462,17 +461,15 @@ func (gw *Gateway) handleReplay(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Temp games live in a separate Redis namespace; route to the
-	// matching game-service endpoint. Durable IDs go to /api/replay,
-	// temp IDs (always prefixed "temp-") go to /api/temp/replay.
+	// matching game-service endpoint. Durable IDs go to
+	// /api/games/{id}/replay, temp IDs (always prefixed "temp-") go to
+	// /api/temp/{id}/replay.
 	dataURL := *gw.gameSvcURL
 	if strings.HasPrefix(gameID, "temp-") {
-		dataURL.Path = "/api/temp/replay"
+		dataURL.Path = "/api/temp/" + gameID + "/replay"
 	} else {
-		dataURL.Path = "/api/replay"
+		dataURL.Path = "/api/games/" + gameID + "/replay"
 	}
-	q := dataURL.Query()
-	q.Set("game_id", gameID)
-	dataURL.RawQuery = q.Encode()
 	// Forward the caller's identity so game-service can enforce the same
 	// userMayRead check it does on /api/state. Without this, a private
 	// game's replay was reachable to anyone who knew the UUID — the

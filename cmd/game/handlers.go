@@ -39,6 +39,18 @@ import (
 // holder doesn't strand the game.
 const gameLockTTL = 10 * time.Second
 
+// gameIDFrom extracts the game id from a request. Prefers the RESTful
+// path-param form (/api/games/{id}/<verb>) and falls back to the legacy
+// ?game_id= query string. Returns "" if neither is set. One helper so
+// every per-game handler reads the id the same way regardless of which
+// URL style its route uses.
+func gameIDFrom(r *http.Request) string {
+	if id := r.PathValue("id"); id != "" {
+		return id
+	}
+	return r.URL.Query().Get("game_id")
+}
+
 // requireGameAccess loads the game, verifies the caller owns it, and
 // returns (record, userID, nil) on success. Writes 4xx and returns nil
 // on failure. Handlers use it as a single guard line; centralizing it
@@ -49,14 +61,7 @@ func (s *GameService) requireGameAccess(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return nil, 0, false
 	}
-	// Path-param first (RESTful style: /api/games/{id}/...), query-param
-	// fallback for the legacy endpoints that still embed game_id as
-	// ?game_id=X. Lets us migrate one URL at a time without forking the
-	// access-check helper.
-	gameID := r.PathValue("id")
-	if gameID == "" {
-		gameID = r.URL.Query().Get("game_id")
-	}
+	gameID := gameIDFrom(r)
 	if gameID == "" {
 		http.Error(w, "missing game_id", http.StatusBadRequest)
 		return nil, 0, false
