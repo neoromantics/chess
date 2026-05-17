@@ -9,15 +9,40 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted } from 'vue';
+import { onMounted, onUnmounted } from 'vue';
+import { useRouter } from 'vue-router';
 import { useAuthStore } from './stores/auth';
+import { useUserEventsStore } from './stores/userEvents';
+import { useToastStore } from './stores/toast';
 import Navbar from './components/Navbar.vue';
 import Toast from './components/Toast.vue';
 
 const authStore = useAuthStore();
+const userEvents = useUserEventsStore();
+const toastStore = useToastStore();
+const router = useRouter();
+
+// Global match-found listener. Match.vue also registers one (it shows
+// the page-local toast), but registering at the app root means the
+// router.push happens even if the user navigated away from /match
+// before the pairing landed. Without this, a paired user who clicked
+// into /invites or back to / would miss the auto-redirect and have to
+// reload to find their game.
+let unsubMatchFound: (() => void) | null = null;
 
 onMounted(() => {
   authStore.init();
+  unsubMatchFound = userEvents.on('match_found', (payload: any) => {
+    if (!payload?.game_id) return;
+    const target = `/game/${payload.game_id}`;
+    if (router.currentRoute.value.path === target) return;
+    toastStore.success('Match found!');
+    router.push(target);
+  });
+});
+
+onUnmounted(() => {
+  if (unsubMatchFound) unsubMatchFound();
 });
 </script>
 

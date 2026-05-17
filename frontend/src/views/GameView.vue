@@ -995,9 +995,43 @@ watch(flipped, (val) => localStorage.setItem('chess-flipped', val ? '1' : '0'));
 // Reset the snapshot-rev gate when navigating between games (router
 // reuses GameView with different props.id). Without this, an older
 // game's high rev would block a fresh game's first snapshot.
-watch(() => props.id, () => {
+// Also tear down the per-game WebSocket and re-fetch state — the
+// router reuses the component across /game/:id transitions, so
+// onMounted does NOT fire again on a rematch / match-found redirect.
+// Without this re-init the user lands on the new game's URL but
+// keeps the old board state and the old WS feed.
+watch(() => props.id, async (newId, oldId) => {
+  if (!newId || newId === oldId) return;
   lastSnapshotRev = 0;
   didAutoOrient = false;
+  // Drop per-game transient UI state so the new game starts clean.
+  state.value = null;
+  selected.value = null;
+  incomingDrawFrom.value = null;
+  outgoingDrawSent.value = false;
+  incomingTakebackFrom.value = null;
+  outgoingTakebackSent.value = false;
+  incomingRematchFrom.value = null;
+  outgoingRematchSent.value = false;
+  assessments.value = {};
+  analyzing.value = false;
+  // Close the old WS before opening the new one. Null the onclose
+  // first so the auto-reconnect timer doesn't try to reopen the old
+  // game's channel after we've moved on.
+  if (ws) {
+    ws.onclose = null;
+    ws.close();
+    ws = null;
+  }
+  try {
+    const s = await api.getState(newId);
+    lastSoundedHistoryLen = s.history ? s.history.length : 0;
+    prevFenForSound = s.fen;
+    updateState(s);
+    connectWS();
+  } catch (e: any) {
+    error.value = e.message || 'Unknown error';
+  }
 });
 
 const onKeyDown = (e: KeyboardEvent) => {
