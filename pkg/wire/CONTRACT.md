@@ -216,6 +216,7 @@ Forgetting this breaks every WS upgrade silently with
 | `RematchDeclined` | opponent declined a rematch offer | `{by_user_id, game_id}` | `eventbus.EvtRematchDeclined` | `GameView.connectWS` → toast + clear banner |
 | `RematchAccepted` | opponent accepted; fresh row created with swapped colors | `{new_game_id, white_user_id, black_user_id, by_user_id}` | `eventbus.EvtRematchAccepted` | `GameView.connectWS` → `router.push('/game/'+new_game_id)` for participants; toast for spectators |
 | `Assessment` | one per-ply analysis result (cmd/game/analysis.go) | `PlyAssessment {ply, played, best, score, depth, cp_loss, class}` where `class ∈ {best, only, great, good, inaccuracy, mistake, blunder}` | `eventbus.EvtAssessment` | `GameView.connectWS` → `assessments[ply] = a` |
+| `viewer_count` | gateway hub subscriber-count changed for this channel (players + spectators) | `{count: int}` — backed by the `game:viewers:{id}` Redis INCR/DECR counter | `eventbus.EvtViewerCount` | `GameView.connectWS` → `viewerCount.value = n`; `SidePanel` renders "N watching" pill when N > 1 |
 
 ### `/ws/user` (user.evt.{user_id})
 

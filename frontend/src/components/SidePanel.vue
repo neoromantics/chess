@@ -39,6 +39,14 @@
       <span class="prompt-text">Spectating — read-only view.</span>
     </div>
 
+    <!-- Live viewer count. Surfaced whenever there's more than one WS
+         subscriber on this channel so a player gets a heads-up that
+         someone's watching, and spectators see the audience size. -->
+    <div v-if="(viewerCount ?? 0) > 1" class="viewer-pill" :title="`${viewerCount} WebSocket subscribers on this game's channel`">
+      <span class="viewer-dot" aria-hidden="true"></span>
+      {{ viewerCount }} watching
+    </div>
+
     <!-- Visibility toggle: owner-only. When ON, anyone can read the
          game (signed in or anonymous via /watch/{id}). PvP games only
          really benefit from this; engine games can flip too. -->
@@ -267,6 +275,11 @@ const props = defineProps<{
   pgnDownloadUrl?: string;
   assessments?: Record<number, { ply: number; played: string; best: string; score: number; depth: number; cp_loss: number; class: string }>;
   analyzing?: boolean;
+  // Live count of WS subscribers on the per-game channel. Players +
+  // spectators (the pub/sub layer doesn't distinguish them). Hidden
+  // when 0 or 1 since "1 watching" while you're alone is noise; the
+  // signal is only interesting once there's actually an audience.
+  viewerCount?: number;
 }>();
 
 const emit = defineEmits<{
@@ -490,6 +503,35 @@ const copyWatchLink = async () => {
 }
 .prompt-text { margin-bottom: 8px; }
 .prompt-actions { display: flex; gap: 8px; }
+
+/* Live spectator-count pill. Inline, low-contrast — informational,
+   not actionable. The blinking dot mirrors the "live" indicator
+   convention from broadcast UIs. */
+.viewer-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #cfe1f5;
+  background: #2a3340;
+  border: 1px solid #3a4754;
+  padding: 4px 10px;
+  border-radius: 12px;
+  align-self: flex-start;
+}
+.viewer-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #6ec77a;
+  box-shadow: 0 0 0 0 rgba(110, 199, 122, 0.6);
+  animation: viewer-pulse 1.6s ease-out infinite;
+}
+@keyframes viewer-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(110, 199, 122, 0.55); }
+  70%  { box-shadow: 0 0 0 8px rgba(110, 199, 122, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(110, 199, 122, 0); }
+}
 
 /* Visibility toggle row */
 .visibility {

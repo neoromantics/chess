@@ -124,6 +124,14 @@ const (
 	// class). Class ∈ {best, only, great, good, inaccuracy, mistake,
 	// blunder}. See cmd/game/analysis.go for the classifier.
 	EvtAssessment = "Assessment"
+	// EvtViewerCount broadcasts the live WebSocket-subscriber count for
+	// the per-game channel (players + spectators). Published by the
+	// gateway hub on every add/remove so all subscribers see a
+	// "N watching" number that ticks in real-time. Payload is a single
+	// {"count": N} object. Source-of-truth for the count is the
+	// `game:viewers:{id}` Redis INCR/DECR counter — NUMSUB returns
+	// pod-subscriber count, not WS-client count, so we maintain our own.
+	EvtViewerCount = "viewer_count"
 
 	// User-channel events (user.evt.{id}). snake_case matches what
 	// every Pinia store .on()s for. Renaming any of these is a

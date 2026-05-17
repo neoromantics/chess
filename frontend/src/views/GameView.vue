@@ -60,6 +60,7 @@
         :pgn-download-url="pgnDownloadUrl"
         :assessments="assessments"
         :analyzing="analyzing"
+        :viewer-count="viewerCount"
         @update:white-player-type="updatePlayerType('white', $event)"
         @update:black-player-type="updatePlayerType('black', $event)"
         @update:white-think-time="updateThinkTime('white', $event)"
@@ -201,6 +202,12 @@ const outgoingTakebackSent = ref(false);
 // new game's room (rematch_accepted → router.push), or on decline.
 const incomingRematchFrom = ref<number | null>(null);
 const outgoingRematchSent = ref(false);
+
+// Live spectator count, pushed by the gateway hub via WS `viewer_count`
+// events. Includes the caller themselves; SPA shows raw N for honesty
+// rather than trying to subtract the player(s) we'd need per-client
+// metadata to know about.
+const viewerCount = ref<number>(0);
 const canOfferDraw = computed(() => {
   // PvP-only, ongoing, and we're not the offerer waiting for a response.
   if (!state.value || state.value.status !== 'ongoing') return false;
@@ -597,6 +604,12 @@ const connectWS = () => {
         } else if (newId) {
           toastStore.info('Players started a rematch.');
         }
+      } else if (data.type === 'viewer_count') {
+        // Pushed by the gateway hub on every WS subscribe/unsubscribe
+        // for this channel. Count is players + spectators (the per-game
+        // pub/sub layer doesn't distinguish them).
+        const n = data.payload?.count;
+        if (typeof n === 'number' && n >= 0) viewerCount.value = n;
       } else if (data.type === 'Assessment') {
         const a = data.payload as Assessment;
         assessments.value[a.ply] = a;
@@ -1066,6 +1079,7 @@ watch(() => props.id, async (newId, oldId) => {
   outgoingTakebackSent.value = false;
   incomingRematchFrom.value = null;
   outgoingRematchSent.value = false;
+  viewerCount.value = 0;
   assessments.value = {};
   analyzing.value = false;
   // Close the old WS before opening the new one. Null the onclose

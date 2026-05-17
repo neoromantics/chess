@@ -21,15 +21,24 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/neoromantics/chess/pkg/eventbus"
 	"github.com/neoromantics/chess/pkg/metrics"
 	"github.com/redis/go-redis/v9"
 )
+
+// viewerCountTTL caps how long a leaked viewer counter (pod crashed
+// mid-session) lingers in Redis. Refreshed on every INCR so an active
+// game's counter never expires; only orphans from crashes age out.
+const viewerCountTTL = 24 * time.Hour
+
+func viewersKey(gameID string) string { return "game:viewers:" + gameID }
 
 type Hub struct {
 	bus *eventbus.Client
@@ -151,6 +160,14 @@ func (h *Hub) add(ctx context.Context, c *Client) {
 			slog.Warn("hub: subscribe failed", "channel", newUserKey, "error", err)
 		}
 	}
+	// Bump the per-game viewer counter and broadcast the new total.
+	// PUBSUB NUMSUB would count pods, not clients; we maintain our own
+	// INCR/DECR counter for accuracy. Broadcast goes on the same
+	// per-game channel the client just subscribed to so they see their
+	// own arrival reflected, and so other pods' subscribers update too.
+	if c.gameID != "" {
+		h.broadcastViewerCount(ctx, c.gameID, +1)
+	}
 	slog.Info("ws client registered", "game_id", c.gameID, "user_id", c.userID)
 }
 
@@ -197,7 +214,68 @@ func (h *Hub) remove(ctx context.Context, c *Client) {
 			slog.Warn("hub: unsubscribe failed", "channel", dropUserKey, "error", err)
 		}
 	}
+	// Decrement the per-game counter. Order matters: the local UNSUBSCRIBE
+	// happens above so this departing client won't receive its own
+	// decrement (good — they're gone). Other pods' subscribers do.
+	if c.gameID != "" {
+		h.broadcastViewerCount(ctx, c.gameID, -1)
+	}
 	slog.Info("ws client unregistered", "game_id", c.gameID, "user_id", c.userID)
+}
+
+// broadcastViewerCount adjusts the per-game viewer counter by delta
+// (+1 on add, -1 on remove) and publishes the new total on the game
+// channel so every subscriber renders an updated "N watching". Best-
+// effort — Redis hiccups log and move on; the count will resync the
+// next time a client joins/leaves.
+//
+// We maintain our own counter rather than relying on PUBSUB NUMSUB
+// because NUMSUB counts pub/sub connections (i.e. pods with a hub
+// that has subscribed), not WS clients. A single pod with 50 viewers
+// would show NUMSUB=1, not 50.
+func (h *Hub) broadcastViewerCount(ctx context.Context, gameID string, delta int64) {
+	key := viewersKey(gameID)
+	rdb := h.bus.Rdb()
+
+	var count int64
+	if delta > 0 {
+		n, err := rdb.IncrBy(ctx, key, delta).Result()
+		if err != nil {
+			slog.Warn("hub: viewer count incr failed", "game_id", gameID, "error", err)
+			return
+		}
+		count = n
+		// Refresh TTL so an active game's counter never expires; only
+		// orphaned counters (from a crashed pod that never decremented)
+		// age out via this 24h cap.
+		_ = rdb.Expire(ctx, key, viewerCountTTL).Err()
+	} else {
+		n, err := rdb.DecrBy(ctx, key, -delta).Result()
+		if err != nil {
+			slog.Warn("hub: viewer count decr failed", "game_id", gameID, "error", err)
+			return
+		}
+		if n < 0 {
+			// Defensive: a crashed pod can leave us with a negative if
+			// its INCRs never got the matching DECRs. Clamp to 0 and
+			// repair the key so future broadcasts start sane.
+			_ = rdb.Set(ctx, key, 0, viewerCountTTL).Err()
+			n = 0
+		}
+		count = n
+	}
+
+	payload, _ := json.Marshal(map[string]int64{"count": count})
+	evt := eventbus.Event{
+		Type:      eventbus.EvtViewerCount,
+		GameID:    gameID,
+		Payload:   payload,
+		Timestamp: time.Now(),
+	}
+	data, _ := json.Marshal(evt)
+	if err := rdb.Publish(ctx, "game.evt."+gameID, data).Err(); err != nil {
+		slog.Warn("hub: viewer count publish failed", "game_id", gameID, "error", err)
+	}
 }
 
 func (h *Hub) deliver(kind channelKind, key string, payload []byte) {
