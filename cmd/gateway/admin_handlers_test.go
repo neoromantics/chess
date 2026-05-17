@@ -67,7 +67,7 @@ func newFakeStore() *fakeStore {
 	}
 }
 
-func (f *fakeStore) addUser(u *db.User)                 { f.users[u.ID] = u }
+func (f *fakeStore) addUser(u *db.User) { f.users[u.ID] = u }
 func (f *fakeStore) GetUserByID(id int64) (*db.User, error) {
 	u, ok := f.users[id]
 	if !ok {
@@ -427,14 +427,14 @@ func (panicStore) CreateUser(string, string) (*db.User, error) {
 func (panicStore) GetUserByUsername(string) (*db.User, error) {
 	panic("unexpected GetUserByUsername")
 }
-func (panicStore) GetUserByID(int64) (*db.User, error)             { panic("unexpected GetUserByID") }
+func (panicStore) GetUserByID(int64) (*db.User, error) { panic("unexpected GetUserByID") }
 func (panicStore) SearchUsersByPrefix(string) ([]db.UserSummary, error) {
 	panic("unexpected SearchUsersByPrefix")
 }
 func (panicStore) UpdateUserProfile(int64, string, string, string, string) error {
 	panic("unexpected UpdateUserProfile")
 }
-func (panicStore) UpdateLastLogin(int64) error      { panic("unexpected UpdateLastLogin") }
+func (panicStore) UpdateLastLogin(int64) error        { panic("unexpected UpdateLastLogin") }
 func (panicStore) UpdatePassword(int64, string) error { panic("unexpected UpdatePassword") }
 func (panicStore) UpdateUserRating(db.RatingUpdate) error {
 	panic("unexpected UpdateUserRating")
@@ -443,13 +443,15 @@ func (panicStore) GetUserStats(int64) (*db.UserStats, error) { panic("unexpected
 func (panicStore) UpsertBot(string, string, int) (db.BotUser, error) {
 	panic("unexpected UpsertBot")
 }
-func (panicStore) ListBots() ([]db.BotUser, error)               { panic("unexpected ListBots") }
-func (panicStore) CountUsers() (int64, int64, error)             { panic("unexpected CountUsers") }
-func (panicStore) CountRecentSignups() (int64, int64, error)     { panic("unexpected CountRecentSignups") }
-func (panicStore) ListBotStats() ([]db.BotStat, error)           { panic("unexpected ListBotStats") }
-func (panicStore) ListRecentSignups() ([]db.AdminSignup, error)  { panic("unexpected ListRecentSignups") }
-func (panicStore) CountActiveGames() (int64, error)              { panic("unexpected CountActiveGames") }
-func (panicStore) DeleteUser(int64) (int64, error)               { panic("unexpected DeleteUser") }
+func (panicStore) ListBots() ([]db.BotUser, error)           { panic("unexpected ListBots") }
+func (panicStore) CountUsers() (int64, int64, error)         { panic("unexpected CountUsers") }
+func (panicStore) CountRecentSignups() (int64, int64, error) { panic("unexpected CountRecentSignups") }
+func (panicStore) ListBotStats() ([]db.BotStat, error)       { panic("unexpected ListBotStats") }
+func (panicStore) ListRecentSignups() ([]db.AdminSignup, error) {
+	panic("unexpected ListRecentSignups")
+}
+func (panicStore) CountActiveGames() (int64, error) { panic("unexpected CountActiveGames") }
+func (panicStore) DeleteUser(int64) (int64, error)  { panic("unexpected DeleteUser") }
 func (panicStore) InsertAdminAction(*int64, string, string, *int64, string, string) error {
 	panic("unexpected InsertAdminAction")
 }
