@@ -13,7 +13,6 @@
         @click="$emit('update:sound-enabled', !soundEnabled)"
         :title="soundEnabled ? 'Sound on (click to mute)' : 'Sound off (click to unmute)'"
       >
-        <span class="tool-icon" aria-hidden="true">{{ soundEnabled ? '🔊' : '🔇' }}</span>
         <span class="tool-label">Sound</span>
         <span class="switch-state">{{ soundEnabled ? 'On' : 'Off' }}</span>
       </button>
@@ -29,7 +28,6 @@
         @click="$emit('update:touch-move', !touchMove)"
         :title="touchMove ? 'Touch-move ON: a touched piece must move (FIDE rule)' : 'Touch-move OFF (default)'"
       >
-        <span class="tool-icon" aria-hidden="true">☝</span>
         <span class="tool-label">Touch-move</span>
         <span class="switch-state">{{ touchMove ? 'On' : 'Off' }}</span>
       </button>

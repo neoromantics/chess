@@ -462,6 +462,15 @@ const connectWS = () => {
   const url = `${protocol}//${host}/ws?game_id=${props.id}`;
 
   ws = new WebSocket(url);
+  ws.onopen = () => {
+    // Re-fetch state on every successful connect, not just the initial
+    // one. /ws and /api/state are routed independently; if a
+    // StateUpdated event landed during the 3s reconnect window (e.g.
+    // the engine moved while the SPA was offline), the per-game
+    // pub/sub channel had no subscriber and the event was dropped.
+    // The next state-poll catches us up.
+    refetchState();
+  };
   ws.onmessage = (event) => {
     try {
       const data = JSON.parse(event.data);

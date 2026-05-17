@@ -289,7 +289,46 @@ func (s *GameService) handleState(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "game not found", 404)
 		return
 	}
+	// Lazy engine retrigger. If the row says it's the engine's turn but
+	// no search is in flight (sentinel cleared), the previous attempt
+	// either lost its reply (dispatch failure cleared the sentinel) or
+	// timed out (TTL expired with the worker dying mid-search). Either
+	// way the engine will sit forever without external nudging. The
+	// next /api/state poll — which the SPA does on WS reconnect — is
+	// the natural place to recover: trigger a fresh search, return the
+	// snapshot with `thinking=true` so the spinner re-appears, and let
+	// the result land via the normal pipeline.
+	s.maybeLazyEngineRetrigger(r.Context(), rec)
 	writeJSON(w, s.snapshotFromRecord(r.Context(), rec))
+}
+
+// maybeLazyEngineRetrigger kicks off a fresh engine search if (a) the
+// game is ongoing, (b) it's the engine's turn, and (c) no thinking
+// sentinel is set. Idempotent: triggerEngineForMove SETs the sentinel
+// so a second concurrent /api/state read won't double-dispatch.
+// Skipped for bot-fallback rows during the bot's "reaction delay" —
+// processEngineResult's goroutine holds the sentinel across that
+// window, so the sentinel check already gates correctly.
+func (s *GameService) maybeLazyEngineRetrigger(ctx context.Context, rec *db.GameRecord) {
+	if rec == nil || rec.Status != "ongoing" {
+		return
+	}
+	if !rec.EngineWhite && !rec.EngineBlack {
+		return
+	}
+	gm := game.NewGame()
+	var history []string
+	_ = json.Unmarshal([]byte(rec.History), &history)
+	gm.Load(rec.StartFEN, history, rec.EngineWhite, rec.EngineBlack)
+	if !gm.EngineToMove() {
+		return
+	}
+	v, err := s.bus.Rdb().Get(ctx, "game:thinking:"+rec.ID).Result()
+	if err == nil && v == "1" {
+		return // search already in flight
+	}
+	slog.Info("lazy engine retrigger", "game_id", rec.ID, "side", gm.Board.SideToMove)
+	s.triggerEngineForMove(rec, gm)
 }
 
 // handleCanWatch is the cheap WS upgrade preflight: it returns 200 if
@@ -691,6 +730,10 @@ func (s *GameService) processEngineResult(ctx context.Context, msg redis.XMessag
 			}
 			if _, err := s.bus.SendCommand(bg, c); err != nil {
 				slog.Error("delayed engine MakeMove failed", "game_id", c.GameID, "error", err)
+				// Clear the thinking sentinel so the SPA's spinner falls
+				// instead of sitting at "thinking" until the 15s bot TTL
+				// expires. Same rationale as the regular dispatch path below.
+				_ = s.bus.Rdb().Del(bg, "game:thinking:"+c.GameID).Err()
 			}
 		}(cmd, delay, gen)
 		return
@@ -698,6 +741,12 @@ func (s *GameService) processEngineResult(ctx context.Context, msg redis.XMessag
 
 	if _, err := s.bus.SendCommand(ctx, cmd); err != nil {
 		slog.Error("dispatch engine MakeMove failed", "game_id", resp.GameID, "error", err)
+		// Engine's reply is lost — without clearing the sentinel the SPA
+		// would spin until the (2*moveTime + 2s) TTL expires, then sit on
+		// engine_to_move=true with no spinner and no way forward. Clearing
+		// here lets the next /api/state read trigger a fresh search via
+		// the lazy retrigger in handleState.
+		_ = s.bus.Rdb().Del(ctx, "game:thinking:"+resp.GameID).Err()
 	}
 }
 
