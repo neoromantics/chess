@@ -91,7 +91,7 @@ There is **no Justfile** despite some lingering doc references. Direct commands 
 |---|---|
 | Format check (CI gate) | `gofmt -l .` — must be empty |
 | Lint | `golangci-lint run --config infra/.golangci.yml` |
-| Tests | `go test -v ./pkg/...` (CI only runs `pkg/`, not `cmd/`) |
+| Tests | `go test -v ./pkg/... ./cmd/...` (CI runs both) |
 | Run one test | `go test -run TestSingleLeader ./pkg/leader/...` |
 | Build everything | `go build ./...` |
 | Build a single service | `go build -o /tmp/gateway ./cmd/gateway` |

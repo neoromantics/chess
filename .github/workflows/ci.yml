@@ -45,7 +45,13 @@ jobs:
         run: go vet ./...
 
       - name: Test
-        run: go test -v ./pkg/...
+        # cmd/gateway has handler tests that gate destructive admin
+        # endpoints (e.g. handleAdminDeleteUser invariants). Run them
+        # in CI so a refactor can't silently break them. The rest of
+        # cmd/ has no test files today; -count=1 forces a re-run if
+        # something gets cached oddly. Other cmd/ packages are picked
+        # up automatically if/when they grow tests.
+        run: go test -v -count=1 ./pkg/... ./cmd/...
 
       - name: Build All Services
         run: |
