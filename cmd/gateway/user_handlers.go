@@ -43,8 +43,8 @@ func (gw *Gateway) handleSignup(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 400)
 		return
 	}
-	if len(req.Username) < 3 || len(req.Username) > 32 {
-		http.Error(w, "username must be 3-32 characters", 400)
+	if len(req.Username) < 5 || len(req.Username) > 32 {
+		http.Error(w, "username must be 5-32 characters", 400)
 		return
 	}
 	if err := auth.ValidatePassword(req.Password, req.Username); err != nil {
@@ -285,7 +285,7 @@ func (gw *Gateway) handleCheckUsername(w http.ResponseWriter, r *http.Request) {
 	case len(uname) == 0:
 		writeJSONGW(w, map[string]any{"available": false, "reason": "empty"})
 		return
-	case len(uname) < 3:
+	case len(uname) < 5:
 		writeJSONGW(w, map[string]any{"available": false, "reason": "too_short"})
 		return
 	case len(uname) > 32:

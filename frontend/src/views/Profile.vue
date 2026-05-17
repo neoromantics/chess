@@ -34,6 +34,44 @@
       </div>
     </div>
 
+    <!-- Change password. Collapsed by default so it doesn't dominate
+         the page for users who don't need it; opens to reveal the
+         three fields + hint list mirroring Signup.vue's password rules.
+         Authoritative validation runs server-side in handleChangePassword. -->
+    <details v-if="authStore.user" class="pw-card" :open="pwOpen" @toggle="onPwToggle">
+      <summary>Change password</summary>
+      <form class="pw-form" @submit.prevent="submitChangePassword">
+        <div class="form-group">
+          <label>Current password</label>
+          <input v-model="currentPassword" type="password" required autocomplete="current-password">
+        </div>
+        <div class="form-group">
+          <label>New password</label>
+          <input v-model="newPassword" type="password" required minlength="8" autocomplete="new-password" placeholder="At least 8 characters">
+          <div class="hint-list">
+            <div :class="{ ok: newPassword.length >= 8 }">• At least 8 characters</div>
+            <div :class="{ ok: newPassword.length > 0 && !newLooksCommon }">• Not a commonly-used password</div>
+            <div :class="{ ok: newPassword.length > 0 && !newContainsUsername }">• Doesn't contain your username</div>
+            <div :class="{ ok: newPassword.length > 0 && newPassword !== currentPassword }">• Different from your current password</div>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Confirm new password</label>
+          <input v-model="confirmPassword" type="password" required autocomplete="new-password">
+          <div v-if="confirmPassword && confirmPassword !== newPassword" class="hint-list">
+            <div class="err">• Passwords do not match</div>
+          </div>
+        </div>
+        <button
+          type="submit"
+          class="btn-primary"
+          :disabled="pwLoading || !pwReady"
+        >
+          {{ pwLoading ? 'Updating…' : 'Update password' }}
+        </button>
+      </form>
+    </details>
+
     <!-- Active games. Listed here in addition to /match so the profile
          is a single landing for both "what am I playing now" and
          "what did I play before". Each link routes into the live game;
@@ -103,6 +141,67 @@ const toastStore = useToastStore();
 const confirmStore = useConfirmStore();
 const stats = ref<any>(null);
 const games = ref<any[]>([]);
+
+// ===== Change password =====
+// Pure client-side mirror of pkg/auth/password.go's blacklist + Signup.vue's
+// hint list. Authoritative validation lives server-side in
+// handleChangePassword; this is just instant feedback while typing.
+const pwOpen = ref(false);
+const currentPassword = ref('');
+const newPassword = ref('');
+const confirmPassword = ref('');
+const pwLoading = ref(false);
+
+const commonPasswordsHint = new Set([
+  'password', 'password1', 'password123', '12345678', '123456789',
+  'qwerty', 'qwerty123', 'abc123', 'letmein', 'welcome', 'iloveyou',
+  'admin', 'changeme', 'chess', 'chess123', 'chessmaster',
+]);
+const newLooksCommon = computed(() => commonPasswordsHint.has(newPassword.value.toLowerCase()));
+const newContainsUsername = computed(() => {
+  const u = (authStore.user?.username || '').toLowerCase();
+  if (u.length < 3) return false;
+  return newPassword.value.toLowerCase().includes(u);
+});
+
+const pwReady = computed(() =>
+  currentPassword.value.length > 0 &&
+  newPassword.value.length >= 8 &&
+  confirmPassword.value === newPassword.value &&
+  newPassword.value !== currentPassword.value &&
+  !newLooksCommon.value &&
+  !newContainsUsername.value
+);
+
+const resetPwForm = () => {
+  currentPassword.value = '';
+  newPassword.value = '';
+  confirmPassword.value = '';
+};
+
+const onPwToggle = (e: Event) => {
+  // Clear the form whenever the user collapses the section so a half-
+  // typed password doesn't sit in memory or auto-fill on next expand.
+  pwOpen.value = (e.target as HTMLDetailsElement).open;
+  if (!pwOpen.value) resetPwForm();
+};
+
+const submitChangePassword = async () => {
+  if (!pwReady.value || pwLoading.value) return;
+  pwLoading.value = true;
+  try {
+    await api.changePassword(currentPassword.value, newPassword.value);
+    toastStore.success('Password updated');
+    resetPwForm();
+    pwOpen.value = false;
+  } catch (e: any) {
+    // Backend errors are already human-readable (e.g. "invalid current
+    // password", "password is too common — pick something less guessable").
+    toastStore.error(e?.message?.trim() || 'Failed to update password');
+  } finally {
+    pwLoading.value = false;
+  }
+};
 
 const loadStats = async () => {
   try {
@@ -257,6 +356,26 @@ onMounted(async () => {
   line-height: 1;
 }
 .btn-delete:hover { border-color: #d4544c; color: #d4544c; }
+
+/* Change-password card. Same shell as past-card so the profile reads
+   as one stacked column of cards. Uses a <details> for native collapse
+   so we don't have to manage open-state in two places. */
+.pw-card { background: #2b2b2b; border-radius: 16px; padding: 16px 32px; border: 1px solid #3d3d3d; }
+.pw-card > summary { cursor: pointer; font-size: 15px; font-weight: 600; color: #ddd; padding: 8px 0; list-style: none; user-select: none; }
+.pw-card > summary::-webkit-details-marker { display: none; }
+.pw-card > summary::before { content: '▸ '; color: #888; font-size: 12px; }
+.pw-card[open] > summary::before { content: '▾ '; }
+.pw-form { padding-top: 12px; max-width: 380px; }
+.pw-form .form-group { margin-bottom: 16px; }
+.pw-form label { display: block; font-size: 12px; text-transform: uppercase; color: #777; font-weight: 700; margin-bottom: 6px; letter-spacing: 0.4px; }
+.pw-form input { width: 100%; background: #1e1e1e; border: 1px solid #444; border-radius: 4px; padding: 10px; color: #ddd; font-size: 14px; }
+.pw-form input:focus { border-color: #4a6b8a; outline: none; }
+.pw-form .hint-list { margin-top: 6px; font-size: 12px; color: #777; line-height: 1.5; }
+.pw-form .hint-list .ok { color: #5cb85c; }
+.pw-form .hint-list .err { color: #d35454; }
+.pw-form .btn-primary { background: #4a6b8a; color: white; border: none; padding: 10px 22px; border-radius: 5px; cursor: pointer; font-weight: 600; font-size: 14px; }
+.pw-form .btn-primary:hover:not(:disabled) { background: #5a7b9a; }
+.pw-form .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .loading-state { display: flex; justify-content: center; align-items: center; min-height: 200px; }
 .spinner { width: 40px; height: 40px; border: 4px solid rgba(255,255,255,0.1); border-top-color: #4a6b8a; border-radius: 50%; animation: spin 1s linear infinite; }

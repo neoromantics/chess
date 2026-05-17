@@ -10,7 +10,7 @@
             <div v-if="usernameStatus === 'checking'" class="checking">• Checking availability…</div>
             <div v-else-if="usernameStatus === 'available'" class="ok">• Available</div>
             <div v-else-if="usernameStatus === 'taken'" class="err">• Already taken — pick another</div>
-            <div v-else-if="usernameStatus === 'too_short'" class="err">• At least 3 characters</div>
+            <div v-else-if="usernameStatus === 'too_short'" class="err">• At least 5 characters</div>
             <div v-else-if="usernameStatus === 'too_long'" class="err">• At most 32 characters</div>
           </div>
         </div>
@@ -87,7 +87,7 @@ watch(username, (raw) => {
   const u = raw.trim();
   if (usernameDebounce) clearTimeout(usernameDebounce);
   if (u.length === 0) { usernameStatus.value = ''; return; }
-  if (u.length < 3)   { usernameStatus.value = 'too_short'; return; }
+  if (u.length < 5)   { usernameStatus.value = 'too_short'; return; }
   if (u.length > 32)  { usernameStatus.value = 'too_long'; return; }
 
   usernameStatus.value = 'checking';
