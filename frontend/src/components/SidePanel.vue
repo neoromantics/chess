@@ -5,17 +5,33 @@
          control). Replay moves to a bottom CTA next to New Game (it's
          a "what's next" action available only after the game ends). -->
     <div class="toolbar">
-      <button class="tool" :class="{ on: soundEnabled }" @click="$emit('update:sound-enabled', !soundEnabled)" :title="soundEnabled ? 'Sound on (click to mute)' : 'Sound off (click to unmute)'">
+      <button
+        class="tool switch"
+        :class="{ on: soundEnabled }"
+        role="switch"
+        :aria-checked="soundEnabled"
+        @click="$emit('update:sound-enabled', !soundEnabled)"
+        :title="soundEnabled ? 'Sound on (click to mute)' : 'Sound off (click to unmute)'"
+      >
         <span class="tool-icon" aria-hidden="true">{{ soundEnabled ? '🔊' : '🔇' }}</span>
-        <span class="tool-label">{{ soundEnabled ? 'Sound' : 'Muted' }}</span>
+        <span class="tool-label">Sound</span>
+        <span class="switch-state">{{ soundEnabled ? 'On' : 'Off' }}</span>
       </button>
       <button class="tool" @click="$emit('toggle-flip')" title="Flip board (F)">
         <span class="tool-icon" aria-hidden="true">⇅</span>
         <span class="tool-label">Flip</span>
       </button>
-      <button class="tool" :class="{ on: touchMove }" @click="$emit('update:touch-move', !touchMove)" :title="touchMove ? 'Touch-move ON: a touched piece must move (FIDE rule)' : 'Touch-move OFF (default)'">
+      <button
+        class="tool switch"
+        :class="{ on: touchMove }"
+        role="switch"
+        :aria-checked="touchMove"
+        @click="$emit('update:touch-move', !touchMove)"
+        :title="touchMove ? 'Touch-move ON: a touched piece must move (FIDE rule)' : 'Touch-move OFF (default)'"
+      >
         <span class="tool-icon" aria-hidden="true">☝</span>
-        <span class="tool-label">{{ touchMove ? 'Touch' : 'Free' }}</span>
+        <span class="tool-label">Touch-move</span>
+        <span class="switch-state">{{ touchMove ? 'On' : 'Off' }}</span>
       </button>
     </div>
 
@@ -438,6 +454,25 @@ const copyWatchLink = async () => {
 .tool.on { color: #fff; border-color: #4a6b8a; background: rgba(74,107,138,0.15); }
 .tool-icon { font-size: 14px; line-height: 1; flex: 0 0 auto; }
 .tool-label { font-size: 12px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Switch variant — for the persistent on/off toggles (sound, touch-
+   move). The trailing "On" / "Off" pill makes the current state
+   obvious without relying on color alone (which fails for users who
+   can't perceive the subtle background tint, or in a screenshot). */
+.tool.switch { padding-right: 8px; }
+.switch-state {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 2px 6px;
+  border-radius: 10px;
+  background: #1c1c1c;
+  border: 1px solid #3a3a3a;
+  color: #888;
+  margin-left: 2px;
+}
+.tool.switch.on .switch-state { background: #2d4a2d; border-color: #3a703a; color: #b6e3b6; }
 
 /* Draw / takeback prompt cards */
 .prompt {

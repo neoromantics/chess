@@ -1,13 +1,27 @@
 <template>
-  <div id="app-container">
+  <div id="replay-root">
+    <!-- Minimal top nav. The replay page is a separate single-file
+         bundle (no Pinia / no vue-router), so reproducing the full
+         Navbar component would pull in half the SPA. A simple link
+         row that goes back to the main SPA via plain hrefs is enough
+         to give the user a way out without using the browser button. -->
+    <nav class="replay-nav">
+      <a class="replay-brand" href="/">Chess</a>
+      <div class="replay-nav-links">
+        <a href="/">Home</a>
+        <a href="/match">Match</a>
+        <a href="/profile">Profile</a>
+      </div>
+    </nav>
+    <main id="app-container">
     <div id="board-wrap">
       <div class="board-row">
         <div class="coords-ranks">
           <div v-for="n in ranks" :key="n">{{ n }}</div>
         </div>
         <div id="board">
-          <div v-for="sq in boardSquares" 
-               :key="sq.name" 
+          <div v-for="sq in boardSquares"
+               :key="sq.name"
                :class="['sq', sq.dark ? 'dark' : 'light', { last: sq.last }]">
             <span v-if="sq.piece" :class="sq.piece.color === 'w' ? 'white-piece' : 'black-piece'">
               {{ PIECE[sq.piece.char] }}
@@ -50,6 +64,7 @@
         </div>
       </div>
     </div>
+    </main>
   </div>
 </template>
 
@@ -166,10 +181,44 @@ function handleKeydown(e: KeyboardEvent) {
 </script>
 
 <style>
-:root { --sq: 88px; }
+/* Responsive square sizing — mirrors App.vue's --sq formula so the
+   board fits the viewport on phones + laptops without scrolling.
+   Subtracted chrome: 48px top nav + 32px container padding + ~30px
+   for the coords strip + breathing room. */
+:root {
+  --sq: min(
+    88px,
+    calc((100vh - 180px) / 8.2),
+    calc((100vw - 380px) / 8.2)
+  );
+}
+@media (max-width: 1000px) {
+  :root {
+    --sq: min(
+      calc((100vh - 220px) / 8.2),
+      calc((100vw - 40px) / 8.2)
+    );
+  }
+}
 * { box-sizing: border-box; }
 body { font-family: -apple-system, system-ui, sans-serif; background: #1e1e1e; color: #ddd; margin: 0; min-height: 100vh; }
-#app-container { display: flex; gap: 32px; align-items: flex-start; justify-content: center; padding: 32px 20px; min-height: 100vh; width: 100%; }
+#replay-root { display: flex; flex-direction: column; min-height: 100vh; }
+
+.replay-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #2b2b2b;
+  border-bottom: 1px solid #3d3d3d;
+  padding: 10px 20px;
+  height: 48px;
+}
+.replay-brand { color: #fff; font-size: 18px; font-weight: 700; text-decoration: none; letter-spacing: -0.2px; }
+.replay-nav-links { display: flex; gap: 18px; }
+.replay-nav-links a { color: #aaa; text-decoration: none; font-size: 14px; transition: color 120ms ease; }
+.replay-nav-links a:hover { color: #fff; }
+
+#app-container { display: flex; gap: 24px; align-items: flex-start; justify-content: center; padding: 20px; flex: 1; }
 
 #board-wrap { display: inline-block; border: 4px solid #333; }
 #board { display: grid; grid-template-columns: repeat(8, var(--sq)); grid-template-rows: repeat(8, var(--sq)); }
@@ -180,7 +229,7 @@ body { font-family: -apple-system, system-ui, sans-serif; background: #1e1e1e; c
 .white-piece { color: #fff; text-shadow: 0 0 1px #000, 0 0 2px #000, 1px 1px 1px #000; }
 .black-piece { color: #000; }
 
-#side { width: 320px; }
+#side { width: 320px; max-width: 100%; }
 h2 { margin: 0 0 12px; }
 #status { padding: 10px; background: #2b2b2b; border-radius: 4px; min-height: 22px; font-weight: 600; margin-bottom: 12px; }
 
@@ -205,4 +254,13 @@ button:disabled { opacity: 0.4; cursor: default; }
 .board-row { display: flex; align-items: center; }
 .coords-ranks { display: grid; grid-template-rows: repeat(8, var(--sq)); width: 22px; }
 .coords-ranks div { display: flex; align-items: center; justify-content: center; }
+
+/* Stacked layout for narrow viewports — board first, controls below.
+   Mirrors GameView's mobile treatment so the replay page lines up
+   visually with the rest of the SPA on phones. */
+@media (max-width: 1000px) {
+  #app-container { flex-direction: column; align-items: center; gap: 16px; padding: 12px; }
+  #side { width: 100%; max-width: 560px; }
+  #moves { max-height: 220px; }
+}
 </style>
