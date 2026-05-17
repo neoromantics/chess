@@ -154,7 +154,7 @@ func main() {
 	mux.Handle("POST /api/load_pgn", gw.injectAuthedUser(gameProxy))
 	mux.Handle("POST /api/analyze", gw.injectAuthedUser(gameProxy))
 	mux.Handle("POST /api/undo", gw.injectAuthedUser(gameProxy))
-	mux.Handle("DELETE /api/games/delete", gw.injectAuthedUser(gameProxy))
+	mux.Handle("DELETE /api/games/{id}", gw.injectAuthedUser(gameProxy))
 	mux.Handle("POST /api/hint", gw.injectAuthedUser(gameProxy))
 	mux.Handle("POST /api/draw_offer", gw.injectAuthedUser(gameProxy))
 	mux.Handle("POST /api/draw_accept", gw.injectAuthedUser(gameProxy))

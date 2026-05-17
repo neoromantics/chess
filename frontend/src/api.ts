@@ -51,7 +51,7 @@ export const api = {
       body: JSON.stringify(opts ?? {}),
     }),
   listGames: () => request<any[]>('/api/games'),
-  deleteGame: (gameId: string) => request<void>(`/api/games/delete?game_id=${gameId}`, { method: 'DELETE' }),
+  deleteGame: (gameId: string) => request<void>(`/api/games/${encodeURIComponent(gameId)}`, { method: 'DELETE' }),
 
   // ===== Matchmaking =====
   joinQueue: (time_control: string) => request<void>('/api/matchmaking/join', {

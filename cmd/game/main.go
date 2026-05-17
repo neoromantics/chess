@@ -80,7 +80,7 @@ func main() {
 	mux.HandleFunc("POST /api/load_pgn", s.handleHTTPLoadPGN)
 	mux.HandleFunc("POST /api/analyze", s.handleHTTPAnalyze)
 	mux.HandleFunc("POST /api/undo", s.handleHTTPUndo)
-	mux.HandleFunc("DELETE /api/games/delete", s.handleHTTPDelete)
+	mux.HandleFunc("DELETE /api/games/{id}", s.handleHTTPDelete)
 	mux.HandleFunc("POST /api/hint", s.handleHTTPHint)
 	mux.HandleFunc("POST /api/draw_offer", s.handleDrawOffer)
 	mux.HandleFunc("POST /api/draw_accept", s.handleDrawAccept)

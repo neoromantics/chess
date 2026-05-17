@@ -58,7 +58,7 @@ Bootstrap the first admin via SQL: `UPDATE users SET is_admin = TRUE WHERE usern
 |---|---|---|---|---|
 | POST | `/api/games/new` | 🔐 | gateway | `api.createGame` |
 | GET | `/api/games` | 🔐 | gateway → game-svc | `api.listGames` |
-| DELETE | `/api/games/delete?game_id=X` | 🔐+game | gateway → game-svc | `api.deleteGame` |
+| DELETE | `/api/games/{id}` | 🔐+game | gateway → game-svc | `api.deleteGame` |
 
 ### Games (state)
 | Method | Path | Auth | Owner | Frontend caller |

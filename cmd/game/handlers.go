@@ -49,7 +49,14 @@ func (s *GameService) requireGameAccess(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return nil, 0, false
 	}
-	gameID := r.URL.Query().Get("game_id")
+	// Path-param first (RESTful style: /api/games/{id}/...), query-param
+	// fallback for the legacy endpoints that still embed game_id as
+	// ?game_id=X. Lets us migrate one URL at a time without forking the
+	// access-check helper.
+	gameID := r.PathValue("id")
+	if gameID == "" {
+		gameID = r.URL.Query().Get("game_id")
+	}
 	if gameID == "" {
 		http.Error(w, "missing game_id", http.StatusBadRequest)
 		return nil, 0, false
