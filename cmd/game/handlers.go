@@ -277,7 +277,19 @@ func (s *GameService) handleHTTPMove(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			return userErr(http.StatusBadRequest, "invalid body")
 		}
+		// Two distinct "game over" gates because they catch different
+		// terminations: gm.Status() reflects the *position* (checkmate,
+		// stalemate, 50-move) while rec.Status reflects player-action
+		// terminations (resign, timeout, agreed draw) that don't change
+		// the position. Without the rec check, a player could keep
+		// sending moves after they (or their opponent) resigned —
+		// rec.Status would be silently overwritten by gm.Status() on
+		// write-back. Same gate the engine-stream path holds in
+		// handleMakeMove; this brings the HTTP path into lockstep.
 		if gm.Status() != game.StatusOngoing {
+			return userErr(http.StatusConflict, "game is already finished")
+		}
+		if rec.Status != "" && rec.Status != "ongoing" {
 			return userErr(http.StatusConflict, "game is already finished")
 		}
 		if gm.EngineToMove() {
