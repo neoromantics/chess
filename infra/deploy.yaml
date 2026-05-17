@@ -228,6 +228,16 @@ spec:
           value: "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@chess-db:5432/$(POSTGRES_DB)?sslmode=disable"
         - name: JWT_SECRET
           valueFrom: {secretKeyRef: {name: chess-secrets, key: JWT_SECRET}}
+        # WebSocket origin allow-list. Empty means same-origin only —
+        # which is correct in prod since the SPA is served from the
+        # same gateway it WS-connects to. Add comma-separated entries
+        # only when an off-host caller needs WS access (e.g. a Vite dev
+        # server proxying to a localhost gateway: http://localhost:5173).
+        # Defends against CSWSH: without it, a malicious site would be
+        # able to open /ws with the user's auth cookie auto-attached.
+        # See cmd/gateway/ws.go:checkWSOrigin.
+        - name: ALLOWED_WS_ORIGINS
+          value: ""
         readinessProbe:
           httpGet: {path: /health, port: 8080}
           initialDelaySeconds: 5

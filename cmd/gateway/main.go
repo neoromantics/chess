@@ -89,6 +89,38 @@ func main() {
 		hub.Run(rootCtx)
 	}()
 
+	// Per-IP rate limiters protecting the auth surface. Numbers chosen
+	// for "stops abuse, doesn't block legitimate users":
+	//   - authLim:   5 burst @ 1/5s sustained = 12/min. A user typing
+	//                their password wrong once or twice never trips it;
+	//                a brute-forcer hits the wall in seconds. Each call
+	//                costs a cost-14 bcrypt verify, so the cap doubles
+	//                as a CPU-DoS guard.
+	//   - signupLim: 3 burst @ 1/30s sustained = 2/min. Sign-up is
+	//                rarer than login by an order of magnitude and
+	//                writes a new row, so it deserves the tightest cap.
+	//   - probeLim:  10 burst @ 1/2s sustained = 30/min. Used for the
+	//                check-username preflight: the Signup form fires on
+	//                each debounced keystroke and a normal user trying
+	//                out a few candidate names should never trip it,
+	//                while an enumeration script gets visibly throttled.
+	authLim := NewLimiter(0.2, 5)
+	signupLim := NewLimiter(1.0/30.0, 3)
+	probeLim := NewLimiter(0.5, 10)
+	stopJanitor := make(chan struct{})
+	defer close(stopJanitor)
+	go authLim.RunJanitor(stopJanitor, 15*time.Minute, 5*time.Minute)
+	go signupLim.RunJanitor(stopJanitor, 15*time.Minute, 5*time.Minute)
+	go probeLim.RunJanitor(stopJanitor, 15*time.Minute, 5*time.Minute)
+
+	// Per-route body caps. Auth bodies are tiny JSON objects; PGN
+	// upload (handled downstream) can be much larger and is capped at
+	// the leaf endpoint, not here.
+	const (
+		authBodyMax    = 4 << 10  // 4 KB — usernames + passwords
+		profileBodyMax = 16 << 10 // 16 KB — bio is capped at 500 chars
+	)
+
 	mux := http.NewServeMux()
 
 	// 1. Health check
@@ -100,19 +132,32 @@ func main() {
 	// 2. Auth + profile + user-search handled directly. Used to live in
 	// the chess-user-service pod; absorbed here to eliminate one
 	// cross-service network hop and one wire-protocol surface.
-	mux.HandleFunc("POST /api/auth/signup", gw.handleSignup)
-	mux.HandleFunc("POST /api/auth/login", gw.handleLogin)
+	// Auth surface — every entry that costs a bcrypt verify (login,
+	// change-password) or admits a new row (signup) is rate-limited per
+	// IP and body-capped. Without the limit, the cost-14 bcrypt is a
+	// CPU-DoS vector; without the cap, a 1GB JSON POST can OOM the
+	// gateway during decode. See cmd/gateway/middleware.go for the
+	// fail-safe IP attribution behind Traefik.
+	mux.HandleFunc("POST /api/auth/signup",
+		maxBody(authBodyMax)(rateLimit(signupLim, 30)(gw.handleSignup)))
+	mux.HandleFunc("POST /api/auth/login",
+		maxBody(authBodyMax)(rateLimit(authLim, 5)(gw.handleLogin)))
 	mux.HandleFunc("POST /api/auth/logout", gw.handleLogout)
 	mux.HandleFunc("GET /api/user/me", gw.handleMe)
 	mux.HandleFunc("GET /api/user/profile", gw.handleGetProfile)
-	mux.HandleFunc("PUT /api/user/profile", gw.handleUpdateProfile)
-	mux.HandleFunc("POST /api/user/password", gw.handleChangePassword)
+	mux.HandleFunc("PUT /api/user/profile",
+		maxBody(profileBodyMax)(gw.handleUpdateProfile))
+	mux.HandleFunc("POST /api/user/password",
+		maxBody(authBodyMax)(rateLimit(authLim, 5)(gw.handleChangePassword)))
 	mux.HandleFunc("GET /api/user/stats", gw.handleUserStats)
 	mux.HandleFunc("GET /api/users/search", gw.handleUserSearch)
 	// Live preflight for the Signup form; debounced from the client
 	// side. Returns {available, reason}; auth-free since it gates a
-	// flow that's itself auth-free. See cmd/gateway/user_handlers.go.
-	mux.HandleFunc("GET /api/auth/check-username", gw.handleCheckUsername)
+	// flow that's itself auth-free. Rate-limited on the same bucket as
+	// signup so an attacker can't enumerate usernames any faster than
+	// they could brute-force signup itself. See cmd/gateway/user_handlers.go.
+	mux.HandleFunc("GET /api/auth/check-username",
+		rateLimit(probeLim, 2)(gw.handleCheckUsername))
 
 	// Admin dashboard (read-only). adminOnly inside each handler
 	// 404s for callers without is_admin=TRUE on their users row.

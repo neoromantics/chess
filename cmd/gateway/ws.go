@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -19,12 +22,58 @@ const (
 	maxMessageSize = 1 << 16
 )
 
+// allowedWSOrigins enumerates Origins beyond same-origin that may open
+// a WebSocket. Loaded lazily from $ALLOWED_WS_ORIGINS (comma-separated)
+// the first time CheckOrigin runs. Same-origin always passes, so this
+// only needs entries when the SPA and gateway live on different hosts
+// (typically: a Vite dev server proxying to a localhost gateway).
+var (
+	allowedWSOnce    sync.Once
+	allowedWSOrigins map[string]bool
+)
+
+func loadAllowedWSOrigins() {
+	allowedWSOnce.Do(func() {
+		allowedWSOrigins = make(map[string]bool)
+		raw := os.Getenv("ALLOWED_WS_ORIGINS")
+		for _, o := range strings.Split(raw, ",") {
+			if o = strings.TrimSpace(o); o != "" {
+				allowedWSOrigins[strings.ToLower(o)] = true
+			}
+		}
+	})
+}
+
+// checkWSOrigin allows the connection if any of:
+//   - no Origin header (non-browser callers — curl, native apps — never
+//     send one; CSRF/CSWSH is a browser-only concern, so this is safe)
+//   - Origin's host matches the request's Host header (same-origin —
+//     the SPA we serve always hits its own gateway)
+//   - Origin appears in $ALLOWED_WS_ORIGINS (dev / cross-origin SPAs)
+//
+// Anything else (an attacker site embedding ws://our-host/) is denied.
+// Without this, the user's auth cookie would auto-attach and let the
+// attacker subscribe to game.evt.* on their behalf — classic CSWSH.
+func checkWSOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	if strings.EqualFold(u.Host, r.Host) {
+		return true
+	}
+	loadAllowedWSOrigins()
+	return allowedWSOrigins[strings.ToLower(origin)]
+}
+
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
-	CheckOrigin: func(r *http.Request) bool {
-		return true // TODO: production origin allowlist
-	},
+	CheckOrigin:     checkWSOrigin,
 }
 
 func (gw *Gateway) handleWSGame(w http.ResponseWriter, r *http.Request) {
