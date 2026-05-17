@@ -122,6 +122,7 @@ import { api } from '../api';
 import { parseBoard } from '../constants';
 import { useToastStore } from '../stores/toast';
 import { useAuthStore } from '../stores/auth';
+import { useConfirmStore } from '../stores/confirm';
 import { useUserEventsStore } from '../stores/userEvents';
 import { useRouter } from 'vue-router';
 import { StateJSON, Square } from '../types';
@@ -140,6 +141,7 @@ const props = defineProps<{
 
 const toastStore = useToastStore();
 const authStore = useAuthStore();
+const confirmStore = useConfirmStore();
 const userEventsStore = useUserEventsStore();
 const router = useRouter();
 
@@ -640,7 +642,13 @@ const onHintReceived = (data: any) => {
 };
 
 const resign = async () => {
-  if (!confirm('Are you sure you want to resign?')) return;
+  const ok = await confirmStore.ask({
+    title: 'Resign',
+    message: 'Are you sure you want to resign? Your opponent will be awarded the win.',
+    confirmLabel: 'Resign',
+    danger: true,
+  });
+  if (!ok) return;
   try {
     const res = await api.resign(props.id);
     updateState(res);

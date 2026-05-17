@@ -1,9 +1,7 @@
 <template>
   <nav class="navbar">
     <div class="nav-content">
-      <router-link to="/" class="nav-brand">
-        <span class="logo">♞</span> Chess
-      </router-link>
+      <router-link to="/" class="nav-brand">Chess</router-link>
 
       <div class="nav-links">
         <template v-if="authStore.user">
@@ -22,7 +20,19 @@
               @click="toggleBell"
               :aria-label="inviteStore.pendingCount > 0 ? `${inviteStore.pendingCount} pending invites` : 'No pending invites'"
             >
-              <span class="bell-icon" aria-hidden="true">🔔</span>
+              <svg
+                class="bell-icon"
+                aria-hidden="true"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M6 8a6 6 0 0 1 12 0c0 5 2 6 2 8H4c0-2 2-3 2-8z" />
+                <path d="M10 19a2 2 0 1 0 4 0" />
+              </svg>
               <span v-if="inviteStore.pendingCount > 0" class="badge">{{ inviteStore.pendingCount }}</span>
             </button>
             <div v-if="bellOpen" class="bell-panel">
@@ -147,8 +157,8 @@ const handleLogout = async () => {
 .navbar { background: #2b2b2b; border-bottom: 1px solid #333; height: 64px; display: flex; align-items: center; position: sticky; top: 0; z-index: 100; }
 .nav-content { width: 100%; max-width: 1200px; margin: 0 auto; padding: 0 20px; display: flex; justify-content: space-between; align-items: center; }
 
-.nav-brand { font-size: 20px; font-weight: 700; color: #ddd; text-decoration: none; display: flex; align-items: center; gap: 8px; }
-.logo { font-size: 24px; color: #4a6b8a; }
+.nav-brand { font-size: 20px; font-weight: 700; color: #ddd; text-decoration: none; }
+.nav-brand:hover { color: #fff; }
 
 .nav-links { display: flex; align-items: center; gap: 20px; }
 .user-link { text-decoration: none; }
@@ -184,8 +194,9 @@ const handleLogout = async () => {
 }
 .bell-btn:hover { background: #333; color: #fff; }
 .bell-btn.active { background: #333; border-color: #4a6b8a; color: #fff; }
-.bell-btn.has .bell-icon { filter: none; }
-.bell-icon { font-size: 16px; filter: grayscale(1) brightness(1.5); }
+.bell-icon { width: 18px; height: 18px; display: inline-block; vertical-align: middle; color: inherit; }
+.bell-btn.has { color: #f0d27a; }
+.bell-btn.has:hover { color: #f5dc94; }
 .bell-btn .badge { position: absolute; top: -4px; right: -4px; }
 
 .bell-panel {

@@ -65,11 +65,13 @@ import { useRouter } from 'vue-router';
 import { api } from '../api';
 import { useAuthStore } from '../stores/auth';
 import { useToastStore } from '../stores/toast';
+import { useConfirmStore } from '../stores/confirm';
 import { useUserEventsStore } from '../stores/userEvents';
 
 const router = useRouter();
 const authStore = useAuthStore();
 const toastStore = useToastStore();
+const confirmStore = useConfirmStore();
 const userEvents = useUserEventsStore();
 
 const selectedTC = ref('10+0');
@@ -155,7 +157,13 @@ const leaveQueue = async () => {
 };
 
 const deleteGame = async (id: string) => {
-  if (!confirm('Delete this game?')) return;
+  const ok = await confirmStore.ask({
+    title: 'Delete game',
+    message: 'Delete this game from your history? This cannot be undone.',
+    confirmLabel: 'Delete',
+    danger: true,
+  });
+  if (!ok) return;
   try {
     await api.deleteGame(id);
     toastStore.info('Game deleted');

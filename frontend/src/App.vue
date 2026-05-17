@@ -5,6 +5,7 @@
       <router-view></router-view>
     </main>
     <Toast />
+    <ConfirmModal />
   </div>
 </template>
 
@@ -16,6 +17,7 @@ import { useUserEventsStore } from './stores/userEvents';
 import { useToastStore } from './stores/toast';
 import Navbar from './components/Navbar.vue';
 import Toast from './components/Toast.vue';
+import ConfirmModal from './components/ConfirmModal.vue';
 
 const authStore = useAuthStore();
 const userEvents = useUserEventsStore();

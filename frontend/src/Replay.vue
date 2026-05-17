@@ -3,14 +3,57 @@
     <!-- Minimal top nav. The replay page is a separate single-file
          bundle (no Pinia / no vue-router), so reproducing the full
          Navbar component would pull in half the SPA. A simple link
-         row that goes back to the main SPA via plain hrefs is enough
-         to give the user a way out without using the browser button. -->
+         row plus an inline notification bell (plain fetch, no store)
+         gives signed-in viewers parity with the main SPA's nav without
+         dragging the rest of it in. -->
     <nav class="replay-nav">
       <a class="replay-brand" href="/">Chess</a>
       <div class="replay-nav-links">
         <a href="/">Home</a>
         <a href="/match">Match</a>
         <a href="/profile">Profile</a>
+
+        <!-- Bell only renders once the pending-invites fetch resolves
+             with a 2xx. A 401 (not signed in) leaves bellAvailable=false
+             and the slot stays empty, so spectator viewers don't see a
+             dead control. -->
+        <div v-if="bellAvailable" class="bell-wrap" v-click-outside="closeBell">
+          <button
+            class="bell-btn"
+            :class="{ active: bellOpen, has: pendingInvites.length > 0 }"
+            @click="toggleBell"
+            :aria-label="pendingInvites.length > 0 ? `${pendingInvites.length} pending invites` : 'No pending invites'"
+          >
+            <svg class="bell-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none"
+                 stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M6 8a6 6 0 0 1 12 0c0 5 2 6 2 8H4c0-2 2-3 2-8z" />
+              <path d="M10 19a2 2 0 1 0 4 0" />
+            </svg>
+            <span v-if="pendingInvites.length > 0" class="badge">{{ pendingInvites.length }}</span>
+          </button>
+          <div v-if="bellOpen" class="bell-panel">
+            <header class="bell-header">
+              <span class="bell-title">Invites</span>
+              <span class="muted">{{ pendingInvites.length }} pending</span>
+            </header>
+            <ul v-if="pendingInvites.length" class="bell-list">
+              <li v-for="inv in pendingInvites" :key="inv.id" class="bell-item">
+                <div class="bell-item-text">
+                  <strong>{{ inv.from_username || 'Unknown' }}</strong>
+                  <span class="muted"> · {{ inv.time_control }}{{ inv.rated ? ' · rated' : '' }}</span>
+                </div>
+                <div class="bell-actions">
+                  <button class="bell-btn-accept" :disabled="actingOn === inv.id" @click="onAccept(inv)">Accept</button>
+                  <button class="bell-btn-decline" :disabled="actingOn === inv.id" @click="onDecline(inv)">Decline</button>
+                </div>
+              </li>
+            </ul>
+            <p v-else class="bell-empty">No invites right now.</p>
+            <footer class="bell-footer">
+              <a href="/invites" class="bell-link">View all invites →</a>
+            </footer>
+          </div>
+        </div>
       </div>
     </nav>
     <main id="app-container">
@@ -69,15 +112,93 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted, type DirectiveBinding } from 'vue';
 import { PIECE, parseBoard } from './constants';
-import { ReplayFrame } from './types';
+import { ReplayFrame, InviteWire } from './types';
 
 const frames = ref<ReplayFrame[]>([{ fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1' }]);
 const idx = ref(0);
 const timer = ref<ReturnType<typeof setTimeout> | null>(null);
 const speed = ref(800);
 const flipped = ref(localStorage.getItem('chess-flipped') === '1');
+
+// ===== Notification bell =====
+// Replay is a standalone bundle; we reach into the same /api/invites/*
+// endpoints over the JWT cookie that the main SPA uses. The fetch
+// fails closed (401 -> bell hidden) so unauthenticated viewers don't
+// see a dead control.
+const bellAvailable = ref(false);
+const bellOpen = ref(false);
+const pendingInvites = ref<InviteWire[]>([]);
+const actingOn = ref<string | null>(null);
+
+const toggleBell = () => { bellOpen.value = !bellOpen.value; };
+const closeBell = () => { bellOpen.value = false; };
+
+async function refreshInvites() {
+  try {
+    const res = await fetch('/api/invites/pending', { credentials: 'include' });
+    if (!res.ok) {
+      bellAvailable.value = false;
+      return;
+    }
+    const data = await res.json();
+    const received: InviteWire[] = data?.received ?? [];
+    pendingInvites.value = received.filter((i) => i.status === 'pending');
+    bellAvailable.value = true;
+  } catch {
+    bellAvailable.value = false;
+  }
+}
+
+async function onAccept(inv: InviteWire) {
+  if (actingOn.value) return;
+  actingOn.value = inv.id;
+  try {
+    const res = await fetch(`/api/invites/${inv.id}/accept`, { method: 'POST', credentials: 'include' });
+    if (!res.ok) throw new Error(await res.text());
+    const accepted: InviteWire = await res.json();
+    closeBell();
+    if (accepted?.game_id) {
+      // Hard navigation: replay is its own bundle, no router available.
+      window.location.href = `/game/${accepted.game_id}`;
+    }
+  } catch (e) {
+    console.error('accept failed', e);
+  } finally {
+    actingOn.value = null;
+  }
+}
+
+async function onDecline(inv: InviteWire) {
+  if (actingOn.value) return;
+  actingOn.value = inv.id;
+  try {
+    await fetch(`/api/invites/${inv.id}/decline`, { method: 'POST', credentials: 'include' });
+    pendingInvites.value = pendingInvites.value.filter((i) => i.id !== inv.id);
+  } catch (e) {
+    console.error('decline failed', e);
+  } finally {
+    actingOn.value = null;
+  }
+}
+
+// Local v-click-outside directive (same shape as the one in Navbar.vue).
+// Inlined rather than imported because Replay.vue is the only consumer
+// in this bundle and lifting to a plugin would just expand the bundle.
+const vClickOutside = {
+  mounted(el: HTMLElement, binding: DirectiveBinding<() => void>) {
+    const handler = (e: MouseEvent) => {
+      if (!el.contains(e.target as Node)) binding.value();
+    };
+    (el as any)._clickOutside = handler;
+    document.addEventListener('click', handler);
+  },
+  unmounted(el: HTMLElement) {
+    const handler = (el as any)._clickOutside;
+    if (handler) document.removeEventListener('click', handler);
+  },
+};
 
 // Load frames from script tag
 onMounted(() => {
@@ -95,6 +216,7 @@ onMounted(() => {
 
   window.addEventListener('keydown', handleKeydown);
   if (frames.value.length > 1) setTimeout(play, 600);
+  void refreshInvites();
 });
 
 onUnmounted(() => {
@@ -214,9 +336,93 @@ body { font-family: -apple-system, system-ui, sans-serif; background: #1e1e1e; c
   height: 48px;
 }
 .replay-brand { color: #fff; font-size: 18px; font-weight: 700; text-decoration: none; letter-spacing: -0.2px; }
-.replay-nav-links { display: flex; gap: 18px; }
+.replay-nav-links { display: flex; gap: 18px; align-items: center; }
 .replay-nav-links a { color: #aaa; text-decoration: none; font-size: 14px; transition: color 120ms ease; }
 .replay-nav-links a:hover { color: #fff; }
+
+/* Bell + dropdown — mirrors Navbar.vue. Replay's nav lives outside
+   the SPA's component tree, so the styles are duplicated here rather
+   than imported (avoids pulling Navbar.vue's whole CSS into the
+   replay bundle). Keep the two in visual sync if either is reskinned. */
+.bell-wrap { position: relative; display: inline-block; }
+.bell-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: #aaa;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 14px;
+  line-height: 1;
+  position: relative;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+.bell-btn:hover { background: #333; color: #fff; }
+.bell-btn.active { background: #333; border-color: #4a6b8a; color: #fff; }
+.bell-icon { width: 18px; height: 18px; display: inline-block; vertical-align: middle; color: inherit; }
+.bell-btn.has { color: #f0d27a; }
+.bell-btn.has:hover { color: #f5dc94; }
+
+.badge {
+  background: #d4544c;
+  color: white;
+  font-size: 11px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  position: absolute;
+  top: -4px;
+  right: -4px;
+}
+
+.bell-panel {
+  position: absolute;
+  top: 110%;
+  right: 0;
+  z-index: 200;
+  width: 320px;
+  max-width: calc(100vw - 24px);
+  background: #2b2b2b;
+  border: 1px solid #3d3d3d;
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+  overflow: hidden;
+}
+.bell-header { display: flex; align-items: baseline; justify-content: space-between; padding: 12px 14px 8px; border-bottom: 1px solid #333; }
+.bell-title { font-weight: 600; font-size: 14px; color: #ddd; }
+.muted { color: #777; font-size: 12px; }
+.bell-list { list-style: none; margin: 0; padding: 6px 0; max-height: 320px; overflow-y: auto; }
+.bell-item { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-bottom: 1px solid #2a2a2a; }
+.bell-item:last-child { border-bottom: none; }
+.bell-item-text { flex: 1 1 auto; min-width: 0; font-size: 13px; color: #ddd; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bell-actions { display: inline-flex; gap: 6px; flex: 0 0 auto; }
+.bell-btn-accept, .bell-btn-decline {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  border: 1px solid;
+  font-weight: 600;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+.bell-btn-accept { background: #2d4a2d; border-color: #3a703a; color: #b6e3b6; }
+.bell-btn-accept:hover:not(:disabled) { background: #3a6b3a; }
+.bell-btn-decline { background: transparent; border-color: #555; color: #aaa; }
+.bell-btn-decline:hover:not(:disabled) { background: #333; color: #ddd; }
+.bell-btn-accept:disabled, .bell-btn-decline:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.bell-empty { color: #888; font-style: italic; padding: 14px; margin: 0; font-size: 13px; text-align: center; }
+.bell-footer { border-top: 1px solid #333; padding: 10px 14px; text-align: right; }
+.bell-link { color: #9bb3cc !important; text-decoration: none; font-size: 12px; font-weight: 600; }
+.bell-link:hover { text-decoration: underline; }
 
 #app-container { display: flex; gap: 24px; align-items: flex-start; justify-content: center; padding: 20px; flex: 1; }
 
