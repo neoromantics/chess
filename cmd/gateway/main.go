@@ -618,6 +618,14 @@ func (gw *Gateway) handleReplay(w http.ResponseWriter, r *http.Request) {
 	// bytes after Vite's singlefile inline plugin) so a single
 	// bytes.Replace is fine; if it ever grows, switch to text/template.
 	html := bytes.Replace(replayHTML, []byte(replayDataPlaceholder), frames, 1)
+	// viteSingleFile rewrites `<link rel="icon" href="/favicon.svg">`
+	// to a relative path during build; the relative path then 404s
+	// because /api/replay.html resolves "./favicon.svg" against /api/.
+	// Restore the absolute path here so the favicon loads from the
+	// gateway's static root like every other public/ asset. Bounded
+	// 1-occurrence Replace so a future template adding its own
+	// "./favicon.svg" string won't double-rewrite.
+	html = bytes.Replace(html, []byte(`href="./favicon.svg"`), []byte(`href="/favicon.svg"`), 1)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write(html)
