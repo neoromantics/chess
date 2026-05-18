@@ -210,11 +210,18 @@
          Replay joins it only when the game is finished. Spectators
          see neither — they can't start a game in someone else's slot,
          and Replay is reachable from /game/{id} (or a fresh tab) if
-         they want it. -->
-    <div v-if="!spectator" class="bottom-cta">
+         they want it.
+         The wrapper is hidden entirely during an ongoing PvP-shaped
+         game (real human OR bot-fallback matchmaking — both populate
+         white_user_id+black_user_id). Abandon-and-restart isn't a
+         legitimate exit there; the player must resign or draw. -->
+    <div v-if="!spectator && !isOngoingPvP" class="bottom-cta">
       <!-- Finished PvP rows take the Rematch path (mutual offer/accept,
-           fresh game row). Engine-only and ongoing games keep the
-           legacy in-place /api/new reset under "New Game". -->
+           fresh game row). Finished engine games create a brand-new
+           game in GameView.newGame() and navigate, preserving the
+           finished one for review. Ongoing engine games keep the
+           legacy in-place /api/new reset (same flow path, different
+           server-side outcome). -->
       <button
         v-if="isFinishedPvP"
         class="btn new-game"
@@ -311,6 +318,11 @@ const emit = defineEmits<{
 }>();
 
 const isPvP = computed(() => !!(props.state && props.state.white_user_id !== null && props.state.black_user_id !== null));
+// During an ongoing PvP-shaped game, "New Game" must be unavailable —
+// you can't abandon a real opponent (or a bot-fallback opponent who
+// looks identical to one) by resetting the row. Players exit through
+// Resign / mutual Draw instead.
+const isOngoingPvP = computed(() => isPvP.value && props.state?.status === 'ongoing');
 // True for finished games where both sides have a user_id — covers
 // true PvP plus bot-fallback rows (which masquerade as PvP in the
 // snapshot). Engine-only rows have one user_id null and stay on

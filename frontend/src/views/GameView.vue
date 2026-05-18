@@ -841,6 +841,30 @@ const completePromo = (promo: string) => {
 };
 
 const newGame = async () => {
+  // Finished durable engine games are kept around for review (move-list
+  // scrubbing, replay, analyze, PGN download). Clicking "New Game" from
+  // such a game spawns a fresh game in its own row and navigates there,
+  // rather than overwriting the finished one in place. Ongoing games
+  // and temp games still take the legacy reset path — ongoing because
+  // the user explicitly wants to abandon-and-restart this slot, temp
+  // because they're already ephemeral.
+  const isTemp = props.id.startsWith('temp-');
+  const isFinished = !!state.value && state.value.status !== 'ongoing';
+  const isPvP = !!state.value && state.value.white_user_id !== null && state.value.black_user_id !== null;
+  if (isFinished && !isPvP && !isTemp) {
+    try {
+      const { game_id } = await api.createGame({
+        engine_white: whitePlayerType.value === 'e',
+        engine_black: blackPlayerType.value === 'e',
+        white_think_time: whiteThinkTime.value,
+        black_think_time: blackThinkTime.value,
+      });
+      router.push(`/game/${game_id}`);
+    } catch (e: any) {
+      toastStore.error(e.message);
+    }
+    return;
+  }
   try {
     const fresh = await api.newGame(props.id, whitePlayerType.value === 'e', blackPlayerType.value === 'e');
     // Reset the sound counter BEFORE updateState fires. After New Game
