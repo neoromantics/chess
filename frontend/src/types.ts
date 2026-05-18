@@ -107,6 +107,28 @@ export interface ReplayFrame {
   to?: string;
 }
 
+// Recursive node in a Study.tree. Root node carries no move; descendants
+// carry the move that produced their position. Mirrors the validation
+// the backend enforces (see cmd/game/studies.go:studyTreeNode).
+export interface StudyTreeNode {
+  move?: string;     // LAN ("e2e4"); omitted on the root
+  san?: string;      // optional, for human-readable display
+  comment?: string;  // optional per-node annotation
+  children: StudyTreeNode[];
+}
+
+export interface Study {
+  id: string;
+  user_id: number;
+  name: string;
+  start_fen: string;
+  tree: StudyTreeNode;
+  source_game_id?: string;
+  source_ply?: number;
+  created_at: string;
+  updated_at: string;
+}
+
 // Phase 2: invites
 export interface InviteWire {
   id: string;

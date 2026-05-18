@@ -87,6 +87,30 @@ export const api = {
   // position after the k-th move was played. Used by Replay.vue and by
   // the move-list scrub in GameView.vue (finished games only).
   getReplayFrames: (gameId: string) => request<import('./types').ReplayFrame[]>(gameRoute(gameId, 'replay')),
+
+  // ===== Studies =====
+  // Saved positions + exploration trees, per-user. See pkg/wire/CONTRACT.md
+  // for the tree JSON shape and the size limits the backend enforces.
+  createStudy: (body: {
+    name: string;
+    start_fen: string;
+    tree?: import('./types').StudyTreeNode;
+    source_game_id?: string;
+    source_ply?: number;
+  }) => request<import('./types').Study>('/api/studies', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }),
+  listStudies: () => request<import('./types').Study[]>('/api/studies'),
+  getStudy: (id: string) => request<import('./types').Study>(`/api/studies/${encodeURIComponent(id)}`),
+  updateStudy: (id: string, body: { name: string; tree: import('./types').StudyTreeNode }) =>
+    request<import('./types').Study>(`/api/studies/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  deleteStudy: (id: string) => request<void>(`/api/studies/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   move: (gameId: string, move: string) => request<StateJSON>(gameRoute(gameId, 'move'), {
     method: 'POST',
     body: JSON.stringify({ move })

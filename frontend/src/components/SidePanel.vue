@@ -208,6 +208,11 @@
       <header><h3>Save / Load</h3></header>
       <div class="saveload-actions">
         <a v-if="pgnDownloadUrl" :href="pgnDownloadUrl" :download="pgnFilename" class="btn ghost" title="Download this game as a .pgn file">Save (.pgn)</a>
+        <!-- Save the whole game to studies. Captures the start position
+             (frame 0) + the played line as a linear tree; user names it.
+             Auth-gated (createStudy requires JWT) and only meaningful when
+             there's at least one move to save. -->
+        <button v-if="canSaveStudy && plyCount > 0" class="btn ghost" @click="$emit('save-as-study')" title="Save this game's line to your studies">Save as study</button>
         <button v-if="!spectator && canEditPosition" class="btn ghost" @click="onPickFile" title="Load a .pgn file from disk">Load file…</button>
         <button v-if="!spectator && canEditPosition" class="btn ghost" @click="pgnImportOpen = !pgnImportOpen" title="Paste a PGN as text">
           {{ pgnImportOpen ? 'Cancel paste' : 'Paste…' }}
@@ -315,6 +320,9 @@ const props = defineProps<{
   // is durable-only) and for anonymous viewers (createGame requires
   // auth). GameView decides; SidePanel just renders the button.
   canFork?: boolean;
+  // Whether "Save as study" is available. Same gates as canFork
+  // (signed-in + durable game) — anonymous + temp games can't save.
+  canSaveStudy?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -353,6 +361,9 @@ const emit = defineEmits<{
   // ply. GameView owns the side-effect (createGame + setPosition +
   // router.push). ply is forwarded for the toast / telemetry.
   (e: 'fork-from-ply', ply: number): void;
+  // Capture the current game (start position + played line) as a Study.
+  // GameView prompts for a name and POSTs to /api/studies.
+  (e: 'save-as-study'): void;
 }>();
 
 const isPvP = computed(() => !!(props.state && props.state.white_user_id !== null && props.state.black_user_id !== null));

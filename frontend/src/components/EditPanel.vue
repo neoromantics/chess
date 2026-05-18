@@ -43,6 +43,13 @@
       <button class="btn ghost" @click="$emit('clear')">Empty</button>
       <button class="btn ghost" @click="$emit('start-pos')">Start pos</button>
     </div>
+    <!-- Save setup: bank the position as a study row without applying
+         it to the game. Lets the user build a puzzle/training position
+         and come back to it later. Gated on canSave (= signed in) so
+         anonymous users don't get a button that 401s on click. -->
+    <div v-if="canSave" class="row buttons">
+      <button class="btn ghost full" @click="$emit('save-setup')" title="Save this position to your studies without applying it">Save setup</button>
+    </div>
     <div class="row buttons">
       <button class="btn ghost" @click="$emit('cancel')">Cancel</button>
       <button class="btn primary" @click="$emit('apply')">Apply</button>
@@ -57,6 +64,9 @@ const props = defineProps<{
   palette: string;
   turn: string;
   castling: Record<string, boolean>;
+  // canSave gates the "Save setup" button. False for anonymous users
+  // (createStudy is auth-only) so we don't show a 401-on-click button.
+  canSave?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -67,6 +77,9 @@ const emit = defineEmits<{
   (e: 'start-pos'): void;
   (e: 'apply'): void;
   (e: 'cancel'): void;
+  // Save the current editor state to studies without applying it to
+  // the game. GameView builds the FEN and posts it.
+  (e: 'save-setup'): void;
 }>();
 
 const tools = [
@@ -146,4 +159,5 @@ const onCastle = (key: string, val: boolean) => {
 .btn.primary:hover { background: #347a34; }
 .btn.ghost { background: transparent; color: #ccc; }
 .btn.ghost:hover { background: #2a2a2a; }
+.btn.full { flex: 1 1 100%; }
 </style>

@@ -81,9 +81,11 @@
         :selected-ply="selectedPly"
         :scrub-enabled="scrubEnabled"
         :can-fork="canFork"
+        :can-save-study="canFork"
         @select-ply="onSelectPly"
         @clear-scrub="clearScrub"
         @fork-from-ply="onForkFromPly"
+        @save-as-study="onSaveAsStudy"
         @update:white-player-type="updatePlayerType('white', $event)"
         @update:black-player-type="updatePlayerType('black', $event)"
         @update:white-think-time="updateThinkTime('white', $event)"
@@ -116,6 +118,7 @@
         :palette="editPalette"
         :turn="editTurn"
         :castling="editCastling"
+        :can-save="!!authStore.user"
         @update:palette="editPalette = $event"
         @update:turn="editTurn = $event"
         @update:castling="editCastling = $event"
@@ -123,6 +126,7 @@
         @start-pos="editStartPos"
         @apply="editApply"
         @cancel="editCancel"
+        @save-setup="onSaveSetup"
       />
     </div>
 
@@ -148,7 +152,7 @@ import { useAuthStore } from '../stores/auth';
 import { useConfirmStore } from '../stores/confirm';
 import { useUserEventsStore } from '../stores/userEvents';
 import { useRouter, useRoute } from 'vue-router';
-import { StateJSON, Square, ReplayFrame } from '../types';
+import { StateJSON, Square, ReplayFrame, StudyTreeNode } from '../types';
 
 const props = defineProps<{
   id: string;
@@ -1117,9 +1121,14 @@ const loadPgn = async (pgn: string) => {
   }
 };
 
-const editApply = async () => {
-  if (!editBoard.value) return;
-  // Build the board half of the FEN.
+// Build a FEN string from the live editor state (board grid + side-to-
+// move + castling rights). Castling rights are silently dropped when
+// the corresponding king/rook isn't on its home square — the chess
+// engine would reject `KQkq` if e.g. the white king has been moved off
+// e1, so we filter here rather than ship a FEN we know will 400.
+// Returns null if there's no board to render from (edit not initialised).
+const buildEditFEN = (): string | null => {
+  if (!editBoard.value) return null;
   let boardStr = '';
   for (let r = 0; r < 8; r++) {
     let empty = 0, row = '';
@@ -1132,8 +1141,6 @@ const editApply = async () => {
     if (empty) row += empty;
     boardStr += row + (r < 7 ? '/' : '');
   }
-  // Castling: validate against king/rook squares so we don't ship a
-  // FEN the engine will reject.
   const findOne = (p: string) => {
     if (!editBoard.value) return null;
     for (let r = 0; r < 8; r++) for (let f = 0; f < 8; f++) {
@@ -1152,7 +1159,12 @@ const editApply = async () => {
     q: editCastling.value.q && bK && bK.r === 0 && bK.f === 4 && has('r', 0, 0),
   };
   const castling = (valid.K ? 'K' : '') + (valid.Q ? 'Q' : '') + (valid.k ? 'k' : '') + (valid.q ? 'q' : '');
-  const fen = `${boardStr} ${editTurn.value} ${castling || '-'} - 0 1`;
+  return `${boardStr} ${editTurn.value} ${castling || '-'} - 0 1`;
+};
+
+const editApply = async () => {
+  const fen = buildEditFEN();
+  if (!fen) return;
   try {
     const snap = await api.setPosition(props.id, fen);
     lastSoundedHistoryLen = 0;
@@ -1295,6 +1307,80 @@ const clearScrub = () => {
   selectedPly.value = null;
   selected.value = null;
   hint.value = null;
+};
+
+// Build a linear-line Study tree from the game's move history. Each
+// played half-move becomes one node, chained together (every node has
+// at most one child). This is the v1 shape — branching is a future
+// feature; for now a saved session = the game's actual line.
+const linearTreeFromHistory = (history: string[], historySan: string[]): StudyTreeNode => {
+  const root: StudyTreeNode = { children: [] };
+  let cur = root;
+  for (let i = 0; i < history.length; i++) {
+    const child: StudyTreeNode = {
+      move: history[i],
+      san: historySan[i] || history[i],
+      children: [],
+    };
+    cur.children.push(child);
+    cur = child;
+  }
+  return root;
+};
+
+// "Save as study" handler — captures the current game's start position
+// (replay frame 0) + the linear line played from there. Lives behind a
+// prompt() for now; a proper input modal is a follow-up (CLAUDE.md
+// flags window.confirm specifically; window.prompt has the same theme/
+// styling caveats but the user signed off on "for now" on this surface).
+const onSaveAsStudy = async () => {
+  if (!authStore.user) {
+    toastStore.error('Sign in to save studies.');
+    return;
+  }
+  if (!state.value) return;
+  const defaultName = `Game ${props.id.slice(0, 8)}`;
+  const name = window.prompt('Name this study', defaultName);
+  if (!name) return; // user cancelled
+  const frames = await ensureReplayFrames();
+  if (!frames || frames.length === 0) {
+    toastStore.error('Could not load this game’s replay frames.');
+    return;
+  }
+  try {
+    await api.createStudy({
+      name: name.trim(),
+      start_fen: frames[0].fen,
+      tree: linearTreeFromHistory(state.value.history || [], state.value.history_san || []),
+      source_game_id: props.id.startsWith('temp-') ? undefined : props.id,
+    });
+    toastStore.success('Saved to your studies.');
+  } catch (e: any) {
+    toastStore.error('Could not save study: ' + (e?.message || e));
+  }
+};
+
+// "Save setup" handler — saves the current editor state as a study with
+// an empty tree. Bypasses Apply, so the game row itself stays untouched.
+const onSaveSetup = async () => {
+  if (!authStore.user) {
+    toastStore.error('Sign in to save setups.');
+    return;
+  }
+  const fen = buildEditFEN();
+  if (!fen) return;
+  const defaultName = 'Custom setup';
+  const name = window.prompt('Name this setup', defaultName);
+  if (!name) return;
+  try {
+    await api.createStudy({
+      name: name.trim(),
+      start_fen: fen,
+    });
+    toastStore.success('Saved to your studies.');
+  } catch (e: any) {
+    toastStore.error('Could not save setup: ' + (e?.message || e));
+  }
 };
 
 // Fork the currently-scrubbed position into a fresh engine-game row.
