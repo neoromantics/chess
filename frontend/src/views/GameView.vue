@@ -17,8 +17,13 @@
       Tap to enable sound — your browser is muting moves until you
       interact with the page.
     </div>
+    <!-- Board renders from displayState, which equals state.value
+         except while the user is scrubbing the move list (selectedPly
+         != null), at which point it returns a synthetic StateJSON
+         carrying the historical frame's FEN. Live state.value keeps
+         updating in the background; clicking "Live" snaps back. -->
     <ChessBoard
-      :state="state"
+      :state="displayState"
       :flipped="flipped"
       :selected="selected"
       :hint="hint"
@@ -61,6 +66,10 @@
         :assessments="assessments"
         :analyzing="analyzing"
         :viewer-count="viewerCount"
+        :selected-ply="selectedPly"
+        :scrub-enabled="scrubEnabled"
+        @select-ply="onSelectPly"
+        @clear-scrub="clearScrub"
         @update:white-player-type="updatePlayerType('white', $event)"
         @update:black-player-type="updatePlayerType('black', $event)"
         @update:white-think-time="updateThinkTime('white', $event)"
@@ -125,7 +134,7 @@ import { useAuthStore } from '../stores/auth';
 import { useConfirmStore } from '../stores/confirm';
 import { useUserEventsStore } from '../stores/userEvents';
 import { useRouter } from 'vue-router';
-import { StateJSON, Square } from '../types';
+import { StateJSON, Square, ReplayFrame } from '../types';
 
 const props = defineProps<{
   id: string;
@@ -186,6 +195,41 @@ const hintInfo = ref('');
 const pendingPromo = ref<{ from: string; to: string } | null>(null);
 
 let ws: WebSocket | null = null;
+
+// === Move-list scrub state ===
+// selectedPly === null → board shows live state.value as usual.
+// selectedPly === k    → board shows the position AFTER move k (k=0
+//                        is the starting position). Live updates keep
+//                        flowing into state.value in the background;
+//                        when the user clicks "Live" / hits Esc we
+//                        snap back to it.
+// Only enabled when status !== 'ongoing'. The board's click-to-move
+// handler is already gated on that status so phantom move sends are
+// impossible while scrubbing.
+const selectedPly = ref<number | null>(null);
+const replayFrames = ref<ReplayFrame[] | null>(null);
+let replayFramesGameID: string | null = null;
+let replayFramesPlies = 0;
+const scrubEnabled = computed(() => !!state.value && state.value.status !== 'ongoing');
+// Re-render the board from a historical frame by stitching its fen +
+// last-move into the rest of the live state. legal_moves cleared so
+// any stray click can't synthesise a move; `thinking` cleared so the
+// spinner doesn't bleed into scrub.
+const displayState = computed((): StateJSON | null => {
+  if (!state.value) return null;
+  if (selectedPly.value === null) return state.value;
+  if (!replayFrames.value) return state.value;
+  const frame = replayFrames.value[selectedPly.value];
+  if (!frame) return state.value;
+  return {
+    ...state.value,
+    fen: frame.fen,
+    last_move: (frame.from && frame.to) ? { from: frame.from, to: frame.to } : null,
+    legal_moves: [],
+    in_check: false,
+    thinking: false,
+  } as StateJSON;
+});
 
 // Players
 const whitePlayerType = ref('h');
@@ -879,6 +923,13 @@ const newGame = async () => {
     hint.value = null;
     hintInfo.value = '';
     assessments.value = {};
+    // Drop any scrub state from the previous (now-discarded) history.
+    // Replay frames are tied to the old history length so they're
+    // invalid the moment a reset shrinks history back to 0.
+    selectedPly.value = null;
+    replayFrames.value = null;
+    replayFramesGameID = null;
+    replayFramesPlies = 0;
     toastStore.success('Game reset');
   } catch (e: any) {
     toastStore.error(e.message);
@@ -1114,6 +1165,11 @@ watch(() => props.id, async (newId, oldId) => {
   viewerCount.value = 0;
   assessments.value = {};
   analyzing.value = false;
+  // Drop the scrub state too so the new game starts on its live frame.
+  selectedPly.value = null;
+  replayFrames.value = null;
+  replayFramesGameID = null;
+  replayFramesPlies = 0;
   // Close the old WS before opening the new one. Null the onclose
   // first so the auto-reconnect timer doesn't try to reopen the old
   // game's channel after we've moved on.
@@ -1141,7 +1197,74 @@ const onKeyDown = (e: KeyboardEvent) => {
   primeAudio();
   const tag = (e.target && (e.target as any).tagName) || '';
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-  if (e.key === 'f' || e.key === 'F') flipped.value = !flipped.value;
+  if (e.key === 'f' || e.key === 'F') { flipped.value = !flipped.value; return; }
+  // Scrub keys only fire when scrubbing is allowed (finished games).
+  // Arrows step through plies, Home/End jump to the bookends, Esc snaps
+  // back to live. ply 0 is the starting position; ply N (history.length)
+  // is functionally the live state of a finished game.
+  if (!scrubEnabled.value) return;
+  const total = state.value?.history?.length ?? 0;
+  if (e.key === 'Escape') { clearScrub(); return; }
+  if (e.key === 'ArrowLeft') {
+    e.preventDefault();
+    const cur = selectedPly.value === null ? total : selectedPly.value;
+    if (cur > 0) onSelectPly(cur - 1);
+    return;
+  }
+  if (e.key === 'ArrowRight') {
+    e.preventDefault();
+    const cur = selectedPly.value === null ? total : selectedPly.value;
+    if (cur < total) onSelectPly(cur + 1);
+    return;
+  }
+  if (e.key === 'Home') { e.preventDefault(); onSelectPly(0); return; }
+  if (e.key === 'End')  { e.preventDefault(); clearScrub(); return; }
+};
+
+// Fetch the replay-frame list lazily — only when the user actually
+// asks to scrub. Cached per game-id + ply count so a fresh analyze
+// or a rematch invalidates the cache automatically.
+const ensureReplayFrames = async (): Promise<ReplayFrame[] | null> => {
+  const total = state.value?.history?.length ?? 0;
+  if (replayFrames.value
+      && replayFramesGameID === props.id
+      && replayFramesPlies === total) {
+    return replayFrames.value;
+  }
+  try {
+    const frames = await api.getReplayFrames(props.id);
+    replayFrames.value = frames;
+    replayFramesGameID = props.id;
+    replayFramesPlies = total;
+    return frames;
+  } catch (e: any) {
+    toastStore.error('Failed to load replay: ' + (e?.message || e));
+    return null;
+  }
+};
+
+const onSelectPly = async (ply: number) => {
+  if (!scrubEnabled.value || !state.value) return;
+  const total = state.value.history?.length ?? 0;
+  if (ply < 0) ply = 0;
+  if (ply > total) ply = total;
+  // Clicking the final ply on a finished game is functionally "live" —
+  // surface that distinction in the URL bar by clearing the scrub
+  // state instead of pinning to ply = history.length.
+  if (ply === total) { clearScrub(); return; }
+  const frames = await ensureReplayFrames();
+  if (!frames) return;
+  // Clear any live-mode selection/hint highlights so the board reads
+  // cleanly as the historical position.
+  selected.value = null;
+  hint.value = null;
+  selectedPly.value = ply;
+};
+
+const clearScrub = () => {
+  selectedPly.value = null;
+  selected.value = null;
+  hint.value = null;
 };
 
 // Hints fan out on the requester's user.evt channel — never on

@@ -83,6 +83,10 @@ export const api = {
   // (id prefix "temp-") and /api/games/{id}/<verb> for durable games,
   // so callers stay storage-tier-agnostic.
   getState: (gameId: string) => request<StateJSON>(gameRoute(gameId, 'state')),
+  // ReplayFrame[] — index 0 is the starting position; index k is the
+  // position after the k-th move was played. Used by Replay.vue and by
+  // the move-list scrub in GameView.vue (finished games only).
+  getReplayFrames: (gameId: string) => request<import('./types').ReplayFrame[]>(gameRoute(gameId, 'replay')),
   move: (gameId: string, move: string) => request<StateJSON>(gameRoute(gameId, 'move'), {
     method: 'POST',
     body: JSON.stringify({ move })

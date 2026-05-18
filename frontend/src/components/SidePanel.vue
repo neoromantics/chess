@@ -162,14 +162,23 @@
         <span class="moves-title">Moves</span>
         <span v-if="historyPairs.length" class="muted">{{ plyCount }} {{ plyCount === 1 ? 'ply' : 'plies' }}</span>
       </summary>
+      <!-- Scrub indicator + Live button. Shown only when the user is
+           parked on a historical ply. "← / →" / Home/End / Esc work
+           globally; this button is the visible click target for users
+           who don't reach for the keyboard. -->
+      <div v-if="scrubEnabled && selectedPly !== null && selectedPly !== undefined" class="scrub-row">
+        <span class="muted">Viewing ply {{ selectedPly }}/{{ plyCount }}</span>
+        <button class="btn ghost btn-sm" @click="$emit('clear-scrub')" title="Return to the live/final position (Esc)">Live</button>
+      </div>
       <div class="move-list">
         <div v-for="(pair, i) in historyPairs" :key="i" class="move-row">
           <span class="move-num">{{ i + 1 }}.</span>
           <span v-for="(mv, j) in pair" :key="j" class="move-cell">
             <span
               class="move-san"
-              :class="moveClass(mv.idx)"
+              :class="[moveClass(mv.idx), { scrubbable: scrubEnabled, 'scrub-active': scrubEnabled && selectedPly === mv.idx + 1 }]"
               :title="moveTooltip(mv)"
+              @click="scrubEnabled && $emit('select-ply', mv.idx + 1)"
             >{{ mv.san }}{{ moveMarker(mv.idx) }}</span>
           </span>
         </div>
@@ -287,6 +296,16 @@ const props = defineProps<{
   // when 0 or 1 since "1 watching" while you're alone is noise; the
   // signal is only interesting once there's actually an audience.
   viewerCount?: number;
+  // Scrub state. selectedPly === null → user is looking at the live
+  // state. selectedPly === k → user has clicked back to the position
+  // after the k-th move (k=0 is the starting position; k=history.length
+  // is the same as "live" for a finished game). GameView owns the
+  // navigation; SidePanel just renders the highlight + emits clicks.
+  selectedPly?: number | null;
+  // Enables the move-list click-to-scrub interactions + the "Live"
+  // button. Set by GameView based on game status (currently: any game
+  // that is not in 'ongoing' status — finished or terminated).
+  scrubEnabled?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -315,6 +334,12 @@ const emit = defineEmits<{
   (e: 'load-pgn', pgn: string): void;
   (e: 'analyze'): void;
   (e: 'set-visibility', isPublic: boolean): void;
+  // Jump the board to the position after the k-th half-move. k=0 is
+  // the starting position. Only emitted when scrubEnabled is true.
+  (e: 'select-ply', ply: number): void;
+  // Return the board to the live (current) state. Bound to the "Live"
+  // button and the Esc keystroke (handled in GameView).
+  (e: 'clear-scrub'): void;
 }>();
 
 const isPvP = computed(() => !!(props.state && props.state.white_user_id !== null && props.state.black_user_id !== null));
@@ -650,7 +675,12 @@ const copyWatchLink = async () => {
 .move-num { color: #666; min-width: 28px; font-size: 12px; }
 .move-cell { min-width: 60px; }
 .move-san { color: #e0e0e0; padding: 0 2px; border-radius: 2px; }
+.move-san.scrubbable { cursor: pointer; }
+.move-san.scrubbable:hover { background: #2a2a2a; }
+.move-san.scrub-active { background: #4a4a8a; color: #fff; font-weight: 600; }
 .move-empty { color: #666; font-style: italic; padding: 8px 0; font-family: inherit; }
+.scrub-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 0; border-bottom: 1px solid #2f2f2f; margin-bottom: 6px; font-size: 12px; }
+.scrub-row .btn-sm { padding: 2px 10px; font-size: 12px; }
 /* Assessment classes. Color choice mirrors the loss spectrum:
  * green = great, neutral = good, yellow = inaccuracy, orange = mistake,
  * red = blunder. `assess-alt` is kept around as a fallback so a stale
