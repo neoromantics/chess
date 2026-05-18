@@ -32,15 +32,27 @@
       @square-context="onSquareContext"
     />
 
-    <div id="side">
-      <h2>Game Session</h2>
+    <div id="side" :class="{ 'side-collapsed': panelCollapsed }">
+      <div class="side-header">
+        <h2>Game Session</h2>
+        <!-- Collapses the bulky control panel so the player can focus
+             on the board. Status + clock stay visible because the
+             clock is operationally critical during an ongoing game.
+             Persisted to localStorage so the choice survives reloads
+             and across games. -->
+        <button
+          class="panel-toggle"
+          :title="panelCollapsed ? 'Show controls' : 'Hide controls (focus on board)'"
+          @click="togglePanel"
+        >{{ panelCollapsed ? '◂' : '▸' }}</button>
+      </div>
       <div class="game-id">ID: {{ id }}</div>
       <div id="status">{{ statusMsg }}</div>
 
       <ClockDisplay :state="state" />
 
       <SidePanel
-        v-if="!editMode"
+        v-if="!editMode && !panelCollapsed"
         :state="state"
         :game-id="id"
         :spectator="isSpectator"
@@ -98,7 +110,7 @@
       />
 
       <EditPanel
-        v-else
+        v-else-if="editMode && !panelCollapsed"
         :palette="editPalette"
         :turn="editTurn"
         :castling="editCastling"
@@ -191,6 +203,16 @@ const selected = ref<string | null>(null);
 const flipped = ref(localStorage.getItem('chess-flipped') === '1');
 const soundEnabled = ref(localStorage.getItem('chess-muted') !== '1');
 const touchMove = ref(localStorage.getItem('chess-touch-move') === '1');
+// Cross-game user preference: hide the SidePanel/EditPanel so the
+// board takes more visual real estate. Status + clock stay rendered
+// (clock is operationally critical during ongoing play). Persisted
+// to localStorage so reloads + game-to-game navigation keep the
+// chosen layout.
+const panelCollapsed = ref(localStorage.getItem('chess-panel-collapsed') === '1');
+const togglePanel = () => {
+  panelCollapsed.value = !panelCollapsed.value;
+  localStorage.setItem('chess-panel-collapsed', panelCollapsed.value ? '1' : '0');
+};
 const hint = ref<{ from: string; to: string } | null>(null);
 const hintInfo = ref('');
 const pendingPromo = ref<{ from: string; to: string } | null>(null);
@@ -1361,8 +1383,35 @@ onUnmounted(() => {
   #side { width: 100%; max-width: 560px; padding: 0 4px; }
 }
 
-#side { width: 340px; }
+#side { width: 340px; transition: width 120ms ease; }
+/* Collapsed: keep status + clock + the toggle button visible; the
+ * bulkier SidePanel/EditPanel are v-if'd out at the template level.
+ * A narrower fixed width keeps the layout stable so the board doesn't
+ * re-center jarringly each time the user toggles. */
+#side.side-collapsed { width: 180px; }
+@media (max-width: 1000px) {
+  /* On stacked layouts (mobile), collapse just removes the panel
+   * — width is already 100% — so leave width alone there. */
+  #side.side-collapsed { width: 100%; }
+}
+.side-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 #side h2 { margin: 0 0 4px; font-size: 22px; letter-spacing: 0.5px; }
+.panel-toggle {
+  background: #2b2b2b;
+  border: 1px solid #3d3d3d;
+  color: #aaa;
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+.panel-toggle:hover { border-color: #5a5a5a; color: #e0e0e0; background: #333; }
 .game-id { font-size: 10px; color: #666; margin-bottom: 12px; }
 #status { font-size: 16px; font-weight: 600; margin-bottom: 16px; padding: 10px 12px; background: #2b2b2b; border-radius: 4px; min-height: 22px; border-left: 3px solid #4a6b8a; }
 
