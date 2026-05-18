@@ -216,8 +216,16 @@ const onDelete = async () => {
 </script>
 
 <style scoped>
-.study-page { max-width: 1100px; margin: 0 auto; padding: 24px 20px; }
-.study-header { margin-bottom: 18px; }
+/* No max-width on .study-page itself: the board's --sq (computed in
+ * App.vue's :root) assumes the full viewport minus the side panel.
+ * Capping the page at e.g. 1100px would force the board column below
+ * its natural width and either overflow into the aside or push it
+ * underneath. Use the same shape as GameView (flex, centered, full
+ * width) so --sq's calc lands the same way. The header stays
+ * left-aligned within a narrow container above the board so the
+ * "← Studies" back link doesn't drift to the middle of the page. */
+.study-page { padding: 12px 20px 24px; }
+.study-header { max-width: 1100px; margin: 0 auto 18px; }
 .study-header h2 { margin: 6px 0 4px; }
 .back-link { color: #6a8aa6; font-size: 13px; text-decoration: none; }
 .back-link:hover { text-decoration: underline; }
@@ -226,16 +234,20 @@ const onDelete = async () => {
 .loading { text-align: center; padding: 80px; color: #888; }
 
 .layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
-  gap: 24px;
-  align-items: start;
+  display: flex;
+  gap: 32px;
+  align-items: flex-start;
+  justify-content: center;
+  width: 100%;
 }
-@media (max-width: 880px) {
-  .layout { grid-template-columns: 1fr; }
+@media (max-width: 1000px) {
+  /* Same breakpoint as GameView: below 1000px the side panel stacks
+   * under the board instead of sitting beside it. */
+  .layout { flex-direction: column; align-items: center; gap: 12px; }
+  .aside { width: 100%; max-width: 560px; }
 }
 
-.aside { display: flex; flex-direction: column; gap: 12px; }
+.aside { display: flex; flex-direction: column; gap: 12px; width: 340px; flex: 0 0 auto; }
 .card {
   background: #232323;
   border: 1px solid #2f2f2f;

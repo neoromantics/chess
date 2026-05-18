@@ -119,6 +119,17 @@
         <input type="range" v-model.number="speed" min="150" max="3000" step="50">
         <span>{{ speed }}ms</span>
       </div>
+      <!-- Save-as-study from the replay. Single click + auto-generated
+           name keeps this bundle small (no PromptModal here, no Pinia).
+           Visible only when bellAvailable — same auth probe used by the
+           notification bell, no extra round-trip. User can rename from
+           /study/ if the auto-name isn't right. -->
+      <div v-if="bellAvailable && frames.length > 1" class="save-study-row">
+        <button class="save-study-btn" :disabled="savingStudy" @click="saveAsStudy">
+          {{ savingStudy ? 'Saving…' : 'Save as study' }}
+        </button>
+        <span v-if="saveStudyMsg" class="save-study-msg" :class="{ err: saveStudyErr }">{{ saveStudyMsg }}</span>
+      </div>
       <div id="moves">
         <div v-for="(pair, i) in movePairs" :key="i" class="row-line">
           {{ i + 1 }}. 
@@ -276,6 +287,75 @@ const vClickOutside = {
     if (handler) document.removeEventListener('click', handler);
   },
 };
+
+// ===== Save as study =====
+// Builds a linear tree from the replay frames (skipping the root frame
+// which has no move) and POSTs to /api/studies. Auto-generated name so
+// users get a one-click save; they can rename in /study/ later.
+// Standalone bundle = direct fetch (no api.ts) and no PromptModal.
+const savingStudy = ref(false);
+const saveStudyMsg = ref('');
+const saveStudyErr = ref(false);
+
+function gameIDFromURL(): string {
+  const params = new URLSearchParams(window.location.search);
+  return params.get('game_id') ?? '';
+}
+
+interface StudyNode { move?: string; san?: string; children: StudyNode[] }
+
+function linearTreeFromFrames(fs: ReplayFrame[]): StudyNode {
+  const root: StudyNode = { children: [] };
+  let cur = root;
+  // Frame 0 = start position; frames 1..N each carry the move that
+  // produced them. san is what's shown in the move list above.
+  for (let i = 1; i < fs.length; i++) {
+    const f = fs[i];
+    const move = (f.from && f.to) ? f.from + f.to : '';
+    if (!move) continue;
+    const child: StudyNode = { move, san: f.san || move, children: [] };
+    cur.children.push(child);
+    cur = child;
+  }
+  return root;
+}
+
+async function saveAsStudy() {
+  if (savingStudy.value || frames.value.length < 2) return;
+  savingStudy.value = true;
+  saveStudyMsg.value = '';
+  saveStudyErr.value = false;
+  try {
+    const gameID = gameIDFromURL();
+    const defaultName = gameID ? `Replay of ${gameID.slice(0, 8)}` : 'Game replay';
+    const body = {
+      name: defaultName,
+      start_fen: frames.value[0].fen,
+      tree: linearTreeFromFrames(frames.value),
+      source_game_id: gameID && !gameID.startsWith('temp-') ? gameID : undefined,
+    };
+    const res = await fetch('/api/studies', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(text || `HTTP ${res.status}`);
+    }
+    saveStudyErr.value = false;
+    saveStudyMsg.value = 'Saved! Find it in /study/';
+  } catch (e: any) {
+    saveStudyErr.value = true;
+    saveStudyMsg.value = 'Save failed: ' + (e?.message || e);
+  } finally {
+    savingStudy.value = false;
+    // Clear the inline note after a few seconds so the controls don't
+    // stay cluttered after the user has registered the result.
+    setTimeout(() => { saveStudyMsg.value = ''; }, 4000);
+  }
+}
 
 // Load frames from script tag
 onMounted(() => {
@@ -533,6 +613,12 @@ button:disabled { opacity: 0.4; cursor: default; }
 
 .speed { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
 .speed input { flex: 1; }
+.save-study-row { display: flex; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+.save-study-btn { background: #2f2f2f; border: 1px solid #3a3a3a; color: #ddd; padding: 6px 14px; border-radius: 5px; font-size: 12px; font-weight: 500; cursor: pointer; font: inherit; }
+.save-study-btn:hover { background: #383838; border-color: #4a6b8a; color: #fff; }
+.save-study-btn:disabled { opacity: 0.6; cursor: wait; }
+.save-study-msg { font-size: 12px; color: #8aaa8a; }
+.save-study-msg.err { color: #d35454; }
 
 #moves { font-family: ui-monospace, Menlo, monospace; font-size: 13px; max-height: 380px; overflow-y: auto; background: #2b2b2b; padding: 8px; border-radius: 3px; margin-top: 12px; }
 #moves .move { display: inline-block; padding: 0; cursor: pointer; border-radius: 2px; }
