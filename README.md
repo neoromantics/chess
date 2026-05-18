@@ -49,6 +49,8 @@ Three pods scale horizontally; engine-worker has its own autoscaling profile bec
 - **Board editor + PGN.** Engine games can be set up from any FEN (`/api/set_position`), downloaded as PGN, or replaced by pasting a PGN. PGN encoder/decoder is round-trip tested.
 - **Move assessment.** Click "Analyze game" — backend dispatches a per-ply engine search; per-ply ✓ / ★ / ? markers stream into the move list over WS and persist on the game row so a reopen shows the verdicts without re-running the engine.
 - **Spectator mode.** Owner flips `is_public` on a game; anyone can watch live at `/watch/:id` with read-only WS subscription.
+- **Move-list scrub + fork.** In any finished game, click a SAN span to jump the board to that ply (or use ←/→/Home/End/Esc). "Fork" opens that position in a new engine-game row so you can play hypothetical lines without disturbing the original.
+- **Studies.** Save any position or game-as-line to `/study/`. The save-setup button lives in the position editor; "Save as study" lives in the side panel of finished games. Each study renders the start position + the linear move list, with "Play from here" to drop into a fresh game at that FEN.
 - **Observability.** Prometheus + Grafana at `/grafana/`; business metrics (moves/sec, engine search p95, queue depth, matchmaker wait p95, games finished/min, Glicko-2 update p95) wired alongside HTTP/WS metrics.
 - **Touch-move rule.** Client-side session toggle in the SidePanel; enforces FIDE 4.3 when ON.
 - **Glicko-2 ratings.** Numerically verified against the paper's worked example (`pkg/rating/glicko2_test.go`).

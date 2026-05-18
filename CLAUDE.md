@@ -170,5 +170,11 @@ Full status board: `ROADMAP.md`. The high-impact open items at a glance:
 - Auth surface hardening: per-IP rate limiter + body-size caps on signup/login/profile/check-username + WS origin allow-list (env `ALLOWED_WS_ORIGINS`).
 - Change-password UI on `/profile`; signup username minimum bumped to 5 chars.
 - In-theme confirm modal singleton replacing every `window.confirm` call site.
+- **Studies** (`/api/studies` CRUD on game-service; `/study/`+`/study/:id` SPA views). One PG table (`studies` with JSONB `tree` column) doubles for saved setups (empty tree, FEN only) and saved sessions (linear chain of moves). Save buttons live in `SidePanel.vue` ("Save as study") and `EditPanel.vue` ("Save setup"); listing + viewer in `frontend/src/views/Studies*.vue`. See `pkg/wire/CONTRACT.md` for the JSON tree shape.
+- **Move-list click-to-scrub + fork-from-ply** on finished games. Click any SAN span → board jumps to that ply (synthesizes a StateJSON from `/api/games/{id}/replay`); "Fork" button creates a new engine-game row at that exact FEN via `createGame` + `setPosition`. Keyboard: ←/→/Home/End/Esc. See `cmd/game/state.go` `getReplayFrames` and `GameView.vue` `onSelectPly` / `onForkFromPly`.
+- **Spectator-only viewer count.** `Hub.add` / `Hub.remove` gate `broadcastViewerCount` on a `Client.isSpectator` flag set from `/can_watch`'s `X-Is-Player` response header — players watching their own game no longer inflate the chip.
+- **Setup-Board landing tile** (`Landing.vue` third card) routes to `/game/{id}?mode=setup`; `GameView.onMounted` reads the query param and auto-calls `enterEditMode` so the user lands inside the editor.
+- **Collapsible control panel** in `GameView.vue` — chevron toggle hides `SidePanel`/`EditPanel`, keeps status + clock visible. Pref persisted to `localStorage['chess-panel-collapsed']`.
+- **New Game from a finished engine game** spawns a new durable row instead of resetting; ongoing PvP-shaped games (real human or bot-fallback) hide the New Game button entirely so players can't abandon-by-reset.
 
 See `ROADMAP.md` "Scale design notes" for the 10k-pair-scale walk-through (per-channel SUBSCRIBE, PG indices, env-tunable pool already shipped; the remaining items are deliberately deferred with reasons).

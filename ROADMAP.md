@@ -48,6 +48,65 @@ The session that produced this roadmap shipped ~40 commits restructuring the pla
 
 Nothing right now — the platform is in a stable state. Pick the next item below.
 
+Recent ops/cleanup (2026-05-18):
+- ✅ **Studies surface** (`52de43e` backend, `c7f8253` save buttons,
+  `b833a1e` list + viewer + nav). New durable per-user table with a
+  JSONB `tree` column doubling for saved setups (empty tree, FEN only)
+  and saved sessions (linear chain). `/api/studies` CRUD on
+  game-service (5 endpoints, gateway-proxied with `injectAuthedUser`).
+  SPA: "Save as study" in SidePanel, "Save setup" in EditPanel,
+  `/study/` listing, `/study/:id` viewer with "Play from here" fork.
+  `pkg/wire/CONTRACT.md` carries the JSON tree shape + size limits.
+  v1 viewer renders the start position only (no JS chess engine ⇒
+  no mid-tree FEN computation); branching trees show only the first-
+  child chain. Both deferred to v2 with the same single-line viewer
+  as the upgrade point.
+- ✅ **Move-list scrub on finished games** (`af3d7b0`). Click any SAN
+  span → board jumps to that ply; ←/→/Home/End/Esc work too. Pulls
+  frames lazily from `/api/games/{id}/replay` and synthesizes a
+  StateJSON onto the live state. Live updates keep arriving in the
+  background; "Live" snaps back. Only enabled when `status !== 'ongoing'`
+  so `onSquare` (already gated on the same flag) can't leak a move.
+- ✅ **Fork-from-ply** (`7e968ef`). "Fork" button in the scrub row
+  creates a new engine-game row at the scrubbed FEN via `createGame`
+  + `setPosition` and navigates there. Gated on signed-in + durable
+  game.
+- ✅ **Setup-Board landing tile** (`a93e01b`). Third card on
+  `Landing.vue` that creates a durable engine game and navigates
+  with `?mode=setup`; GameView reads the param after the first state
+  lands and calls `enterEditMode` so the user opens directly in the
+  position editor.
+- ✅ **Collapsible side panel** (`1b34e31`). Chevron toggle in
+  `GameView.vue` hides SidePanel/EditPanel and narrows `#side` to
+  180px so the board re-centers. Status + clock stay visible. Pref
+  in `localStorage['chess-panel-collapsed']`.
+- ✅ **New-game routing for finished engine games + PvP guard**
+  (`5016545`). Finished vs-engine games' "New Game" now creates a
+  fresh durable row instead of resetting in place (the source game
+  stays reviewable). Ongoing PvP-shaped games (real human OR
+  bot-fallback — both populate `white/black_user_id`) hide the New
+  Game button entirely; players must resign / draw to exit.
+- ✅ **Spectator-only viewer count** (`89e9cb7`). Game-service's
+  `/api/games/{id}/can_watch` now sets `X-Is-Player: 1|0` on the
+  response; the gateway threads it into `Client.isSpectator` at WS
+  upgrade. `Hub.add` / `Hub.remove` gate `broadcastViewerCount` on
+  that flag so players watching their own game don't inflate the
+  "N watching" chip.
+- ✅ **Replay favicon** (`1b8e54b`). `viteSingleFile` was rewriting
+  `<link rel="icon" href="/favicon.svg">` to a relative path that
+  404'd under `/api/replay.html`. Fixed via a `bytes.Replace` in
+  `handleReplay` that restores the absolute href post-substitution.
+  Earlier attempt inlined the SVG as base64 (`b479282`) — replaced
+  here because opaque blobs in committed HTML are review-hostile,
+  even when individually safe.
+- ✅ **Onboarding doc** (`ONBOARDING.md`). Walks a junior dev
+  through the system bottom-up: shape of the stack, the conceptual
+  bridges from CS to production (distributed locks, leader
+  election, Streams-vs-Pub/Sub, the JWT trust boundary, the
+  middleware/`Hijack()` gotcha, metric cardinality), the trace of
+  a single move through the stack, then a Redis-data + Pub/Sub +
+  hub + AWS deep-dive in section 9–10.
+
 Recent ops/cleanup (2026-05-17):
 - ✅ **In-theme confirm modal** (`1f8ba41`). Singleton Pinia store +
   `ConfirmModal` mounted in `App.vue`; every `window.confirm` call
