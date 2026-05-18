@@ -7,6 +7,8 @@ import Invites from './views/Invites.vue';
 import Landing from './views/Landing.vue';
 import Match from './views/Match.vue';
 import Admin from './views/Admin.vue';
+import StudiesList from './views/StudiesList.vue';
+import StudyView from './views/StudyView.vue';
 import { useAuthStore } from './stores/auth';
 
 const routes: RouteRecordRaw[] = [
@@ -18,6 +20,11 @@ const routes: RouteRecordRaw[] = [
   { path: '/dashboard', redirect: '/match' },
   { path: '/profile', component: Profile, meta: { requiresAuth: true } },
   { path: '/invites', component: Invites, meta: { requiresAuth: true } },
+  // Studies. /study/ is the listing; /study/:id is the per-study viewer.
+  // Both require auth — the backend's /api/studies/* surface returns
+  // 401 to unauthed callers anyway, so the guard is purely UX.
+  { path: '/study/', component: StudiesList, meta: { requiresAuth: true } },
+  { path: '/study/:id', component: StudyView, meta: { requiresAuth: true } },
   // /admin gated by both auth AND user.is_admin. Backend re-checks on
   // every /api/admin/* call (404s non-admins) so this guard is purely
   // UX — server is the actual auth boundary.

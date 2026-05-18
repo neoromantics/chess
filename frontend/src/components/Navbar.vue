@@ -59,6 +59,7 @@
             </div>
           </div>
 
+          <router-link to="/study/" class="btn-text">Studies</router-link>
           <router-link to="/profile" class="user-link">
             <span class="user-greeting">Hi, <strong>{{ authStore.user.username }}</strong></span>
           </router-link>
