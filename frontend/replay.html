@@ -3,7 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <!-- Inlined as a data URI: viteSingleFile rewrites href="/favicon.svg"
+       to "./favicon.svg" which 404s under our /api/replay.html serving
+       URL. Inlining sidesteps the path-rewriting plugin entirely and
+       keeps replay.html truly self-contained alongside its JS/CSS. -->
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+CiAgPHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iMTIiIGZpbGw9IiMxYTFhMWEiLz4KICA8dGV4dCB4PSI1MCUiIHk9IjU0JSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZG9taW5hbnQtYmFzZWxpbmU9Im1pZGRsZSIKICAgICAgICBmb250LWZhbWlseT0iJ1NlZ29lIFVJIFN5bWJvbCcsJ0FwcGxlIFN5bWJvbHMnLCdOb3RvIFNhbnMgU3ltYm9scycsJ0RlamFWdSBTYW5zJyxzZXJpZiIKICAgICAgICBmb250LXNpemU9IjUyIiBmaWxsPSIjZThlOGU4Ij4mIzk4MjI7PC90ZXh0Pgo8L3N2Zz4K">
   <title>chess replay</title>
 </head>
 <body>
