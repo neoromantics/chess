@@ -101,7 +101,8 @@ func (gw *Gateway) handleWSGame(w http.ResponseWriter, r *http.Request) {
 	if user, ok := auth.GetUser(r.Context()); ok {
 		userID = user.UserID
 	}
-	if !gw.userMayWatchGame(r.Context(), userID, gameID) {
+	may, isPlayer := gw.userMayWatchGame(r.Context(), userID, gameID)
+	if !may {
 		http.Error(w, "game not found", http.StatusNotFound)
 		return
 	}
@@ -113,11 +114,12 @@ func (gw *Gateway) handleWSGame(w http.ResponseWriter, r *http.Request) {
 	}
 
 	client := &Client{
-		hub:    gw.hub,
-		conn:   conn,
-		send:   make(chan []byte, 256),
-		gameID: gameID,
-		userID: userID,
+		hub:         gw.hub,
+		conn:        conn,
+		send:        make(chan []byte, 256),
+		gameID:      gameID,
+		userID:      userID,
+		isSpectator: !isPlayer,
 	}
 
 	gw.hub.register <- client
@@ -150,6 +152,9 @@ func (gw *Gateway) handleWSTempGame(w http.ResponseWriter, r *http.Request, game
 		conn:   conn,
 		send:   make(chan []byte, 256),
 		gameID: gameID,
+		// Temp games have a single anonymous owner and no spectators;
+		// the connecting client is always the player.
+		isSpectator: false,
 	}
 	gw.hub.register <- client
 	go client.writePump()

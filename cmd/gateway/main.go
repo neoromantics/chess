@@ -528,7 +528,11 @@ func (gw *Gateway) handleJoinQueue(w http.ResponseWriter, r *http.Request) {
 // ownership check, no snapshot synthesis. The game-service handler is
 // spectator-aware: signed-in participants pass on every game; anyone
 // passes on public games. Pass userID=0 for anonymous viewers.
-func (gw *Gateway) userMayWatchGame(ctx context.Context, userID int64, gameID string) bool {
+//
+// Returns (may, isPlayer). isPlayer surfaces the participant-vs-spectator
+// distinction via the X-Is-Player response header so the hub can keep
+// players out of the viewer count without a second round-trip.
+func (gw *Gateway) userMayWatchGame(ctx context.Context, userID int64, gameID string) (bool, bool) {
 	u := *gw.gameSvcURL
 	u.Path = "/api/games/" + gameID + "/can_watch"
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
@@ -538,10 +542,13 @@ func (gw *Gateway) userMayWatchGame(ctx context.Context, userID int64, gameID st
 	resp, err := gw.upstream.Do(req)
 	if err != nil {
 		slog.Warn("ws authz preflight failed", "error", err)
-		return false
+		return false, false
 	}
 	_ = resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
+	if resp.StatusCode != http.StatusOK {
+		return false, false
+	}
+	return true, resp.Header.Get("X-Is-Player") == "1"
 }
 
 // handleReplay serves a self-contained replay HTML page for a given

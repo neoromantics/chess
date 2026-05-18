@@ -193,6 +193,13 @@ func (s *GameService) handleCanWatch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "game not found", 404)
 		return
 	}
+	// Surface participant-vs-spectator to the gateway so the hub can
+	// exclude players from the viewer count without a second round-trip.
+	if userOwnsGame(uid, rec) {
+		w.Header().Set("X-Is-Player", "1")
+	} else {
+		w.Header().Set("X-Is-Player", "0")
+	}
 	w.WriteHeader(http.StatusOK)
 }
 

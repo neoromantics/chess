@@ -64,6 +64,11 @@ type Client struct {
 
 	gameID string
 	userID int64
+	// isSpectator gates participation in the per-game viewer count.
+	// Players (set false) watch their own games without inflating the
+	// "N watching" chip; only true spectators contribute. Source of
+	// truth: X-Is-Player from /api/games/{id}/can_watch at upgrade time.
+	isSpectator bool
 }
 
 func NewHub(b *eventbus.Client) *Hub {
@@ -165,10 +170,12 @@ func (h *Hub) add(ctx context.Context, c *Client) {
 	// INCR/DECR counter for accuracy. Broadcast goes on the same
 	// per-game channel the client just subscribed to so they see their
 	// own arrival reflected, and so other pods' subscribers update too.
-	if c.gameID != "" {
+	// Players watching their own game are excluded so the "N watching"
+	// chip reflects audience size, not "is the player here."
+	if c.gameID != "" && c.isSpectator {
 		h.broadcastViewerCount(ctx, c.gameID, +1)
 	}
-	slog.Info("ws client registered", "game_id", c.gameID, "user_id", c.userID)
+	slog.Info("ws client registered", "game_id", c.gameID, "user_id", c.userID, "spectator", c.isSpectator)
 }
 
 // remove tears down a client. When a game/user transitions to "no
@@ -217,10 +224,12 @@ func (h *Hub) remove(ctx context.Context, c *Client) {
 	// Decrement the per-game counter. Order matters: the local UNSUBSCRIBE
 	// happens above so this departing client won't receive its own
 	// decrement (good — they're gone). Other pods' subscribers do.
-	if c.gameID != "" {
+	// Mirrors the add path: only spectators ever incremented, so only
+	// spectators decrement.
+	if c.gameID != "" && c.isSpectator {
 		h.broadcastViewerCount(ctx, c.gameID, -1)
 	}
-	slog.Info("ws client unregistered", "game_id", c.gameID, "user_id", c.userID)
+	slog.Info("ws client unregistered", "game_id", c.gameID, "user_id", c.userID, "spectator", c.isSpectator)
 }
 
 // broadcastViewerCount adjusts the per-game viewer counter by delta

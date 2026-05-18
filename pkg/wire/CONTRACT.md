@@ -64,7 +64,7 @@ Bootstrap the first admin via SQL: `UPDATE users SET is_admin = TRUE WHERE usern
 | Method | Path | Auth | Owner | Frontend caller |
 |---|---|---|---|---|
 | GET | `/api/games/{id}/state` | 🔐?+game | gateway → game-svc | `api.getState` (auth-optional — public games readable by anyone) |
-| GET | `/api/games/{id}/can_watch` | 🔐?+game | gateway → game-svc | gateway WS-upgrade preflight (no SPA caller; anonymous viewers allowed on public games) |
+| GET | `/api/games/{id}/can_watch` | 🔐?+game | gateway → game-svc | gateway WS-upgrade preflight (no SPA caller; anonymous viewers allowed on public games); response sets `X-Is-Player: 1\|0` so the hub can exclude participants from the viewer count |
 | POST | `/api/games/{id}/visibility` | 🔐+owner | gateway → game-svc | `api.setVisibility` (toggle `is_public`) |
 | POST | `/api/games/{id}/move` | 🔐+game | gateway → game-svc | `api.move` |
 | POST | `/api/games/{id}/resign` | 🔐+game | gateway → game-svc | `api.resign` |
