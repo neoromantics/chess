@@ -133,7 +133,7 @@ import { useToastStore } from '../stores/toast';
 import { useAuthStore } from '../stores/auth';
 import { useConfirmStore } from '../stores/confirm';
 import { useUserEventsStore } from '../stores/userEvents';
-import { useRouter } from 'vue-router';
+import { useRouter, useRoute } from 'vue-router';
 import { StateJSON, Square, ReplayFrame } from '../types';
 
 const props = defineProps<{
@@ -153,6 +153,7 @@ const authStore = useAuthStore();
 const confirmStore = useConfirmStore();
 const userEventsStore = useUserEventsStore();
 const router = useRouter();
+const route = useRoute();
 
 // True once we've auto-oriented the board for the current user. Without
 // this guard the orientation would re-flip on every state update,
@@ -1281,6 +1282,16 @@ onMounted(async () => {
     prevFenForSound = s.fen;
     updateState(s);
     connectWS();
+    // ?mode=setup arrives from Landing's "Set Up Board" tile. The
+    // game row was just created with the standard starting position;
+    // enter the editor immediately so the user lands inside it rather
+    // than having to find the Setup button in the side panel. We
+    // clear the query param afterwards so a router-replace bounce
+    // (rematch, new-game) doesn't re-trigger the editor.
+    if (route.query.mode === 'setup') {
+      enterEditMode();
+      router.replace({ path: route.path, query: {} });
+    }
   } catch (e: any) {
     error.value = e.message || 'Unknown error';
   }

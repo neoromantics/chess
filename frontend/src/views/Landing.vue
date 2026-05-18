@@ -40,14 +40,27 @@
         </div>
         <div v-if="busyMode === 'match'" class="spinner"></div>
       </button>
-    </div>
 
-    <!-- Board editor is reachable from inside a "Play vs Engine" game
-         (Setup button); no separate landing tile needed. -->
-    <p v-if="authReady" class="mode-hint">
-      Looking for the board editor? Start a "Play vs Engine" game and tap
-      <strong>Setup</strong> in the action row to load any FEN.
-    </p>
+      <!-- Set Up Board: a dedicated entry into the position editor.
+           Creates the same engine-game shape "Play vs Engine" does,
+           but adds ?mode=setup so GameView auto-enters edit mode on
+           mount instead of waiting for the user to find the Setup
+           button buried in the side panel. -->
+      <button class="mode-card primary" :disabled="busyMode !== ''" @click="goSetup">
+        <div class="mode-icon">⚙</div>
+        <div class="mode-body">
+          <div class="mode-title">Set Up Board</div>
+          <div class="mode-sub">
+            Drop straight into the position editor — load any FEN, place
+            pieces, then play out the position against the engine.
+          </div>
+          <div class="mode-meta">
+            {{ authStore.user ? 'Saved to your profile' : 'Sign in required' }}
+          </div>
+        </div>
+        <div v-if="busyMode === 'setup'" class="spinner"></div>
+      </button>
+    </div>
 
     <div v-if="authReady && !authStore.user" class="auth-row">
       <router-link to="/login" class="auth-link">Log in</router-link>
@@ -69,13 +82,23 @@ const authStore = useAuthStore();
 const toastStore = useToastStore();
 
 const authReady = ref(false);
-// Locks both buttons while one is in flight so users can't double-click
-// themselves into two simultaneous game creations.
-const busyMode = ref<'' | 'engine' | 'match'>('');
+// Locks all mode buttons while one is in flight so users can't double-
+// click themselves into two simultaneous game creations.
+const busyMode = ref<'' | 'engine' | 'match' | 'setup'>('');
 
 onMounted(async () => {
   await authStore.init();
   authReady.value = true;
+  // Post-signup redirect: if the user clicked "Set Up Board" while
+  // anonymous, the signup flow lands them back here with ?setup=1
+  // in the URL. authReady is now true with authStore.user populated;
+  // kick off goSetup() so the round-trip feels seamless.
+  const url = new URL(window.location.href);
+  if (url.searchParams.get('setup') === '1' && authStore.user) {
+    url.searchParams.delete('setup');
+    window.history.replaceState({}, '', url.toString());
+    goSetup();
+  }
 });
 
 const goEngine = async () => {
@@ -112,6 +135,27 @@ const goMatch = () => {
     // Stash the intent so the post-signup redirect lands on the
     // matchmaking page instead of dropping the user back on /.
     router.replace({ path: '/signup', query: { next: '/match' } });
+  }
+};
+
+const goSetup = async () => {
+  if (busyMode.value !== '') return;
+  busyMode.value = 'setup';
+  try {
+    if (authStore.user) {
+      // Signed-in: durable game, drop into the editor immediately.
+      // mode=setup is read by GameView.onMounted to call enterEditMode
+      // after the first /api/state lands.
+      const res = await api.createGame({});
+      router.replace({ path: `/game/${res.game_id}`, query: { mode: 'setup' } });
+    } else {
+      // Anonymous setup is not supported: set_position is durable-only
+      // (no temp endpoint), so the editor needs a real game row.
+      router.replace({ path: '/signup', query: { next: '/?setup=1' } });
+    }
+  } catch (e: any) {
+    toastStore.error('Could not start the board editor: ' + (e?.message || e));
+    busyMode.value = '';
   }
 };
 </script>
