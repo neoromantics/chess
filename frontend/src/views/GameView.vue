@@ -80,8 +80,10 @@
         :viewer-count="viewerCount"
         :selected-ply="selectedPly"
         :scrub-enabled="scrubEnabled"
+        :can-fork="canFork"
         @select-ply="onSelectPly"
         @clear-scrub="clearScrub"
+        @fork-from-ply="onForkFromPly"
         @update:white-player-type="updatePlayerType('white', $event)"
         @update:black-player-type="updatePlayerType('black', $event)"
         @update:white-think-time="updateThinkTime('white', $event)"
@@ -234,6 +236,11 @@ const replayFrames = ref<ReplayFrame[] | null>(null);
 let replayFramesGameID: string | null = null;
 let replayFramesPlies = 0;
 const scrubEnabled = computed(() => !!state.value && state.value.status !== 'ongoing');
+// Forking requires (1) a durable game row (set_position is engine-game
+// only, no temp counterpart) and (2) a signed-in user (createGame
+// requires auth). Spectators on a public finished game can fork: the
+// new game is owned by *them*, not the original players.
+const canFork = computed(() => !!authStore.user && !props.id.startsWith('temp-'));
 // Re-render the board from a historical frame by stitching its fen +
 // last-move into the rest of the live state. legal_moves cleared so
 // any stray click can't synthesise a move; `thinking` cleared so the
@@ -1288,6 +1295,42 @@ const clearScrub = () => {
   selectedPly.value = null;
   selected.value = null;
   hint.value = null;
+};
+
+// Fork the currently-scrubbed position into a fresh engine-game row.
+// Two round-trips: createGame() gets us a new row in the starting
+// position; setPosition() overrides it with the scrubbed FEN. Then we
+// navigate. Both sides default to human (no engine flags passed) so
+// the user can play moves from either color — they can flip a side
+// to engine via the SidePanel toggles once they land in the new game.
+//
+// If setPosition fails we still land on the new game (just at the
+// starting position) and surface the partial-failure as a toast — the
+// orphan row is recoverable manually.
+const onForkFromPly = async (ply: number) => {
+  if (!canFork.value) {
+    toastStore.error('Sign in to fork a position into a new game.');
+    return;
+  }
+  const frames = await ensureReplayFrames();
+  if (!frames) return;
+  const frame = frames[ply];
+  if (!frame) {
+    toastStore.error('Could not locate that ply in the replay.');
+    return;
+  }
+  try {
+    const { game_id } = await api.createGame({});
+    try {
+      await api.setPosition(game_id, frame.fen);
+    } catch (e: any) {
+      toastStore.error('Forked to a new game but couldn’t apply the position: ' + (e?.message || e));
+    }
+    toastStore.success(`Forked at ply ${ply} into a new game.`);
+    router.push(`/game/${game_id}`);
+  } catch (e: any) {
+    toastStore.error('Could not create the fork: ' + (e?.message || e));
+  }
 };
 
 // Hints fan out on the requester's user.evt channel — never on

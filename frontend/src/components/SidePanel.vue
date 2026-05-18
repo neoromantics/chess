@@ -162,13 +162,18 @@
         <span class="moves-title">Moves</span>
         <span v-if="historyPairs.length" class="muted">{{ plyCount }} {{ plyCount === 1 ? 'ply' : 'plies' }}</span>
       </summary>
-      <!-- Scrub indicator + Live button. Shown only when the user is
-           parked on a historical ply. "← / →" / Home/End / Esc work
-           globally; this button is the visible click target for users
-           who don't reach for the keyboard. -->
+      <!-- Scrub indicator + actions. Shown only when the user is parked
+           on a historical ply. Live: snaps back to the final position
+           (Esc does the same). Fork: spawns a fresh engine-game row at
+           this exact FEN so the user can play hypothetical lines. Fork
+           is hidden when canFork is false — temp games can't fork
+           because set_position has no temp counterpart. -->
       <div v-if="scrubEnabled && selectedPly !== null && selectedPly !== undefined" class="scrub-row">
         <span class="muted">Viewing ply {{ selectedPly }}/{{ plyCount }}</span>
-        <button class="btn ghost btn-sm" @click="$emit('clear-scrub')" title="Return to the live/final position (Esc)">Live</button>
+        <span class="scrub-actions">
+          <button v-if="canFork" class="btn ghost btn-sm" @click="$emit('fork-from-ply', selectedPly)" title="Open this position in a new game so you can explore alternatives">Fork</button>
+          <button class="btn ghost btn-sm" @click="$emit('clear-scrub')" title="Return to the live/final position (Esc)">Live</button>
+        </span>
       </div>
       <div class="move-list">
         <div v-for="(pair, i) in historyPairs" :key="i" class="move-row">
@@ -306,6 +311,10 @@ const props = defineProps<{
   // button. Set by GameView based on game status (currently: any game
   // that is not in 'ongoing' status — finished or terminated).
   scrubEnabled?: boolean;
+  // Whether forking is available. False for temp games (set_position
+  // is durable-only) and for anonymous viewers (createGame requires
+  // auth). GameView decides; SidePanel just renders the button.
+  canFork?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -340,6 +349,10 @@ const emit = defineEmits<{
   // Return the board to the live (current) state. Bound to the "Live"
   // button and the Esc keystroke (handled in GameView).
   (e: 'clear-scrub'): void;
+  // Spawn a new engine-game row at the FEN of the currently-scrubbed
+  // ply. GameView owns the side-effect (createGame + setPosition +
+  // router.push). ply is forwarded for the toast / telemetry.
+  (e: 'fork-from-ply', ply: number): void;
 }>();
 
 const isPvP = computed(() => !!(props.state && props.state.white_user_id !== null && props.state.black_user_id !== null));
@@ -681,6 +694,7 @@ const copyWatchLink = async () => {
 .move-empty { color: #666; font-style: italic; padding: 8px 0; font-family: inherit; }
 .scrub-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 0; border-bottom: 1px solid #2f2f2f; margin-bottom: 6px; font-size: 12px; }
 .scrub-row .btn-sm { padding: 2px 10px; font-size: 12px; }
+.scrub-actions { display: flex; gap: 6px; }
 /* Assessment classes. Color choice mirrors the loss spectrum:
  * green = great, neutral = good, yellow = inaccuracy, orange = mistake,
  * red = blunder. `assess-alt` is kept around as a fallback so a stale
