@@ -8,6 +8,7 @@ package gen
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -210,6 +211,51 @@ func (q *Queries) CreateInvite(ctx context.Context, arg CreateInviteParams) (Inv
 	return i, err
 }
 
+const createStudy = `-- name: CreateStudy :one
+
+INSERT INTO studies (user_id, name, start_fen, tree, source_game_id, source_ply)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, user_id, name, start_fen, tree, source_game_id, source_ply, created_at, updated_at
+`
+
+type CreateStudyParams struct {
+	UserID       int64           `json:"user_id"`
+	Name         string          `json:"name"`
+	StartFen     string          `json:"start_fen"`
+	Tree         json.RawMessage `json:"tree"`
+	SourceGameID sql.NullString  `json:"source_game_id"`
+	SourcePly    sql.NullInt32   `json:"source_ply"`
+}
+
+// ===== Studies =====
+// Insert a new study. tree is a JSON blob (root node shape is
+// {"children": [...]}); the handler validates the shape before passing
+// it through. source_game_id + source_ply are optional — leave them
+// NULL for a pure "save setup" flow that didn't come from a game.
+func (q *Queries) CreateStudy(ctx context.Context, arg CreateStudyParams) (Study, error) {
+	row := q.db.QueryRowContext(ctx, createStudy,
+		arg.UserID,
+		arg.Name,
+		arg.StartFen,
+		arg.Tree,
+		arg.SourceGameID,
+		arg.SourcePly,
+	)
+	var i Study
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Name,
+		&i.StartFen,
+		&i.Tree,
+		&i.SourceGameID,
+		&i.SourcePly,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (username, password_hash, created_at, last_login)
 VALUES ($1, $2, NOW(), NOW())
@@ -279,6 +325,26 @@ WHERE id = $1
 // so we delete strictly by primary key.
 func (q *Queries) DeleteGame(ctx context.Context, id string) (int64, error) {
 	result, err := q.db.ExecContext(ctx, deleteGame, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const deleteStudy = `-- name: DeleteStudy :execrows
+DELETE FROM studies
+WHERE id = $1 AND user_id = $2
+`
+
+type DeleteStudyParams struct {
+	ID     uuid.UUID `json:"id"`
+	UserID int64     `json:"user_id"`
+}
+
+// Hard-delete, scoped by id AND user_id. Same anti-leak pattern as
+// UpdateStudy — affected rows == 0 means "not yours or not found."
+func (q *Queries) DeleteStudy(ctx context.Context, arg DeleteStudyParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteStudy, arg.ID, arg.UserID)
 	if err != nil {
 		return 0, err
 	}
@@ -435,6 +501,34 @@ func (q *Queries) GetInvite(ctx context.Context, id uuid.UUID) (Invite, error) {
 		&i.CreatedAt,
 		&i.ExpiresAt,
 		&i.ResolvedAt,
+	)
+	return i, err
+}
+
+const getStudy = `-- name: GetStudy :one
+SELECT id, user_id, name, start_fen, tree, source_game_id, source_ply, created_at, updated_at
+FROM studies
+WHERE id = $1
+`
+
+// Fetch one study by id. The handler is responsible for the ownership
+// check (existence-leak rule: non-owner sees 404, not 403) — this
+// query doesn't scope by user_id so the handler can return the
+// distinct "missing row" vs "wrong owner" cases internally for
+// telemetry while presenting both as 404 externally.
+func (q *Queries) GetStudy(ctx context.Context, id uuid.UUID) (Study, error) {
+	row := q.db.QueryRowContext(ctx, getStudy, id)
+	var i Study
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Name,
+		&i.StartFen,
+		&i.Tree,
+		&i.SourceGameID,
+		&i.SourcePly,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -1012,6 +1106,51 @@ func (q *Queries) ListRecentSignups(ctx context.Context) ([]ListRecentSignupsRow
 	return items, nil
 }
 
+const listStudiesForUser = `-- name: ListStudiesForUser :many
+SELECT id, user_id, name, start_fen, tree, source_game_id, source_ply, created_at, updated_at
+FROM studies
+WHERE user_id = $1
+ORDER BY created_at DESC
+LIMIT 200
+`
+
+// Studies belonging to one user, newest first. tree is included so
+// the SPA list view can render a position preview without a second
+// round-trip; if the list ever grows large enough that the JSON
+// payload is the bottleneck, switch to a tree-omitting projection.
+func (q *Queries) ListStudiesForUser(ctx context.Context, userID int64) ([]Study, error) {
+	rows, err := q.db.QueryContext(ctx, listStudiesForUser, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Study{}
+	for rows.Next() {
+		var i Study
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Name,
+			&i.StartFen,
+			&i.Tree,
+			&i.SourceGameID,
+			&i.SourcePly,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const searchUsersByPrefix = `-- name: SearchUsersByPrefix :many
 SELECT id, username, display_name, country, rating
 FROM users
@@ -1103,6 +1242,36 @@ type UpdatePasswordParams struct {
 func (q *Queries) UpdatePassword(ctx context.Context, arg UpdatePasswordParams) error {
 	_, err := q.db.ExecContext(ctx, updatePassword, arg.ID, arg.PasswordHash)
 	return err
+}
+
+const updateStudy = `-- name: UpdateStudy :execrows
+UPDATE studies
+SET name = $3, tree = $4, updated_at = NOW()
+WHERE id = $1 AND user_id = $2
+`
+
+type UpdateStudyParams struct {
+	ID     uuid.UUID       `json:"id"`
+	UserID int64           `json:"user_id"`
+	Name   string          `json:"name"`
+	Tree   json.RawMessage `json:"tree"`
+}
+
+// Partial-update: name + tree only (the other fields are immutable
+// after creation). Scoped by id AND user_id so a non-owner can't
+// modify someone else's row by guessing the UUID — affecting 0 rows
+// is the silent rejection. updated_at bumps automatically on any change.
+func (q *Queries) UpdateStudy(ctx context.Context, arg UpdateStudyParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateStudy,
+		arg.ID,
+		arg.UserID,
+		arg.Name,
+		arg.Tree,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const updateUserProfile = `-- name: UpdateUserProfile :exec

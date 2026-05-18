@@ -159,3 +159,25 @@ CREATE TABLE IF NOT EXISTS admin_actions (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS admin_actions_created_idx ON admin_actions (created_at DESC);
+
+-- Saved positions + exploration trees. Doubles for "saved setups" (pure
+-- FENs with an empty tree) and "saved sessions" (FEN + a tree of moves
+-- the user explored). One JSONB column for both because the tree shape
+-- is recursive — flattening into rows would force a join on every read
+-- and complicate updates. tree is a single root node {children: [...]};
+-- nodes have shape {move: LAN, san?: text, comment?: text, children: []}.
+-- source_game_id / source_ply are populated when a study is created from
+-- a game (e.g. via the SidePanel "Save as study" flow); both nullable so
+-- a freshly-set-up position from the editor doesn't need a phantom game.
+CREATE TABLE IF NOT EXISTS studies (
+    id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id         BIGINT      NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name            TEXT        NOT NULL,
+    start_fen       TEXT        NOT NULL,
+    tree            JSONB       NOT NULL DEFAULT '{"children": []}'::jsonb,
+    source_game_id  TEXT        REFERENCES games(id) ON DELETE SET NULL,
+    source_ply      INT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS studies_user_created_idx ON studies (user_id, created_at DESC);

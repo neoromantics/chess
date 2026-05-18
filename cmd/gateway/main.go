@@ -292,6 +292,15 @@ func main() {
 	// game-service's mux enforces methods on each leaf route.
 	mux.Handle("/api/invites/", gw.injectAuthedUser(gameProxy))
 
+	// Studies. Same shape as invites: per-user durable rows on
+	// game-service. Prefix-mounted because the surface is a small CRUD
+	// (POST/GET list/GET one/PATCH/DELETE); game-service's mux enforces
+	// the method on each leaf. The trailing-slashless POST/GET list
+	// also lives here — ServeMux treats "/api/studies" as a child of
+	// the "/api/studies/" pattern when the literal path is non-empty.
+	mux.Handle("/api/studies", gw.injectAuthedUser(gameProxy))
+	mux.Handle("/api/studies/", gw.injectAuthedUser(gameProxy))
+
 	// 5c. Replay. Gateway owns the embedded replay.html template;
 	// game-service supplies the per-ply JSON frames. We substitute the
 	// placeholder and serve a single HTML doc — same UX as the old

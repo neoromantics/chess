@@ -113,6 +113,17 @@ func (panicStore) CancelInvite(uuid.UUID, int64) (int64, error) {
 func (panicStore) ExpireStaleInvites() ([]db.Invite, error) {
 	panic("unexpected ExpireStaleInvites")
 }
+func (panicStore) CreateStudy(*db.Study) (*db.Study, error) { panic("unexpected CreateStudy") }
+func (panicStore) GetStudy(uuid.UUID) (*db.Study, error)    { panic("unexpected GetStudy") }
+func (panicStore) ListStudiesForUser(int64) ([]db.Study, error) {
+	panic("unexpected ListStudiesForUser")
+}
+func (panicStore) UpdateStudy(uuid.UUID, int64, string, json.RawMessage) (int64, error) {
+	panic("unexpected UpdateStudy")
+}
+func (panicStore) DeleteStudy(uuid.UUID, int64) (int64, error) {
+	panic("unexpected DeleteStudy")
+}
 
 // gameStore is the most common stub: a single in-memory map of game
 // records, keyed by ID. GetGame returns a deep copy so handler-side

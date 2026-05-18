@@ -51,11 +51,20 @@ type Querier interface {
 	// recipient who's offline sees the invite when they reconnect; Redis
 	// pub/sub on user.evt.{id} is the realtime push when they're online.
 	CreateInvite(ctx context.Context, arg CreateInviteParams) (Invite, error)
+	// ===== Studies =====
+	// Insert a new study. tree is a JSON blob (root node shape is
+	// {"children": [...]}); the handler validates the shape before passing
+	// it through. source_game_id + source_ply are optional — leave them
+	// NULL for a pure "save setup" flow that didn't come from a game.
+	CreateStudy(ctx context.Context, arg CreateStudyParams) (Study, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
 	DeclineInvite(ctx context.Context, arg DeclineInviteParams) (int64, error)
 	// Authorization is enforced by the handler via getGame() before this runs,
 	// so we delete strictly by primary key.
 	DeleteGame(ctx context.Context, id string) (int64, error)
+	// Hard-delete, scoped by id AND user_id. Same anti-leak pattern as
+	// UpdateStudy — affected rows == 0 means "not yours or not found."
+	DeleteStudy(ctx context.Context, arg DeleteStudyParams) (int64, error)
 	// Hard-delete a user. Relies on the schema's existing FK behaviour:
 	//   games.{white,black}_user_id  ON DELETE SET NULL  (preserves the
 	//     game history with the slot anonymized — both players' replays
@@ -71,6 +80,12 @@ type Querier interface {
 	ExpireStaleInvites(ctx context.Context) ([]Invite, error)
 	GetGame(ctx context.Context, id string) (GetGameRow, error)
 	GetInvite(ctx context.Context, id uuid.UUID) (Invite, error)
+	// Fetch one study by id. The handler is responsible for the ownership
+	// check (existence-leak rule: non-owner sees 404, not 403) — this
+	// query doesn't scope by user_id so the handler can return the
+	// distinct "missing row" vs "wrong owner" cases internally for
+	// telemetry while presenting both as 404 externally.
+	GetStudy(ctx context.Context, id uuid.UUID) (Study, error)
 	GetUserByID(ctx context.Context, id int64) (User, error)
 	GetUserByUsername(ctx context.Context, username string) (User, error)
 	// Audit row written by every destructive /api/admin/* call. Both the
@@ -117,6 +132,11 @@ type Querier interface {
 	// "Recent signups" panel. Returning rating so we can sanity-check
 	// that the default 1500 didn't get scribbled in by an early-edit bug.
 	ListRecentSignups(ctx context.Context) ([]ListRecentSignupsRow, error)
+	// Studies belonging to one user, newest first. tree is included so
+	// the SPA list view can render a position preview without a second
+	// round-trip; if the list ever grows large enough that the JSON
+	// payload is the bottleneck, switch to a tree-omitting projection.
+	ListStudiesForUser(ctx context.Context, userID int64) ([]Study, error)
 	// For invite autocomplete. Case-insensitive prefix match, capped.
 	// Bot users (is_bot=true) are excluded — they're internal stand-ins
 	// for the engine-fallback matchmaker and shouldn't appear in invite
@@ -128,6 +148,11 @@ type Querier interface {
 	SetGameVisibility(ctx context.Context, arg SetGameVisibilityParams) (int64, error)
 	UpdateLastLogin(ctx context.Context, id int64) error
 	UpdatePassword(ctx context.Context, arg UpdatePasswordParams) error
+	// Partial-update: name + tree only (the other fields are immutable
+	// after creation). Scoped by id AND user_id so a non-owner can't
+	// modify someone else's row by guessing the UUID — affecting 0 rows
+	// is the silent rejection. updated_at bumps automatically on any change.
+	UpdateStudy(ctx context.Context, arg UpdateStudyParams) (int64, error)
 	UpdateUserProfile(ctx context.Context, arg UpdateUserProfileParams) error
 	// Glicko-2 outcome write. Called by the leader-elected rating updater
 	// after a rated game completes. All four fields move atomically so we

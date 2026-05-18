@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	_ "embed"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -666,6 +667,57 @@ func (s *PostgresStore) ExpireStaleInvites() ([]Invite, error) {
 	return out, nil
 }
 
+func (s *PostgresStore) CreateStudy(st *Study) (*Study, error) {
+	row, err := s.q.CreateStudy(context.Background(), gen.CreateStudyParams{
+		UserID:       st.UserID,
+		Name:         st.Name,
+		StartFen:     st.StartFEN,
+		Tree:         st.Tree,
+		SourceGameID: nullStringFrom(st.SourceGameID),
+		SourcePly:    nullInt32From(st.SourcePly),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return studyFromRow(row), nil
+}
+
+func (s *PostgresStore) GetStudy(id uuid.UUID) (*Study, error) {
+	row, err := s.q.GetStudy(context.Background(), id)
+	if err != nil {
+		return nil, err
+	}
+	return studyFromRow(row), nil
+}
+
+func (s *PostgresStore) ListStudiesForUser(userID int64) ([]Study, error) {
+	rows, err := s.q.ListStudiesForUser(context.Background(), userID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Study, len(rows))
+	for i, r := range rows {
+		out[i] = *studyFromRow(r)
+	}
+	return out, nil
+}
+
+func (s *PostgresStore) UpdateStudy(id uuid.UUID, userID int64, name string, tree json.RawMessage) (int64, error) {
+	return s.q.UpdateStudy(context.Background(), gen.UpdateStudyParams{
+		ID:     id,
+		UserID: userID,
+		Name:   name,
+		Tree:   tree,
+	})
+}
+
+func (s *PostgresStore) DeleteStudy(id uuid.UUID, userID int64) (int64, error) {
+	return s.q.DeleteStudy(context.Background(), gen.DeleteStudyParams{
+		ID:     id,
+		UserID: userID,
+	})
+}
+
 // --- mappers between sqlc-generated row types and the Store DTOs ---
 
 func userFromRow(r gen.User) *User {
@@ -733,6 +785,49 @@ func defaultString(s, fallback string) string {
 		return fallback
 	}
 	return s
+}
+
+// Optional-field helpers for the studies surface. nullStringFrom and
+// nullInt32From flip the empty/zero sentinels we use in the Study DTO
+// (string="" / int=0 mean "absent") to NULL in the database, so a
+// "save setup with no source game" round-trips without phantom rows.
+func nullStringFrom(s string) sql.NullString {
+	if s == "" {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: s, Valid: true}
+}
+
+func nullInt32From(v int) sql.NullInt32 {
+	if v == 0 {
+		return sql.NullInt32{}
+	}
+	return sql.NullInt32{Int32: int32(v), Valid: true}
+}
+
+func studyFromRow(r gen.Study) *Study {
+	out := &Study{
+		ID:        r.ID,
+		UserID:    r.UserID,
+		Name:      r.Name,
+		StartFEN:  r.StartFen,
+		Tree:      r.Tree,
+		CreatedAt: r.CreatedAt,
+		UpdatedAt: r.UpdatedAt,
+	}
+	if r.SourceGameID.Valid {
+		out.SourceGameID = r.SourceGameID.String
+	}
+	if r.SourcePly.Valid {
+		out.SourcePly = int(r.SourcePly.Int32)
+	}
+	// sqlc returns nil json.RawMessage when the column was NULL (shouldn't
+	// happen — column has a default — but defend against it). Surface
+	// an empty tree so handlers don't need a nil-check on every read.
+	if len(out.Tree) == 0 {
+		out.Tree = json.RawMessage(`{"children": []}`)
+	}
+	return out
 }
 
 // Compile-time guarantee that PostgresStore satisfies Store.

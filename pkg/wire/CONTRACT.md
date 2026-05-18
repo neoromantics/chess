@@ -99,6 +99,31 @@ Bootstrap the first admin via SQL: `UPDATE users SET is_admin = TRUE WHERE usern
 | POST | `/api/invites/{id}/decline` | 🔐 | gateway → game-svc | `api.declineInvite` |
 | POST | `/api/invites/{id}/cancel` | 🔐 | gateway → game-svc | `api.cancelInvite` |
 
+### Studies — saved positions + exploration trees
+Per-user durable rows. Same surface for "save a setup" (empty tree, just
+the FEN) and "save a session" (tree of moves). All ownership-scoped
+inside game-service; non-owner gets 404 (existence-leak rule).
+
+| Method | Path | Auth | Owner | Frontend caller |
+|---|---|---|---|---|
+| POST | `/api/studies` | 🔐 | gateway → game-svc | `api.createStudy` (body: `{name, start_fen, tree?, source_game_id?, source_ply?}`) |
+| GET | `/api/studies` | 🔐 | gateway → game-svc | `api.listStudies` (200-row cap, newest first) |
+| GET | `/api/studies/{id}` | 🔐+owner | gateway → game-svc | `api.getStudy` |
+| PATCH | `/api/studies/{id}` | 🔐+owner | gateway → game-svc | `api.updateStudy` (body: `{name, tree}`) |
+| DELETE | `/api/studies/{id}` | 🔐+owner | gateway → game-svc | `api.deleteStudy` (204) |
+
+`tree` JSON shape (recursive; root has no move):
+```json
+{
+  "children": [
+    {"move":"e2e4","san":"e4","comment":"opening","children":[
+      {"move":"e7e5","san":"e5","children":[]}
+    ]}
+  ]
+}
+```
+Limits: name ≤ 200 bytes, start_fen ≤ 200 bytes, tree ≤ 256 KB.
+
 ### Anonymous temp games (no JWT)
 Identity is the `chess-anon` HttpOnly cookie. Gateway mints it on first
 hit and injects an `X-Anon-ID` header on every proxied call. **Auth

@@ -6,6 +6,7 @@ package gen
 
 import (
 	"database/sql"
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -56,6 +57,18 @@ type Invite struct {
 	CreatedAt   time.Time      `json:"created_at"`
 	ExpiresAt   time.Time      `json:"expires_at"`
 	ResolvedAt  sql.NullTime   `json:"resolved_at"`
+}
+
+type Study struct {
+	ID           uuid.UUID       `json:"id"`
+	UserID       int64           `json:"user_id"`
+	Name         string          `json:"name"`
+	StartFen     string          `json:"start_fen"`
+	Tree         json.RawMessage `json:"tree"`
+	SourceGameID sql.NullString  `json:"source_game_id"`
+	SourcePly    sql.NullInt32   `json:"source_ply"`
+	CreatedAt    time.Time       `json:"created_at"`
+	UpdatedAt    time.Time       `json:"updated_at"`
 }
 
 type User struct {

@@ -1,6 +1,7 @@
 package db
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -291,4 +292,33 @@ type Store interface {
 	// TTL, returning the affected rows so the sweeper can broadcast a
 	// per-invite event. Called only by the leader-elected sweeper.
 	ExpireStaleInvites() ([]Invite, error)
+
+	// Studies — saved positions and exploration trees. Doubles as the
+	// "saved setups" surface (empty tree, just the FEN) and the "saved
+	// session" surface (a tree of moves the user explored). All
+	// operations are scoped by user_id on the handler side; CreateStudy
+	// + GetStudy don't filter on user_id at the query level so handlers
+	// can render distinct 404 reasons internally while presenting both
+	// cases as 404 externally (existence-leak rule).
+	CreateStudy(s *Study) (*Study, error)
+	GetStudy(id uuid.UUID) (*Study, error)
+	ListStudiesForUser(userID int64) ([]Study, error)
+	UpdateStudy(id uuid.UUID, userID int64, name string, tree json.RawMessage) (int64, error)
+	DeleteStudy(id uuid.UUID, userID int64) (int64, error)
+}
+
+// Study is the wrapper type handlers consume. Mirrors the sqlc-generated
+// Study struct but drops sql.Null* wrappers from optional fields so
+// JSON output and tests stay clean. SourceGameID = "" and SourcePly = 0
+// represent "no source" — the schema permits both being NULL.
+type Study struct {
+	ID           uuid.UUID       `json:"id"`
+	UserID       int64           `json:"user_id"`
+	Name         string          `json:"name"`
+	StartFEN     string          `json:"start_fen"`
+	Tree         json.RawMessage `json:"tree"`
+	SourceGameID string          `json:"source_game_id,omitempty"`
+	SourcePly    int             `json:"source_ply,omitempty"`
+	CreatedAt    time.Time       `json:"created_at"`
+	UpdatedAt    time.Time       `json:"updated_at"`
 }

@@ -96,6 +96,15 @@ func main() {
 	mux.HandleFunc("POST /api/invites/{id}/decline", s.handleDeclineInvite)
 	mux.HandleFunc("POST /api/invites/{id}/cancel", s.handleCancelInvite)
 
+	// Studies. Saved positions + exploration trees, per-user. See
+	// cmd/game/studies.go. Ownership is enforced inside each handler
+	// (existence-leak rule: non-owner gets 404, not 403).
+	mux.HandleFunc("POST /api/studies", s.handleCreateStudy)
+	mux.HandleFunc("GET /api/studies", s.handleListStudies)
+	mux.HandleFunc("GET /api/studies/{id}", s.handleGetStudy)
+	mux.HandleFunc("PATCH /api/studies/{id}", s.handleUpdateStudy)
+	mux.HandleFunc("DELETE /api/studies/{id}", s.handleDeleteStudy)
+
 	// Temp game (anonymous, Redis-only, 10-min sliding TTL). See cmd/game/temp.go.
 	// The whole /api/temp namespace IS the anonymous-games surface, so
 	// per-game endpoints nest under /api/temp/{id}/<verb> rather than
