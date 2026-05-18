@@ -150,6 +150,7 @@ import { parseBoard } from '../constants';
 import { useToastStore } from '../stores/toast';
 import { useAuthStore } from '../stores/auth';
 import { useConfirmStore } from '../stores/confirm';
+import { usePromptStore } from '../stores/prompt';
 import { useUserEventsStore } from '../stores/userEvents';
 import { useRouter, useRoute } from 'vue-router';
 import { StateJSON, Square, ReplayFrame, StudyTreeNode } from '../types';
@@ -169,6 +170,7 @@ const props = defineProps<{
 const toastStore = useToastStore();
 const authStore = useAuthStore();
 const confirmStore = useConfirmStore();
+const promptStore = usePromptStore();
 const userEventsStore = useUserEventsStore();
 const router = useRouter();
 const route = useRoute();
@@ -1329,10 +1331,9 @@ const linearTreeFromHistory = (history: string[], historySan: string[]): StudyTr
 };
 
 // "Save as study" handler — captures the current game's start position
-// (replay frame 0) + the linear line played from there. Lives behind a
-// prompt() for now; a proper input modal is a follow-up (CLAUDE.md
-// flags window.confirm specifically; window.prompt has the same theme/
-// styling caveats but the user signed off on "for now" on this surface).
+// (replay frame 0) + the linear line played from there. Uses the
+// in-theme PromptModal (stores/prompt.ts) for the name input so the
+// dialog matches the rest of the UI rather than the user-agent style.
 const onSaveAsStudy = async () => {
   if (!authStore.user) {
     toastStore.error('Sign in to save studies.');
@@ -1340,8 +1341,13 @@ const onSaveAsStudy = async () => {
   }
   if (!state.value) return;
   const defaultName = `Game ${props.id.slice(0, 8)}`;
-  const name = window.prompt('Name this study', defaultName);
-  if (!name) return; // user cancelled
+  const name = await promptStore.ask({
+    title: 'Save as study',
+    message: 'Name this study so you can find it again in /study/.',
+    defaultValue: defaultName,
+    confirmLabel: 'Save',
+  });
+  if (!name) return; // user cancelled or left blank
   const frames = await ensureReplayFrames();
   if (!frames || frames.length === 0) {
     toastStore.error('Could not load this game’s replay frames.');
@@ -1349,7 +1355,7 @@ const onSaveAsStudy = async () => {
   }
   try {
     await api.createStudy({
-      name: name.trim(),
+      name,
       start_fen: frames[0].fen,
       tree: linearTreeFromHistory(state.value.history || [], state.value.history_san || []),
       source_game_id: props.id.startsWith('temp-') ? undefined : props.id,
@@ -1369,14 +1375,15 @@ const onSaveSetup = async () => {
   }
   const fen = buildEditFEN();
   if (!fen) return;
-  const defaultName = 'Custom setup';
-  const name = window.prompt('Name this setup', defaultName);
+  const name = await promptStore.ask({
+    title: 'Save setup',
+    message: 'Name this position so you can come back to it in /study/.',
+    defaultValue: 'Custom setup',
+    confirmLabel: 'Save',
+  });
   if (!name) return;
   try {
-    await api.createStudy({
-      name: name.trim(),
-      start_fen: fen,
-    });
+    await api.createStudy({ name, start_fen: fen });
     toastStore.success('Saved to your studies.');
   } catch (e: any) {
     toastStore.error('Could not save setup: ' + (e?.message || e));

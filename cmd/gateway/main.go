@@ -249,6 +249,12 @@ func main() {
 	// non-owners.
 	mux.Handle("GET /api/games/{id}/state", gw.injectAuthedUserOptional(gameProxy))
 	mux.Handle("GET /api/games/{id}/pgn", gw.injectAuthedUser(gameProxy))
+	// Replay frames: same payload handleReplay fetches server-side for
+	// the embedded /api/replay.html page; the SPA also hits this
+	// directly for the move-list scrub + fork-from-ply flow. Mirrors
+	// /state's auth-optional shape so spectators on public games can
+	// scrub a finished game without signing in.
+	mux.Handle("GET /api/games/{id}/replay", gw.injectAuthedUserOptional(gameProxy))
 	mux.Handle("DELETE /api/games/{id}", gw.injectAuthedUser(gameProxy))
 	mux.Handle("POST /api/games/{id}/visibility", gw.injectAuthedUser(gameProxy))
 	mux.Handle("POST /api/games/{id}/move", gw.injectAuthedUser(gameProxy))

@@ -66,12 +66,14 @@ import ChessBoard from '../components/ChessBoard.vue';
 import { api } from '../api';
 import { useToastStore } from '../stores/toast';
 import { useConfirmStore } from '../stores/confirm';
+import { usePromptStore } from '../stores/prompt';
 import type { Study, StudyTreeNode, StateJSON } from '../types';
 
 const route = useRoute();
 const router = useRouter();
 const toastStore = useToastStore();
 const confirmStore = useConfirmStore();
+const promptStore = usePromptStore();
 
 const study = ref<Study | null>(null);
 const loading = ref(true);
@@ -175,11 +177,15 @@ const playFromHere = async () => {
 
 const onRename = async () => {
   if (!study.value) return;
-  const name = window.prompt('New name', study.value.name);
-  if (!name || name.trim() === '' || name.trim() === study.value.name) return;
+  const name = await promptStore.ask({
+    title: 'Rename study',
+    defaultValue: study.value.name,
+    confirmLabel: 'Save',
+  });
+  if (!name || name === study.value.name) return;
   busy.value = true;
   try {
-    study.value = await api.updateStudy(study.value.id, { name: name.trim(), tree: study.value.tree });
+    study.value = await api.updateStudy(study.value.id, { name, tree: study.value.tree });
     toastStore.success('Renamed');
   } catch (e: any) {
     toastStore.error('Could not rename: ' + (e?.message || e));

@@ -45,11 +45,13 @@ import { useRouter } from 'vue-router';
 import { api } from '../api';
 import { useToastStore } from '../stores/toast';
 import { useConfirmStore } from '../stores/confirm';
+import { usePromptStore } from '../stores/prompt';
 import type { Study, StudyTreeNode } from '../types';
 
 const router = useRouter();
 const toastStore = useToastStore();
 const confirmStore = useConfirmStore();
+const promptStore = usePromptStore();
 
 const studies = ref<Study[]>([]);
 const loading = ref(true);
@@ -94,15 +96,16 @@ const formatDate = (iso: string): string => {
   return d.toLocaleString();
 };
 
-// Rename via window.prompt for v1 (same caveat as the save buttons —
-// the project's confirm modal is yes/no only, a proper input modal
-// is a follow-up).
 const rename = async (st: Study) => {
-  const name = window.prompt('New name', st.name);
-  if (!name || name.trim() === '' || name.trim() === st.name) return;
+  const name = await promptStore.ask({
+    title: 'Rename study',
+    defaultValue: st.name,
+    confirmLabel: 'Save',
+  });
+  if (!name || name === st.name) return;
   busyId.value = st.id;
   try {
-    const updated = await api.updateStudy(st.id, { name: name.trim(), tree: st.tree });
+    const updated = await api.updateStudy(st.id, { name, tree: st.tree });
     const idx = studies.value.findIndex(s => s.id === st.id);
     if (idx >= 0) studies.value[idx] = updated;
     toastStore.success('Renamed');
