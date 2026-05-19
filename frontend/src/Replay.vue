@@ -150,6 +150,7 @@
 import { ref, computed, onMounted, onUnmounted, watch, type DirectiveBinding } from 'vue';
 import { PIECE, parseBoard } from './constants';
 import { ReplayFrame, InviteWire } from './types';
+import { linearTreeFromMoves } from './util/chess';
 
 const frames = ref<ReplayFrame[]>([{ fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1' }]);
 const idx = ref(0);
@@ -302,24 +303,6 @@ function gameIDFromURL(): string {
   return params.get('game_id') ?? '';
 }
 
-interface StudyNode { move?: string; san?: string; children: StudyNode[] }
-
-function linearTreeFromFrames(fs: ReplayFrame[]): StudyNode {
-  const root: StudyNode = { children: [] };
-  let cur = root;
-  // Frame 0 = start position; frames 1..N each carry the move that
-  // produced them. san is what's shown in the move list above.
-  for (let i = 1; i < fs.length; i++) {
-    const f = fs[i];
-    const move = (f.from && f.to) ? f.from + f.to : '';
-    if (!move) continue;
-    const child: StudyNode = { move, san: f.san || move, children: [] };
-    cur.children.push(child);
-    cur = child;
-  }
-  return root;
-}
-
 async function saveAsStudy() {
   if (savingStudy.value || frames.value.length < 2) return;
   savingStudy.value = true;
@@ -331,7 +314,15 @@ async function saveAsStudy() {
     const body = {
       name: defaultName,
       start_fen: frames.value[0].fen,
-      tree: linearTreeFromFrames(frames.value),
+      // Frame 0 is the start position; frames 1..N each carry the
+      // move that produced them. Skip the root frame, derive LAN from
+      // from/to (replay frames don't store LAN explicitly).
+      tree: linearTreeFromMoves(
+        frames.value.slice(1).map(f => ({
+          move: (f.from && f.to) ? f.from + f.to : undefined,
+          san: f.san,
+        })),
+      ),
       source_game_id: gameID && !gameID.startsWith('temp-') ? gameID : undefined,
     };
     const res = await fetch('/api/studies', {

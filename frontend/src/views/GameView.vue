@@ -154,7 +154,7 @@ import { usePromptStore } from '../stores/prompt';
 import { useUserEventsStore } from '../stores/userEvents';
 import { useRouter, useRoute } from 'vue-router';
 import { StateJSON, Square, ReplayFrame, StudyTreeNode } from '../types';
-import { STANDARD_START_FEN, buildPGNFromMoves } from '../util/chess';
+import { STANDARD_START_FEN, buildPGNFromMoves, linearTreeFromMoves } from '../util/chess';
 
 const props = defineProps<{
   id: string;
@@ -1348,25 +1348,6 @@ const clearScrub = () => {
   hint.value = null;
 };
 
-// Build a linear-line Study tree from the game's move history. Each
-// played half-move becomes one node, chained together (every node has
-// at most one child). This is the v1 shape — branching is a future
-// feature; for now a saved session = the game's actual line.
-const linearTreeFromHistory = (history: string[], historySan: string[]): StudyTreeNode => {
-  const root: StudyTreeNode = { children: [] };
-  let cur = root;
-  for (let i = 0; i < history.length; i++) {
-    const child: StudyTreeNode = {
-      move: history[i],
-      san: historySan[i] || history[i],
-      children: [],
-    };
-    cur.children.push(child);
-    cur = child;
-  }
-  return root;
-};
-
 // "Save as study" handler — captures the current game's start position
 // (replay frame 0) + the linear line played from there. Uses the
 // in-theme PromptModal (stores/prompt.ts) for the name input so the
@@ -1394,7 +1375,12 @@ const onSaveAsStudy = async () => {
     await api.createStudy({
       name,
       start_fen: frames[0].fen,
-      tree: linearTreeFromHistory(state.value.history || [], state.value.history_san || []),
+      tree: linearTreeFromMoves(
+        (state.value.history || []).map((move, i) => ({
+          move,
+          san: state.value!.history_san?.[i] || move,
+        })),
+      ),
       source_game_id: props.id.startsWith('temp-') ? undefined : props.id,
     });
     toastStore.success('Saved to your studies.');

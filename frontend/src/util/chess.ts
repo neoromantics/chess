@@ -13,6 +13,45 @@ export const STANDARD_START_FEN =
   'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
 /**
+ * One node in a study tree. Mirrors the backend's `studyTreeNode`
+ * shape (cmd/game/studies.go). Root node has no `move`; descendants
+ * carry the move that produced their position. Re-declared here
+ * (rather than imported from types.ts) so this util module stays
+ * self-contained and importable from the standalone Replay bundle.
+ */
+export interface StudyNode {
+  move?: string;
+  san?: string;
+  comment?: string;
+  children: StudyNode[];
+}
+
+/**
+ * Build a linear-chain study tree from an ordered list of moves —
+ * every node has at most one child. Used when capturing a played
+ * line (game history or replay frames) as a save-as-study payload;
+ * branching trees are a future feature, so v1 saves are always
+ * single-line.
+ *
+ * Items without a `move` are skipped (defensive against partial
+ * frames). `san` falls back to `move` so the saved tree always has
+ * a human-readable label for the move-list rendering.
+ */
+export function linearTreeFromMoves(
+  moves: { move?: string; san?: string }[],
+): StudyNode {
+  const root: StudyNode = { children: [] };
+  let cur = root;
+  for (const m of moves) {
+    if (!m.move) continue;
+    const child: StudyNode = { move: m.move, san: m.san || m.move, children: [] };
+    cur.children.push(child);
+    cur = child;
+  }
+  return root;
+}
+
+/**
  * Build a PGN fragment from a starting position + a sequence of SAN
  * moves. Used to round-trip a game's prefix through load_pgn so the
  * new game's move list inherits both position AND history (used by
