@@ -32,11 +32,26 @@
                pairs (trailing white move appears alone if the line ends
                on white). Comments hang off the individual moves so they
                don't disrupt the columns. -->
+          <!-- "Start" jumps to position before any moves; same channel
+               as clicking a move. positionsLoaded gates click handlers
+               so we don't try to scrub before the fetched FENs land —
+               otherwise the board would briefly flash an empty state. -->
+          <div v-if="mainChain.length" class="scrub-row">
+            <span class="muted">Ply {{ selectedIdx }}/{{ mainChain.length }}</span>
+            <button class="btn ghost btn-sm" :disabled="!positionsLoaded || selectedIdx === 0" @click="selectedIdx = 0">Start</button>
+          </div>
           <div v-else class="move-list">
+            <div class="move-empty">No moves saved — just a position.</div>
+          </div>
+          <div v-if="mainChain.length" class="move-list">
             <div v-for="(pair, i) in movePairs" :key="i" class="move-row">
               <span class="move-num">{{ i + 1 }}.</span>
               <span v-for="(mv, j) in pair" :key="j" class="move-cell">
-                <span class="move-san">{{ mv.san || mv.move }}</span>
+                <span
+                  class="move-san"
+                  :class="{ scrubbable: positionsLoaded, 'scrub-active': selectedIdx === (i * 2 + j + 1) }"
+                  @click="positionsLoaded && (selectedIdx = i * 2 + j + 1)"
+                >{{ mv.san || mv.move }}</span>
                 <span v-if="mv.comment" class="comment">{{ mv.comment }}</span>
               </span>
             </div>
@@ -68,7 +83,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import ChessBoard from '../components/ChessBoard.vue';
 import { api } from '../api';
@@ -89,6 +104,17 @@ const error = ref<string | null>(null);
 const busy = ref(false);
 const forking = ref(false);
 
+// Position scrub state. positions[k] = FEN after the k-th move in the
+// main chain (index 0 = start FEN, matches study.start_fen). Fetched
+// from /api/studies/{id}/positions on mount — the server replays the
+// LAN moves through pkg/core so we don't need a JS chess engine here.
+// positionsLoaded gates the move-list click handlers + keyboard nav
+// so a fast click during the fetch window doesn't try to read an
+// undefined index.
+const positions = ref<string[]>([]);
+const positionsLoaded = ref(false);
+const selectedIdx = ref(0);
+
 onMounted(async () => {
   const id = route.params.id as string;
   if (!id) {
@@ -98,12 +124,36 @@ onMounted(async () => {
   }
   try {
     study.value = await api.getStudy(id);
+    // Fetch positions in the background; the viewer renders the start
+    // position immediately, and once positions land the user can scrub.
+    api.getStudyPositions(id)
+      .then((fs) => { positions.value = fs; positionsLoaded.value = true; })
+      .catch((e) => toastStore.error('Could not load study positions: ' + (e?.message || e)));
   } catch (e: any) {
     error.value = e?.message || 'Failed to load.';
   } finally {
     loading.value = false;
   }
+  window.addEventListener('keydown', onKey);
 });
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', onKey);
+});
+
+// Keyboard navigation mirrors GameView's scrub controls: ←/→ step one
+// ply, Home/End jump to bookends. Skipped when an input or textarea
+// has focus so typing into the rename modal doesn't move the board.
+const onKey = (e: KeyboardEvent) => {
+  if (!positionsLoaded.value) return;
+  const tag = (e.target && (e.target as any).tagName) || '';
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+  const lastIdx = mainChain.value.length;
+  if (e.key === 'ArrowLeft' && selectedIdx.value > 0) { e.preventDefault(); selectedIdx.value--; }
+  else if (e.key === 'ArrowRight' && selectedIdx.value < lastIdx) { e.preventDefault(); selectedIdx.value++; }
+  else if (e.key === 'Home') { e.preventDefault(); selectedIdx.value = 0; }
+  else if (e.key === 'End') { e.preventDefault(); selectedIdx.value = lastIdx; }
+};
 
 // Main chain is "follow the first child at each level." v1 trees are
 // linear so this is the whole tree; when branching ships, the user
@@ -137,11 +187,26 @@ const movePairs = computed(() => {
 // fen, last_move, in_check, turn, legal_moves — everything else is
 // padded with safe defaults. No moves are legal here because there's
 // no game row backing this position.
+//
+// FEN comes from positions[selectedIdx] when scrubbing is active;
+// before the fetch lands (or if it fails), we render study.start_fen
+// at index 0 so the board isn't blank during the load.
 const boardState = computed<StateJSON | null>(() => {
   if (!study.value) return null;
-  const turn = study.value.start_fen.split(' ')[1] === 'b' ? 'b' : 'w';
+  const fen = (positions.value.length > selectedIdx.value)
+    ? positions.value[selectedIdx.value]
+    : study.value.start_fen;
+  const turn = fen.split(' ')[1] === 'b' ? 'b' : 'w';
+  // Highlight the move that landed us here (when scrubbed past start).
+  // mainChain[k-1] holds the move whose from/to we want; converting
+  // LAN "e2e4" into squares is a substring split.
+  let lastMove: { from: string; to: string } | null = null;
+  if (selectedIdx.value > 0 && selectedIdx.value <= mainChain.value.length) {
+    const lan = mainChain.value[selectedIdx.value - 1].move || '';
+    if (lan.length >= 4) lastMove = { from: lan.slice(0, 2), to: lan.slice(2, 4) };
+  }
   return {
-    fen: study.value.start_fen,
+    fen,
     turn,
     engine_white: false,
     engine_black: false,
@@ -152,7 +217,7 @@ const boardState = computed<StateJSON | null>(() => {
     legal_moves: [],
     history: [],
     history_san: [],
-    last_move: null,
+    last_move: lastMove,
     thinking: false,
     white_think_time: 1000,
     black_think_time: 1000,
@@ -285,6 +350,12 @@ const onDelete = async () => {
 .move-num { color: #666; min-width: 28px; font-size: 12px; }
 .move-cell { min-width: 60px; }
 .move-san { color: #e0e0e0; padding: 0 2px; border-radius: 2px; }
+.move-san.scrubbable { cursor: pointer; }
+.move-san.scrubbable:hover { background: #2a2a2a; }
+.move-san.scrub-active { background: #4a4a8a; color: #fff; font-weight: 600; }
+.move-empty { color: #666; font-style: italic; padding: 8px 0; }
+.scrub-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 0; border-bottom: 1px solid #2f2f2f; margin-bottom: 6px; font-size: 12px; }
+.scrub-row .btn-sm { padding: 2px 10px; font-size: 12px; flex: 0 0 auto; }
 .comment { color: #888; font-style: italic; font-family: inherit; font-size: 12px; margin-left: 4px; }
 
 .actions { display: flex; flex-direction: column; gap: 8px; }

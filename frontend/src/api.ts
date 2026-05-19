@@ -104,6 +104,9 @@ export const api = {
   }),
   listStudies: () => request<import('./types').Study[]>('/api/studies'),
   getStudy: (id: string) => request<import('./types').Study>(`/api/studies/${encodeURIComponent(id)}`),
+  // Returns one FEN per node along the main chain, index 0 = start_fen.
+  // Lets StudyView scrub without a JS chess engine.
+  getStudyPositions: (id: string) => request<string[]>(`/api/studies/${encodeURIComponent(id)}/positions`),
   updateStudy: (id: string, body: { name: string; tree: import('./types').StudyTreeNode }) =>
     request<import('./types').Study>(`/api/studies/${encodeURIComponent(id)}`, {
       method: 'PATCH',

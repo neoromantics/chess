@@ -109,6 +109,7 @@ inside game-service; non-owner gets 404 (existence-leak rule).
 | POST | `/api/studies` | 🔐 | gateway → game-svc | `api.createStudy` (body: `{name, start_fen, tree?, source_game_id?, source_ply?}`) |
 | GET | `/api/studies` | 🔐 | gateway → game-svc | `api.listStudies` (200-row cap, newest first) |
 | GET | `/api/studies/{id}` | 🔐+owner | gateway → game-svc | `api.getStudy` |
+| GET | `/api/studies/{id}/positions` | 🔐+owner | gateway → game-svc | `api.getStudyPositions` (returns `string[]` of FENs along the main chain; index 0 = start_fen, index k = after k-th move) |
 | PATCH | `/api/studies/{id}` | 🔐+owner | gateway → game-svc | `api.updateStudy` (body: `{name, tree}`) |
 | DELETE | `/api/studies/{id}` | 🔐+owner | gateway → game-svc | `api.deleteStudy` (204) |
 

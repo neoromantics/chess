@@ -18,6 +18,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/neoromantics/chess/pkg/core"
 	"github.com/neoromantics/chess/pkg/db"
 )
 
@@ -203,6 +204,72 @@ func (s *GameService) handleUpdateStudy(w http.ResponseWriter, r *http.Request) 
 	// Re-read so the response carries the bumped updated_at.
 	st, _ := s.db.GetStudy(id)
 	writeJSON(w, st)
+}
+
+// handleGetStudyPositions returns FENs for every node along the study
+// tree's main chain (follow first child at each level). Index 0 is
+// the study's start FEN; index k is the position after the k-th move
+// in the main line. Lets the SPA scrub the study viewer locally
+// without bundling a JS chess engine — we already have pkg/core here,
+// so one server roundtrip per study viewer load is enough.
+//
+// Ownership is enforced the same way GetStudy does it: non-owner
+// returns 404 (existence-leak rule). A malformed stored tree or an
+// unparseable LAN move halts the chain early and returns what was
+// successfully replayed — viewer falls back to displaying as many
+// positions as it got.
+func (s *GameService) handleGetStudyPositions(w http.ResponseWriter, r *http.Request) {
+	uid, ok := authedUserID(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		http.Error(w, "invalid study id", http.StatusBadRequest)
+		return
+	}
+	st, err := s.db.GetStudy(id)
+	if err != nil || st == nil || st.UserID != uid {
+		http.Error(w, "study not found", http.StatusNotFound)
+		return
+	}
+
+	var root studyTreeNode
+	if err := json.Unmarshal(st.Tree, &root); err != nil {
+		slog.Error("study tree unmarshal failed", "id", id, "error", err)
+		http.Error(w, "invalid stored tree", http.StatusInternalServerError)
+		return
+	}
+
+	// Collect main-chain LAN moves (first child at each level).
+	mainChain := []string{}
+	cur := root
+	for len(cur.Children) > 0 {
+		next := cur.Children[0]
+		mainChain = append(mainChain, next.Move)
+		cur = next
+	}
+
+	board, err := core.ParseFEN(st.StartFEN)
+	if err != nil {
+		slog.Error("study start FEN parse failed", "id", id, "fen", st.StartFEN, "error", err)
+		http.Error(w, "invalid stored FEN", http.StatusInternalServerError)
+		return
+	}
+	fens := []string{board.FEN()}
+	for _, lan := range mainChain {
+		mv, perr := board.ParseUCIMove(lan)
+		if perr != nil {
+			// A corrupt move in the stored tree — return what we have
+			// and let the viewer render up to that point.
+			slog.Warn("study chain replay halted", "id", id, "ply", len(fens), "move", lan, "error", perr)
+			break
+		}
+		board.MakeMove(mv)
+		fens = append(fens, board.FEN())
+	}
+	writeJSON(w, fens)
 }
 
 func (s *GameService) handleDeleteStudy(w http.ResponseWriter, r *http.Request) {
