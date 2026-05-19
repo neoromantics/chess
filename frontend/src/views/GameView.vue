@@ -712,6 +712,16 @@ const connectWS = () => {
 };
 
 const onHintReceived = (data: any) => {
+  // Drop the result if the user has navigated to a different position
+  // since the request — applying a hint from a stale FEN to whatever
+  // the user is looking at now would render misleading arrows.
+  const currentFEN = displayState.value?.fen ?? state.value?.fen ?? null;
+  if (pendingHintForFEN && currentFEN && pendingHintForFEN !== currentFEN) {
+    pendingHintForFEN = null;
+    hintInfo.value = '';
+    return;
+  }
+  pendingHintForFEN = null;
   if (data) {
     hint.value = { from: data.from, to: data.to };
     hintInfo.value = `Hint: ${data.from}→${data.to}${data.promo ? '=' + data.promo.toUpperCase() : ''} (${data.score}, depth ${data.depth})`;
@@ -990,12 +1000,30 @@ const undoMove = async () => {
   }
 };
 
+// Tracks the FEN of the most-recent hint request so the WS-delivered
+// result can be filtered against the *current* view. Without this, a
+// hint requested on ply 5 that lands after the user has clicked to
+// ply 8 would render arrows for a stale position.
+let pendingHintForFEN: string | null = null;
+
 const getHint = async () => {
   if (!state.value) return;
   hintInfo.value = 'thinking…';
-  const movetime = state.value.turn === 'w' ? whiteThinkTime.value : blackThinkTime.value;
+  // When the user is scrubbed to a historical ply, ask the engine
+  // about THAT position, not the live one. displayState carries the
+  // scrubbed FEN already; passing it through tells the backend to
+  // skip the replay-from-history path and search the position
+  // directly. For live play (selectedPly null), omit the override
+  // and let the backend use the game's actual current state.
+  const ds = displayState.value;
+  const scrubFen = selectedPly.value !== null && ds ? ds.fen : undefined;
+  // Movetime tracks the turn-side of whichever position we're
+  // searching — scrubbed-position turn comes from displayState.
+  const turn = ds?.turn ?? state.value.turn;
+  const movetime = turn === 'w' ? whiteThinkTime.value : blackThinkTime.value;
+  pendingHintForFEN = ds?.fen ?? state.value.fen;
   try {
-    await api.getHint(props.id, movetime);
+    await api.getHint(props.id, movetime, scrubFen);
     // Result will be handled by WebSocket event
   } catch (e: any) {
     hintInfo.value = '';
@@ -1390,34 +1418,59 @@ const onSaveSetup = async () => {
   }
 };
 
+// Standard chess starting position. Compared against frames[0].fen to
+// decide whether the constructed PGN needs a [SetUp][FEN] header pair —
+// a standard-start fork can omit them and read more cleanly.
+const STANDARD_START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+
+// Build a PGN fragment from a SAN move list, optionally headered with
+// the start FEN. load_pgn round-trips this back into a game with both
+// position AND history populated, which is what we want for "Fork at
+// ply K" — the new game shows the prefix moves in its move list and
+// the user can keep playing the line from there.
+const buildForkPGN = (startFen: string, sanHistory: string[]): string => {
+  let pgn = '';
+  if (startFen && startFen !== STANDARD_START_FEN) {
+    pgn += `[SetUp "1"]\n[FEN "${startFen}"]\n\n`;
+  }
+  for (let i = 0; i < sanHistory.length; i++) {
+    if (i % 2 === 0) pgn += `${Math.floor(i / 2) + 1}. `;
+    pgn += `${sanHistory[i]} `;
+  }
+  pgn += '*';
+  return pgn.trim();
+};
+
 // Fork the currently-scrubbed position into a fresh engine-game row.
-// Two round-trips: createGame() gets us a new row in the starting
-// position; setPosition() overrides it with the scrubbed FEN. Then we
-// navigate. Both sides default to human (no engine flags passed) so
-// the user can play moves from either color — they can flip a side
-// to engine via the SidePanel toggles once they land in the new game.
+// createGame() makes the new row; load_pgn replays the prefix moves so
+// the forked game's move list mirrors the source up to the scrub
+// point — clicking the move list in the new game shows the same line,
+// and the user can play hypothetical continuations from any ply.
+// One round-trip instead of N for the move replay (N = ply count).
 //
-// If setPosition fails we still land on the new game (just at the
-// starting position) and surface the partial-failure as a toast — the
-// orphan row is recoverable manually.
+// Partial failure (createGame succeeds, load_pgn fails) still lands
+// the user on the new game and surfaces the load error as a toast —
+// the row is recoverable; they can paste the PGN manually in the UI.
 const onForkFromPly = async (ply: number) => {
   if (!canFork.value) {
     toastStore.error('Sign in to fork a position into a new game.');
     return;
   }
+  if (!state.value) return;
   const frames = await ensureReplayFrames();
-  if (!frames) return;
-  const frame = frames[ply];
-  if (!frame) {
+  if (!frames || !frames[ply]) {
     toastStore.error('Could not locate that ply in the replay.');
     return;
   }
+  const sanHistory = (state.value.history_san || []).slice(0, ply);
+  const startFen = frames[0]?.fen || STANDARD_START_FEN;
+  const pgn = buildForkPGN(startFen, sanHistory);
   try {
     const { game_id } = await api.createGame({});
     try {
-      await api.setPosition(game_id, frame.fen);
+      await api.loadPgn(game_id, pgn);
     } catch (e: any) {
-      toastStore.error('Forked to a new game but couldn’t apply the position: ' + (e?.message || e));
+      toastStore.error('Forked to a new game but couldn’t apply the moves: ' + (e?.message || e));
     }
     toastStore.success(`Forked at ply ${ply} into a new game.`);
     router.push(`/game/${game_id}`);

@@ -144,9 +144,12 @@ export const api = {
     method: 'POST',
   }),
   undo: (gameId: string) => request<StateJSON>(gameRoute(gameId, 'undo'), { method: 'POST' }),
-  getHint: (gameId: string, movetime: number) => request<HintResponse>(gameRoute(gameId, 'hint'), {
+  // Optional `fen` lets the SPA request a hint for a scrubbed historical
+  // position (move-list click in a finished game). When omitted, the
+  // backend searches the game's live position as before.
+  getHint: (gameId: string, movetime: number, fen?: string) => request<HintResponse>(gameRoute(gameId, 'hint'), {
     method: 'POST',
-    body: JSON.stringify({ movetime })
+    body: JSON.stringify(fen ? { movetime, fen } : { movetime })
   }),
 
   // ===== Draw flow (PvP only — temp games have no second player) =====

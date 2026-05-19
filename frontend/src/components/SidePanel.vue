@@ -171,6 +171,14 @@
       <div v-if="scrubEnabled && selectedPly !== null && selectedPly !== undefined" class="scrub-row">
         <span class="muted">Viewing ply {{ selectedPly }}/{{ plyCount }}</span>
         <span class="scrub-actions">
+          <!-- Hint: surfaces the engine action against the scrubbed
+               position. The regular actions row is hidden on finished
+               games (status != ongoing), so without this button there
+               would be no way to ask the engine for a suggestion mid-
+               scrub. GameView's getHint reads displayState.fen and
+               threads it through to /hint, so the engine searches the
+               historical position not the live one. -->
+          <button class="btn ghost btn-sm" @click="$emit('get-hint')" title="Ask the engine for a suggestion at this position">Hint</button>
           <button v-if="canFork" class="btn ghost btn-sm" @click="$emit('fork-from-ply', selectedPly)" title="Open this position in a new game so you can explore alternatives">Fork</button>
           <button class="btn ghost btn-sm" @click="$emit('clear-scrub')" title="Return to the live/final position (Esc)">Live</button>
         </span>

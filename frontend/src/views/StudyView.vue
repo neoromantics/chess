@@ -26,13 +26,21 @@
         <section class="card">
           <h3>Moves</h3>
           <p v-if="!mainChain.length" class="muted">No moves saved — just a position.</p>
-          <ol v-else class="move-chain">
-            <li v-for="(node, i) in mainChain" :key="i" class="move-item">
-              <span class="num">{{ Math.floor(i / 2) + 1 }}{{ i % 2 === 0 ? '.' : '…' }}</span>
-              <span class="san">{{ node.san || node.move }}</span>
-              <span v-if="node.comment" class="comment">{{ node.comment }}</span>
-            </li>
-          </ol>
+          <!-- Paired-per-row layout to match SidePanel's move list:
+               `1. e4 e5` on one row, `2. Nf3 Nc6` on the next, etc.
+               historyPairs groups the linear main chain into white/black
+               pairs (trailing white move appears alone if the line ends
+               on white). Comments hang off the individual moves so they
+               don't disrupt the columns. -->
+          <div v-else class="move-list">
+            <div v-for="(pair, i) in movePairs" :key="i" class="move-row">
+              <span class="move-num">{{ i + 1 }}.</span>
+              <span v-for="(mv, j) in pair" :key="j" class="move-cell">
+                <span class="move-san">{{ mv.san || mv.move }}</span>
+                <span v-if="mv.comment" class="comment">{{ mv.comment }}</span>
+              </span>
+            </div>
+          </div>
         </section>
 
         <section class="card actions">
@@ -108,6 +116,21 @@ const mainChain = computed<StudyTreeNode[]>(() => {
     out.push(node);
   }
   return out;
+});
+
+// Group the main chain into white/black pairs for display. Mirrors
+// GameView's historyPairs computation: every two plies form a row,
+// and a trailing white-only move sits alone at the end if the line
+// ended on white. Index 0 in mainChain is the first move (white),
+// 1 is black's reply, etc. — same as state.history.
+const movePairs = computed(() => {
+  const res: { san?: string; move?: string; comment?: string }[][] = [];
+  for (let i = 0; i < mainChain.value.length; i += 2) {
+    const pair: { san?: string; move?: string; comment?: string }[] = [mainChain.value[i]];
+    if (i + 1 < mainChain.value.length) pair.push(mainChain.value[i + 1]);
+    res.push(pair);
+  }
+  return res;
 });
 
 // Synthesize a minimal StateJSON for ChessBoard. The component reads
@@ -256,11 +279,13 @@ const onDelete = async () => {
 }
 .card h3 { margin: 0 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; color: #aaa; }
 
-.move-chain { list-style: none; padding: 0; margin: 0; font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
-.move-item { display: flex; gap: 8px; padding: 2px 0; align-items: baseline; }
-.move-item .num { color: #666; min-width: 36px; font-size: 12px; }
-.move-item .san { color: #e0e0e0; }
-.move-item .comment { color: #888; font-style: italic; font-family: inherit; font-size: 12px; }
+/* Mirrors SidePanel's move-list shape so the two views read the same. */
+.move-list { font-family: ui-monospace, Menlo, monospace; font-size: 13px; max-height: 320px; overflow-y: auto; padding-right: 4px; }
+.move-row { display: flex; align-items: baseline; gap: 6px; padding: 2px 0; line-height: 1.5; }
+.move-num { color: #666; min-width: 28px; font-size: 12px; }
+.move-cell { min-width: 60px; }
+.move-san { color: #e0e0e0; padding: 0 2px; border-radius: 2px; }
+.comment { color: #888; font-style: italic; font-family: inherit; font-size: 12px; margin-left: 4px; }
 
 .actions { display: flex; flex-direction: column; gap: 8px; }
 .btn {

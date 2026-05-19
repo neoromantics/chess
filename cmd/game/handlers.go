@@ -26,6 +26,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/neoromantics/chess/pkg/core"
@@ -614,8 +615,17 @@ func (s *GameService) handleHTTPHint(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Optional `fen` lets the SPA request a hint for a historical
+	// position the user is scrubbed to (move-list click-to-scrub flow
+	// in GameView.vue) — without it, the engine would search the live
+	// position regardless of where the user is looking. When supplied
+	// we skip the replay-from-history path entirely; the search has
+	// no move history to reason about (no threefold-repetition lookup,
+	// no en-passant target unless it's in the FEN itself), which is
+	// fine for "what's the best move from this static position."
 	var req struct {
-		MoveTime int `json:"movetime"`
+		MoveTime int    `json:"movetime"`
+		FEN      string `json:"fen"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
 	moveTime := time.Duration(req.MoveTime) * time.Millisecond
@@ -623,15 +633,25 @@ func (s *GameService) handleHTTPHint(w http.ResponseWriter, r *http.Request) {
 		moveTime = 1000 * time.Millisecond
 	}
 
-	var history []string
-	_ = json.Unmarshal([]byte(rec.History), &history)
-	gm := game.NewGame()
-	gm.Load(rec.StartFEN, history, rec.EngineWhite, rec.EngineBlack)
+	var searchFEN string
+	var searchHistory map[uint64]int
+	if strings.TrimSpace(req.FEN) != "" {
+		searchFEN = req.FEN
+		// Empty history → engine sees a fresh position with no repetition
+		// table. Acceptable for a one-off hint on a historical scrub.
+	} else {
+		var history []string
+		_ = json.Unmarshal([]byte(rec.History), &history)
+		gm := game.NewGame()
+		gm.Load(rec.StartFEN, history, rec.EngineWhite, rec.EngineBlack)
+		searchFEN = gm.Board.FEN()
+		searchHistory = game.CopyHistory(gm.HistoryHash())
+	}
 
 	er := eventbus.EngineRequest{
 		GameID:   rec.ID,
-		FEN:      gm.Board.FEN(),
-		History:  game.CopyHistory(gm.HistoryHash()),
+		FEN:      searchFEN,
+		History:  searchHistory,
 		MoveTime: moveTime,
 		Context:  "hint",
 	}
