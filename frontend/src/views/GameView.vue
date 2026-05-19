@@ -864,10 +864,16 @@ const onSquare = async (sq: Square) => {
   // silent instead of showing a phantom selection.
   if (isSpectator.value) return;
   if (!state.value || state.value.thinking || state.value.engine_to_move || state.value.status !== 'ongoing') return;
-  // In a PvP game, ignore clicks while it's the opponent's turn. The
-  // backend rejects mismatched moves with 409 "it is not your turn"
-  // but silent-no-op is the better UX.
-  if (myColor.value !== null) {
+  // In a PvP game (both seats are real users), ignore clicks while
+  // it's the opponent's turn — the backend would 409 anyway, this is
+  // just for UX. In an engine-flavored game (at least one seat is the
+  // engine slot = user_id null) the local user is the only human at
+  // the keyboard; they may legitimately play both colors after
+  // toggling the engine-side to human mid-game. Without this carve-
+  // out, the radio toggle flips visually but black-piece clicks
+  // silently no-op because myColor was pinned to "white" at load.
+  const isTrulyPvP = state.value.white_user_id !== null && state.value.black_user_id !== null;
+  if (isTrulyPvP && myColor.value !== null) {
     const myFirst = myColor.value === 'white' ? 'w' : 'b';
     if (state.value.turn !== myFirst) return;
   }
