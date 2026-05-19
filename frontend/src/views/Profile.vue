@@ -103,11 +103,44 @@
          toward the stat totals above. -->
     <div v-if="authStore.user" class="past-card">
       <div class="past-header">
-        <h2>Past games</h2>
-        <span v-if="finishedGames.length" class="muted">{{ finishedGames.length }}</span>
+        <div class="past-header-left">
+          <label v-if="finishedGames.length" class="select-all">
+            <input
+              type="checkbox"
+              :checked="allFinishedSelected"
+              :indeterminate.prop="someFinishedSelected && !allFinishedSelected"
+              @change="toggleSelectAllFinished"
+              :aria-label="allFinishedSelected ? 'Clear selection' : 'Select all past games'"
+            />
+          </label>
+          <h2>Past games</h2>
+          <span v-if="finishedGames.length" class="muted">{{ finishedGames.length }}</span>
+        </div>
+        <!-- Bulk-action bar. Slides into the header instead of its own
+             row so the page doesn't jump on first selection. -->
+        <div v-if="selectedFinished.size > 0" class="bulk-actions">
+          <span class="bulk-count">{{ selectedFinished.size }} selected</span>
+          <button
+            class="btn-bulk-delete"
+            :disabled="bulkDeleting"
+            @click="deleteSelectedFinished"
+          >
+            {{ bulkDeleting ? 'Deleting…' : 'Delete selected' }}
+          </button>
+          <button class="btn-bulk-clear" :disabled="bulkDeleting" @click="clearFinishedSelection">
+            Clear
+          </button>
+        </div>
       </div>
       <ul v-if="finishedGames.length" class="game-list">
-        <li v-for="g in finishedGames" :key="g.id">
+        <li v-for="g in finishedGames" :key="g.id" :class="{ selected: selectedFinished.has(g.id) }">
+          <input
+            type="checkbox"
+            class="row-check"
+            :checked="selectedFinished.has(g.id)"
+            @change="toggleSelectFinished(g.id)"
+            :aria-label="'Select ' + g.id"
+          />
           <a :href="`/api/replay.html?game_id=${g.id}`" target="_blank" class="game-link past">
             <span class="game-type">{{ g.white_user_id && g.black_user_id ? 'PvP' : 'Engine' }}</span>
             <span class="game-result" :class="resultClass(g)">{{ resultLabel(g) }}</span>
@@ -214,6 +247,14 @@ const loadStats = async () => {
 const loadGames = async () => {
   try {
     games.value = (await api.listGames()) || [];
+    // Drop selection entries whose row is no longer in the list (e.g.
+    // deleted from another tab, or just removed by us). Avoids stale
+    // ids surviving across reloads and inflating the "N selected" chip.
+    if (selectedFinished.value.size > 0) {
+      const live = new Set(games.value.map((g: any) => g.id));
+      const pruned = new Set([...selectedFinished.value].filter(id => live.has(id)));
+      if (pruned.size !== selectedFinished.value.size) selectedFinished.value = pruned;
+    }
   } catch (e: any) {
     toastStore.error('Failed to load games: ' + (e?.message || e));
   }
@@ -224,6 +265,69 @@ const activeGames = computed(() => games.value.filter((g: any) => g.status === '
 // the top of this list — exactly what a "past games" view wants. Cap
 // to 50 so a heavy user doesn't render a thousand-row table.
 const finishedGames = computed(() => games.value.filter((g: any) => g.status !== 'ongoing').slice(0, 50));
+
+// ===== Bulk-delete selection (past games) =====
+// Set keyed by game id. Reactive via ref() — Set mutations need to
+// reassign the ref to trigger Vue's tracking, so toggle helpers do
+// `selectedFinished.value = new Set(...)` rather than `.add()/.delete()`
+// on the live instance.
+const selectedFinished = ref<Set<string>>(new Set());
+const bulkDeleting = ref(false);
+
+const allFinishedSelected = computed(() =>
+  finishedGames.value.length > 0 &&
+  finishedGames.value.every((g: any) => selectedFinished.value.has(g.id))
+);
+const someFinishedSelected = computed(() => selectedFinished.value.size > 0);
+
+const toggleSelectFinished = (id: string) => {
+  const next = new Set(selectedFinished.value);
+  if (next.has(id)) next.delete(id); else next.add(id);
+  selectedFinished.value = next;
+};
+
+const toggleSelectAllFinished = () => {
+  selectedFinished.value = allFinishedSelected.value
+    ? new Set()
+    : new Set(finishedGames.value.map((g: any) => g.id));
+};
+
+const clearFinishedSelection = () => { selectedFinished.value = new Set(); };
+
+const deleteSelectedFinished = async () => {
+  const ids = [...selectedFinished.value];
+  if (ids.length === 0) return;
+  const ok = await confirmStore.ask({
+    title: ids.length === 1 ? 'Delete game' : `Delete ${ids.length} games`,
+    message: ids.length === 1
+      ? 'Delete this game from your history? This cannot be undone.'
+      : `Delete these ${ids.length} games from your history? This cannot be undone.`,
+    confirmLabel: 'Delete',
+    danger: true,
+  });
+  if (!ok) return;
+  bulkDeleting.value = true;
+  try {
+    // allSettled so one 404 (already-deleted from another tab) or
+    // transient 500 doesn't strand the rest. Each delete is an
+    // independent authz check on the backend — non-owner returns
+    // 404, which we count as "gone" rather than an error.
+    const results = await Promise.allSettled(ids.map(id => api.deleteGame(id)));
+    const failed = results.filter(r => r.status === 'rejected').length;
+    const ok = results.length - failed;
+    if (failed === 0) {
+      toastStore.info(ok === 1 ? 'Game deleted' : `Deleted ${ok} games`);
+    } else if (ok === 0) {
+      toastStore.error('Delete failed');
+    } else {
+      toastStore.error(`Deleted ${ok} of ${results.length} — ${failed} failed`);
+    }
+    clearFinishedSelection();
+    await loadGames();
+  } finally {
+    bulkDeleting.value = false;
+  }
+};
 
 const resultLabel = (g: any): string => {
   const me = authStore.user?.id;
@@ -309,13 +413,35 @@ onMounted(async () => {
 /* Past games card. Compact list, mirrors the visual weight the
    matchmaking page used to give it. */
 .past-card { background: #2b2b2b; border-radius: 16px; padding: 24px 32px; border: 1px solid #3d3d3d; }
-.past-header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 14px; }
+.past-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; gap: 12px; }
+.past-header-left { display: flex; align-items: center; gap: 10px; }
 .past-header h2 { margin: 0; font-size: 17px; color: #ddd; font-weight: 600; }
+.select-all { display: inline-flex; align-items: center; cursor: pointer; }
+.select-all input { width: 16px; height: 16px; cursor: pointer; accent-color: #4a6b8a; }
 .muted { color: #777; font-size: 13px; }
 .empty { color: #777; font-style: italic; padding: 8px 0; margin: 0; }
 
+.bulk-actions { display: flex; align-items: center; gap: 8px; }
+.bulk-count { color: #cfe1f5; font-size: 12px; font-weight: 600; }
+.btn-bulk-delete {
+  background: #5a2828; color: #ffb4b0; border: 1px solid #7a3838;
+  padding: 6px 14px; border-radius: 5px; cursor: pointer;
+  font-size: 12px; font-weight: 600; transition: background-color 120ms ease;
+}
+.btn-bulk-delete:hover:not(:disabled) { background: #7a3838; color: #fff; }
+.btn-bulk-delete:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-bulk-clear {
+  background: transparent; color: #aaa; border: 1px solid #444;
+  padding: 6px 12px; border-radius: 5px; cursor: pointer;
+  font-size: 12px;
+}
+.btn-bulk-clear:hover:not(:disabled) { color: #ddd; border-color: #666; }
+.btn-bulk-clear:disabled { opacity: 0.5; cursor: not-allowed; }
+
 .game-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .game-list li { display: flex; align-items: center; gap: 8px; }
+.game-list li.selected .game-link.past { border-color: #4a6b8a; background: rgba(74,107,138,0.10); }
+.row-check { width: 16px; height: 16px; cursor: pointer; accent-color: #4a6b8a; flex: 0 0 auto; }
 .game-link.past,
 .game-link.active {
   flex: 1 1 auto;
