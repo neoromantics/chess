@@ -88,6 +88,27 @@ export function linearTreeFromMoves(
 }
 
 /**
+ * Length of the longest shared prefix between two ordered sequences.
+ * Used to find where two study main-chains diverge — pass each tree
+ * through `mainChainOf` then map to `.move` strings.
+ */
+export function commonPrefixLength<T>(a: readonly T[], b: readonly T[]): number {
+  let n = 0;
+  const max = Math.min(a.length, b.length);
+  while (n < max && a[n] === b[n]) n++;
+  return n;
+}
+
+/**
+ * Convert a 1-indexed half-move count (ply) to its move number for
+ * display. Ply 1 → move 1 (white), ply 2 → move 1 (black), ply 3 →
+ * move 2 (white), etc. Returns 0 for ply ≤ 0.
+ */
+export function moveNumberOfPly(ply: number): number {
+  return ply <= 0 ? 0 : Math.ceil(ply / 2);
+}
+
+/**
  * Build a PGN fragment from a starting position + a sequence of SAN
  * moves. Used to round-trip a game's prefix through load_pgn so the
  * new game's move list inherits both position AND history (used by

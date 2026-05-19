@@ -46,6 +46,14 @@
                   {{ plyCount(st) }} {{ plyCount(st) === 1 ? 'ply' : 'plies' }}
                 </span>
                 <span v-else class="muted">setup only</span>
+                <!-- Divergence hint: where this study branches off from
+                     its closest sibling in the group. Surfaced inline
+                     so the user can see at a glance whether two saved
+                     lines share an opening or diverge from move 1. -->
+                <span v-if="divergenceMove(st, g.studies) !== null" class="diverge-badge"
+                  :title="`Shares opening with another line up through this point`">
+                  diverges at move {{ divergenceMove(st, g.studies) }}
+                </span>
                 <span v-if="st.source_game_id" class="muted source" :title="`from game ${st.source_game_id}`">
                   · from a game
                 </span>
@@ -73,7 +81,7 @@ import { useToastStore } from '../stores/toast';
 import { useConfirmStore } from '../stores/confirm';
 import { usePromptStore } from '../stores/prompt';
 import type { Study, StateJSON } from '../types';
-import { plyCountOf, STANDARD_START_FEN } from '../util/chess';
+import { plyCountOf, mainChainOf, commonPrefixLength, moveNumberOfPly, STANDARD_START_FEN } from '../util/chess';
 
 const router = useRouter();
 const toastStore = useToastStore();
@@ -149,6 +157,31 @@ const groups = computed<Group[]>(() => {
   }
   return Array.from(map.values());
 });
+
+// LAN main-chain for a study, used to compare prefixes across siblings.
+// Memoized per render via the groups computed below — cheap enough at
+// typical group sizes that explicit memoization isn't worth it.
+const lanChain = (st: Study): string[] => mainChainOf(st.tree).map(n => n.move || '');
+
+// Where this study diverges from its closest sibling in the group.
+// Returns the move number (1-indexed display) where the first
+// disagreeing ply occurs. Returns null when this study has no shared
+// opening with any sibling — for v1 we render nothing in that case
+// rather than the noisier "diverges at move 1" badge.
+const divergenceMove = (st: Study, siblings: Study[]): number | null => {
+  if (siblings.length < 2) return null;
+  const mine = lanChain(st);
+  let maxShared = 0;
+  for (const other of siblings) {
+    if (other.id === st.id) continue;
+    const shared = commonPrefixLength(mine, lanChain(other));
+    if (shared > maxShared) maxShared = shared;
+  }
+  if (maxShared === 0) return null;
+  // First divergent ply is at index maxShared; convert to its 1-indexed
+  // move number for the human-readable badge.
+  return moveNumberOfPly(maxShared + 1);
+};
 
 // Compact label for the group header. Distinguishes the standard
 // starting position from custom setups; full FEN inspection is one
@@ -277,6 +310,15 @@ const onDelete = async (st: Study) => {
 .study-name { font-size: 15px; color: #eee; }
 .study-meta .ts { font-size: 12px; }
 .study-meta .source { font-size: 12px; }
+.diverge-badge {
+  font-size: 11px;
+  color: #cbd6e0;
+  background: #2a3a4a;
+  border: 1px solid #3a4d62;
+  border-radius: 4px;
+  padding: 1px 6px;
+  white-space: nowrap;
+}
 .study-actions { display: flex; gap: 6px; flex: 0 0 auto; }
 .btn-secondary, .btn-danger {
   background: #2f2f2f;
