@@ -1019,8 +1019,12 @@ const getHint = async () => {
   const scrubFen = selectedPly.value !== null && ds ? ds.fen : undefined;
   // Movetime tracks the turn-side of whichever position we're
   // searching — scrubbed-position turn comes from displayState.
+  // 1s floor: hints should give the engine enough time to produce a
+  // meaningful suggestion regardless of the per-side think-time
+  // configured for actual moves (blitz games may run with 100-500ms,
+  // which is too fast to be useful as an advisory search).
   const turn = ds?.turn ?? state.value.turn;
-  const movetime = turn === 'w' ? whiteThinkTime.value : blackThinkTime.value;
+  const movetime = Math.max(1000, turn === 'w' ? whiteThinkTime.value : blackThinkTime.value);
   pendingHintForFEN = ds?.fen ?? state.value.fen;
   try {
     await api.getHint(props.id, movetime, scrubFen);
