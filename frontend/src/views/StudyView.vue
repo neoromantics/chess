@@ -121,6 +121,7 @@ import { useConfirmStore } from '../stores/confirm';
 import { usePromptStore } from '../stores/prompt';
 import { useAuthStore } from '../stores/auth';
 import type { Study, StudyTreeNode, StateJSON } from '../types';
+import { STANDARD_START_FEN, buildPGNFromMoves } from '../util/chess';
 
 const route = useRoute();
 const router = useRouter();
@@ -291,8 +292,6 @@ const formatDate = (iso: string): string => {
   return d.toLocaleString();
 };
 
-const STANDARD_START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
-
 // "Play from here" forks the study into a new engine-game row at the
 // CURRENTLY-SCRUBBED position, carrying the prefix chain as history.
 // So if the user scrubbed to ply 7 and clicked Play, the new game
@@ -310,16 +309,8 @@ const playFromHere = async () => {
     const prefix = mainChain.value.slice(0, selectedIdx.value);
     try {
       if (prefix.length > 0) {
-        let pgn = '';
-        if (study.value.start_fen && study.value.start_fen !== STANDARD_START_FEN) {
-          pgn += `[SetUp "1"]\n[FEN "${study.value.start_fen}"]\n\n`;
-        }
-        for (let i = 0; i < prefix.length; i++) {
-          if (i % 2 === 0) pgn += `${Math.floor(i / 2) + 1}. `;
-          pgn += `${prefix[i].san || prefix[i].move} `;
-        }
-        pgn += '*';
-        await api.loadPgn(game_id, pgn.trim());
+        const sanMoves = prefix.map(n => n.san || n.move || '');
+        await api.loadPgn(game_id, buildPGNFromMoves(study.value.start_fen, sanMoves));
       } else if (study.value.start_fen && study.value.start_fen !== STANDARD_START_FEN) {
         // No prefix, but non-standard start — set the position alone.
         await api.setPosition(game_id, study.value.start_fen);

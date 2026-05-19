@@ -154,6 +154,7 @@ import { usePromptStore } from '../stores/prompt';
 import { useUserEventsStore } from '../stores/userEvents';
 import { useRouter, useRoute } from 'vue-router';
 import { StateJSON, Square, ReplayFrame, StudyTreeNode } from '../types';
+import { STANDARD_START_FEN, buildPGNFromMoves } from '../util/chess';
 
 const props = defineProps<{
   id: string;
@@ -1426,29 +1427,6 @@ const onSaveSetup = async () => {
   }
 };
 
-// Standard chess starting position. Compared against frames[0].fen to
-// decide whether the constructed PGN needs a [SetUp][FEN] header pair —
-// a standard-start fork can omit them and read more cleanly.
-const STANDARD_START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
-
-// Build a PGN fragment from a SAN move list, optionally headered with
-// the start FEN. load_pgn round-trips this back into a game with both
-// position AND history populated, which is what we want for "Fork at
-// ply K" — the new game shows the prefix moves in its move list and
-// the user can keep playing the line from there.
-const buildForkPGN = (startFen: string, sanHistory: string[]): string => {
-  let pgn = '';
-  if (startFen && startFen !== STANDARD_START_FEN) {
-    pgn += `[SetUp "1"]\n[FEN "${startFen}"]\n\n`;
-  }
-  for (let i = 0; i < sanHistory.length; i++) {
-    if (i % 2 === 0) pgn += `${Math.floor(i / 2) + 1}. `;
-    pgn += `${sanHistory[i]} `;
-  }
-  pgn += '*';
-  return pgn.trim();
-};
-
 // Fork the currently-scrubbed position into a fresh engine-game row.
 // createGame() makes the new row; load_pgn replays the prefix moves so
 // the forked game's move list mirrors the source up to the scrub
@@ -1472,7 +1450,7 @@ const onForkFromPly = async (ply: number) => {
   }
   const sanHistory = (state.value.history_san || []).slice(0, ply);
   const startFen = frames[0]?.fen || STANDARD_START_FEN;
-  const pgn = buildForkPGN(startFen, sanHistory);
+  const pgn = buildPGNFromMoves(startFen, sanHistory);
   try {
     const { game_id } = await api.createGame({});
     try {
