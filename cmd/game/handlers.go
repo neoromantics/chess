@@ -302,13 +302,24 @@ func (s *GameService) handleHTTPMove(w http.ResponseWriter, r *http.Request) {
 		// allowed to move. Without it, the white player could send
 		// a black move on the black player's turn and the server
 		// would happily apply it.
-		if gm.Board.SideToMove == core.White {
-			if rec.WhiteUserID == nil || *rec.WhiteUserID != uid {
-				return userErr(http.StatusConflict, "it is not your turn")
-			}
-		} else {
-			if rec.BlackUserID == nil || *rec.BlackUserID != uid {
-				return userErr(http.StatusConflict, "it is not your turn")
+		//
+		// Engine-game carve-out: when one seat is unfilled (user_id
+		// NULL = "engine slot"), the local user is the only human
+		// participant, so they may legitimately play both colors —
+		// e.g. after toggling engine→human on the engine side and
+		// undoing the engine's last move. Without this carve-out,
+		// SPA-allowed clicks would 409 on the wire and the user
+		// would see "it is not your turn" with no way out.
+		bothSeatsFilled := rec.WhiteUserID != nil && rec.BlackUserID != nil
+		if bothSeatsFilled {
+			if gm.Board.SideToMove == core.White {
+				if *rec.WhiteUserID != uid {
+					return userErr(http.StatusConflict, "it is not your turn")
+				}
+			} else {
+				if *rec.BlackUserID != uid {
+					return userErr(http.StatusConflict, "it is not your turn")
+				}
 			}
 		}
 		m, err := gm.Board.ParseUCIMove(req.Move)
