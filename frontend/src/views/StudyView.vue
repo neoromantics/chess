@@ -121,7 +121,7 @@ import { useConfirmStore } from '../stores/confirm';
 import { usePromptStore } from '../stores/prompt';
 import { useAuthStore } from '../stores/auth';
 import type { Study, StudyTreeNode, StateJSON } from '../types';
-import { STANDARD_START_FEN, buildPGNFromMoves } from '../util/chess';
+import { STANDARD_START_FEN, buildPGNFromMoves, mainChainOf } from '../util/chess';
 
 const route = useRoute();
 const router = useRouter();
@@ -206,18 +206,10 @@ const onKey = (e: KeyboardEvent) => {
   else if (e.key === 'End') { e.preventDefault(); selectedIdx.value = lastIdx; }
 };
 
-// Main chain is "follow the first child at each level." v1 trees are
-// linear so this is the whole tree; when branching ships, the user
-// will need a way to pick the displayed line.
-const mainChain = computed<StudyTreeNode[]>(() => {
-  const out: StudyTreeNode[] = [];
-  let node: StudyTreeNode | undefined = study.value?.tree;
-  while (node && node.children && node.children.length > 0) {
-    node = node.children[0];
-    out.push(node);
-  }
-  return out;
-});
+// Tree walker lives in util/chess.ts so this view and StudiesList
+// agree on what "main chain" means; comment over the helper covers
+// the first-child-wins convention.
+const mainChain = computed<StudyTreeNode[]>(() => mainChainOf(study.value?.tree));
 
 // Group the main chain into white/black pairs for display. Mirrors
 // GameView's historyPairs computation: every two plies form a row,

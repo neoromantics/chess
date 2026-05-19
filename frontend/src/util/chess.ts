@@ -27,6 +27,42 @@ export interface StudyNode {
 }
 
 /**
+ * Walk a study tree's main chain (follow `children[0]` at each level)
+ * and return the list of nodes traversed, excluding the root. The
+ * root has no move; descendants carry the move that produced their
+ * position, so the returned slice is one-to-one with the played plies
+ * on the main line.
+ *
+ * v1 saves are always linear (single child everywhere) so the main
+ * chain IS the whole tree. When branching ships the convention will
+ * need a tie-break (longest branch? user-marked main?); for now
+ * first-child wins.
+ */
+export function mainChainOf(tree: StudyNode | null | undefined): StudyNode[] {
+  const out: StudyNode[] = [];
+  let node: StudyNode | undefined = tree ?? undefined;
+  while (node && node.children && node.children.length > 0) {
+    node = node.children[0];
+    out.push(node);
+  }
+  return out;
+}
+
+/**
+ * Count of plies along the main chain — cheaper than `mainChainOf` if
+ * the caller only needs the number (no node allocations, no list).
+ */
+export function plyCountOf(tree: StudyNode | null | undefined): number {
+  let n = 0;
+  let node: StudyNode | undefined = tree ?? undefined;
+  while (node && node.children && node.children.length > 0) {
+    n++;
+    node = node.children[0];
+  }
+  return n;
+}
+
+/**
  * Build a linear-chain study tree from an ordered list of moves —
  * every node has at most one child. Used when capturing a played
  * line (game history or replay frames) as a save-as-study payload;

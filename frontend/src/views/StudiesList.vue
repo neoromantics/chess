@@ -46,7 +46,8 @@ import { api } from '../api';
 import { useToastStore } from '../stores/toast';
 import { useConfirmStore } from '../stores/confirm';
 import { usePromptStore } from '../stores/prompt';
-import type { Study, StudyTreeNode } from '../types';
+import type { Study } from '../types';
+import { plyCountOf } from '../util/chess';
 
 const router = useRouter();
 const toastStore = useToastStore();
@@ -74,19 +75,9 @@ onMounted(refresh);
 
 const open = (st: Study) => router.push(`/study/${st.id}`);
 
-// Walk down the tree's main chain (first child at each level) to count
-// half-moves. v1 trees are linear so this is just the chain length;
-// when branching lands the main-line convention will need a tiebreak
-// (longest branch? user-marked main?) — for now first-child wins.
-const plyCount = (st: Study): number => {
-  let n = 0;
-  let node: StudyTreeNode | undefined = st.tree;
-  while (node && node.children && node.children.length > 0) {
-    n++;
-    node = node.children[0];
-  }
-  return n;
-};
+// Tree walker lives in util/chess.ts so this view and StudyView
+// stay aligned on what "main chain" means as v1 → v2 branching lands.
+const plyCount = (st: Study): number => plyCountOf(st.tree);
 
 const hasMoves = (st: Study): boolean => plyCount(st) > 0;
 
