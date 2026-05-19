@@ -77,6 +77,16 @@ func (s *studyStore) UpdateStudy(id uuid.UUID, uid int64, name string, tree json
 	return 1, nil
 }
 
+func (s *studyStore) SetStudyVisibility(id uuid.UUID, uid int64, isPublic bool) (int64, error) {
+	row, ok := s.rows[id]
+	if !ok || row.UserID != uid {
+		return 0, nil
+	}
+	row.IsPublic = isPublic
+	row.UpdatedAt = time.Now()
+	return 1, nil
+}
+
 func (s *studyStore) DeleteStudy(id uuid.UUID, uid int64) (int64, error) {
 	row, ok := s.rows[id]
 	if !ok || row.UserID != uid {
@@ -231,12 +241,16 @@ func TestStudyTreeValidation(t *testing.T) {
 func TestStudyUnauthorized(t *testing.T) {
 	store := newStudyStore()
 	svc, _ := newTestService(t, store)
-	// No X-User-ID → 401 on every endpoint.
+	// No X-User-ID → 401 on the mutation + list endpoints. The per-id
+	// reads (handleGetStudy / handleGetStudyPositions) are excluded
+	// here — they're auth-optional now to support public-link reads;
+	// their behaviour on private studies (404) is covered by the
+	// round-trip test's "get-non-owner: 404" assertion.
 	for _, fn := range []func(http.ResponseWriter, *http.Request){
 		svc.handleCreateStudy,
 		svc.handleListStudies,
-		svc.handleGetStudy,
 		svc.handleUpdateStudy,
+		svc.handleSetStudyVisibility,
 		svc.handleDeleteStudy,
 	} {
 		req := httptest.NewRequest(http.MethodGet, "/api/studies", nil)
@@ -246,5 +260,61 @@ func TestStudyUnauthorized(t *testing.T) {
 		if w.Code != http.StatusUnauthorized {
 			t.Fatalf("want 401, got %d", w.Code)
 		}
+	}
+}
+
+func TestStudyPublicRead(t *testing.T) {
+	store := newStudyStore()
+	svc, _ := newTestService(t, store)
+	// Seed a study owned by user 42.
+	body := []byte(`{"name":"Sicilian main line","start_fen":"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1","tree":{"children":[]}}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/studies", bytes.NewReader(body))
+	addUserHeader(req, 42)
+	w := httptest.NewRecorder()
+	svc.handleCreateStudy(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("seed: %d", w.Code)
+	}
+	var created db.Study
+	_ = json.Unmarshal(w.Body.Bytes(), &created)
+
+	// Anonymous GET on a still-private study → 404 (existence leak rule).
+	req = httptest.NewRequest(http.MethodGet, "/api/studies/"+created.ID.String(), nil)
+	req.SetPathValue("id", created.ID.String())
+	w = httptest.NewRecorder()
+	svc.handleGetStudy(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("anon-private: want 404, got %d", w.Code)
+	}
+
+	// Owner flips it public.
+	vis := []byte(`{"is_public":true}`)
+	req = httptest.NewRequest(http.MethodPost, "/api/studies/"+created.ID.String()+"/visibility", bytes.NewReader(vis))
+	req.SetPathValue("id", created.ID.String())
+	addUserHeader(req, 42)
+	w = httptest.NewRecorder()
+	svc.handleSetStudyVisibility(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("visibility: %d body=%s", w.Code, w.Body.String())
+	}
+
+	// Anonymous GET on the now-public study → 200.
+	req = httptest.NewRequest(http.MethodGet, "/api/studies/"+created.ID.String(), nil)
+	req.SetPathValue("id", created.ID.String())
+	w = httptest.NewRecorder()
+	svc.handleGetStudy(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("anon-public: want 200, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	// Non-owner can't flip it back (404 not 403).
+	flipBack := []byte(`{"is_public":false}`)
+	req = httptest.NewRequest(http.MethodPost, "/api/studies/"+created.ID.String()+"/visibility", bytes.NewReader(flipBack))
+	req.SetPathValue("id", created.ID.String())
+	addUserHeader(req, 99)
+	w = httptest.NewRecorder()
+	svc.handleSetStudyVisibility(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("non-owner visibility: want 404, got %d", w.Code)
 	}
 }

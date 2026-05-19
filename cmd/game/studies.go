@@ -144,21 +144,36 @@ func (s *GameService) handleListStudies(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, rows)
 }
 
-func (s *GameService) handleGetStudy(w http.ResponseWriter, r *http.Request) {
-	uid, ok := authedUserID(r)
-	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
+// userMayReadStudy is the spectator-aware predicate for read paths:
+// owner always passes; anyone (including unauthenticated callers,
+// which arrive with uid=0) passes if the row's is_public flag is set.
+// Mutations (PATCH, DELETE, visibility) keep using the strict owner
+// check — public-flagged studies can be read by anyone but only
+// modified by their owner.
+func userMayReadStudy(uid int64, st *db.Study) bool {
+	if st == nil {
+		return false
 	}
+	if st.IsPublic {
+		return true
+	}
+	return uid != 0 && st.UserID == uid
+}
+
+func (s *GameService) handleGetStudy(w http.ResponseWriter, r *http.Request) {
+	// uid=0 is fine for public studies; only private studies need the
+	// signed-in path. authedUserID returns (0, false) for anonymous
+	// callers, which the predicate handles via the IsPublic branch.
+	uid, _ := authedUserID(r)
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
 		http.Error(w, "invalid study id", http.StatusBadRequest)
 		return
 	}
 	st, err := s.db.GetStudy(id)
-	if err != nil || st == nil || st.UserID != uid {
-		// Existence-leak rule: a non-owner sees the same 404 as a real
-		// miss. Internal telemetry can distinguish via logs.
+	if err != nil || !userMayReadStudy(uid, st) {
+		// Existence-leak rule: a non-owner of a private study sees the
+		// same 404 as a real miss. Public studies are openly readable.
 		http.Error(w, "study not found", http.StatusNotFound)
 		return
 	}
@@ -219,18 +234,16 @@ func (s *GameService) handleUpdateStudy(w http.ResponseWriter, r *http.Request) 
 // successfully replayed — viewer falls back to displaying as many
 // positions as it got.
 func (s *GameService) handleGetStudyPositions(w http.ResponseWriter, r *http.Request) {
-	uid, ok := authedUserID(r)
-	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
+	// Auth-optional: public studies are scrubble by anyone with the
+	// link; private studies stay owner-only.
+	uid, _ := authedUserID(r)
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
 		http.Error(w, "invalid study id", http.StatusBadRequest)
 		return
 	}
 	st, err := s.db.GetStudy(id)
-	if err != nil || st == nil || st.UserID != uid {
+	if err != nil || !userMayReadStudy(uid, st) {
 		http.Error(w, "study not found", http.StatusNotFound)
 		return
 	}
@@ -270,6 +283,44 @@ func (s *GameService) handleGetStudyPositions(w http.ResponseWriter, r *http.Req
 		fens = append(fens, board.FEN())
 	}
 	writeJSON(w, fens)
+}
+
+// handleSetStudyVisibility flips the is_public flag (owner only).
+// Body: {"is_public": true|false}. Returns the updated row so the SPA
+// can reflect the new visibility (and surface the share link) without
+// a second GET round-trip.
+func (s *GameService) handleSetStudyVisibility(w http.ResponseWriter, r *http.Request) {
+	uid, ok := authedUserID(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		http.Error(w, "invalid study id", http.StatusBadRequest)
+		return
+	}
+	var req struct {
+		IsPublic bool `json:"is_public"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	rows, err := s.db.SetStudyVisibility(id, uid, req.IsPublic)
+	if err != nil {
+		slog.Error("set study visibility failed", "id", id, "user_id", uid, "error", err)
+		http.Error(w, "failed to update study", http.StatusInternalServerError)
+		return
+	}
+	if rows == 0 {
+		// 0 rows = not yours or not found; identical 404 either way.
+		http.Error(w, "study not found", http.StatusNotFound)
+		return
+	}
+	slog.Info("study visibility updated", "id", id, "user_id", uid, "is_public", req.IsPublic)
+	st, _ := s.db.GetStudy(id)
+	writeJSON(w, st)
 }
 
 func (s *GameService) handleDeleteStudy(w http.ResponseWriter, r *http.Request) {

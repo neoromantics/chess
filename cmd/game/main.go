@@ -103,6 +103,7 @@ func main() {
 	mux.HandleFunc("GET /api/studies", s.handleListStudies)
 	mux.HandleFunc("GET /api/studies/{id}", s.handleGetStudy)
 	mux.HandleFunc("GET /api/studies/{id}/positions", s.handleGetStudyPositions)
+	mux.HandleFunc("POST /api/studies/{id}/visibility", s.handleSetStudyVisibility)
 	mux.HandleFunc("PATCH /api/studies/{id}", s.handleUpdateStudy)
 	mux.HandleFunc("DELETE /api/studies/{id}", s.handleDeleteStudy)
 

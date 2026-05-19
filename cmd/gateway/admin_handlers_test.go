@@ -503,6 +503,9 @@ func (panicStore) ListStudiesForUser(int64) ([]db.Study, error) {
 func (panicStore) UpdateStudy(uuid.UUID, int64, string, json.RawMessage) (int64, error) {
 	panic("unexpected UpdateStudy")
 }
+func (panicStore) SetStudyVisibility(uuid.UUID, int64, bool) (int64, error) {
+	panic("unexpected SetStudyVisibility")
+}
 func (panicStore) DeleteStudy(uuid.UUID, int64) (int64, error) {
 	panic("unexpected DeleteStudy")
 }

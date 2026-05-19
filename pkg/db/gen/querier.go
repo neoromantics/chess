@@ -146,6 +146,10 @@ type Querier interface {
 	// participant before invoking this; we still scope by id alone because
 	// the predicate is row-id, not row-id+user.
 	SetGameVisibility(ctx context.Context, arg SetGameVisibilityParams) (int64, error)
+	// Owner-only toggle for the is_public flag (powers the "shareable
+	// link" UX). Same anti-leak shape as UpdateStudy: non-owner = 0 rows
+	// affected = silent rejection.
+	SetStudyVisibility(ctx context.Context, arg SetStudyVisibilityParams) (int64, error)
 	UpdateLastLogin(ctx context.Context, id int64) error
 	UpdatePassword(ctx context.Context, arg UpdatePasswordParams) error
 	// Partial-update: name + tree only (the other fields are immutable

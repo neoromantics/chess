@@ -177,7 +177,10 @@ CREATE TABLE IF NOT EXISTS studies (
     tree            JSONB       NOT NULL DEFAULT '{"children": []}'::jsonb,
     source_game_id  TEXT        REFERENCES games(id) ON DELETE SET NULL,
     source_ply      INT,
+    is_public       BOOLEAN     NOT NULL DEFAULT FALSE,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+-- Idempotent add for clusters that initialized studies before is_public landed.
+ALTER TABLE studies ADD COLUMN IF NOT EXISTS is_public BOOLEAN NOT NULL DEFAULT FALSE;
 CREATE INDEX IF NOT EXISTS studies_user_created_idx ON studies (user_id, created_at DESC);

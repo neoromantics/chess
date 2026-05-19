@@ -711,6 +711,14 @@ func (s *PostgresStore) UpdateStudy(id uuid.UUID, userID int64, name string, tre
 	})
 }
 
+func (s *PostgresStore) SetStudyVisibility(id uuid.UUID, userID int64, isPublic bool) (int64, error) {
+	return s.q.SetStudyVisibility(context.Background(), gen.SetStudyVisibilityParams{
+		ID:       id,
+		UserID:   userID,
+		IsPublic: isPublic,
+	})
+}
+
 func (s *PostgresStore) DeleteStudy(id uuid.UUID, userID int64) (int64, error) {
 	return s.q.DeleteStudy(context.Background(), gen.DeleteStudyParams{
 		ID:     id,
@@ -812,6 +820,7 @@ func studyFromRow(r gen.Study) *Study {
 		Name:      r.Name,
 		StartFEN:  r.StartFen,
 		Tree:      r.Tree,
+		IsPublic:  r.IsPublic,
 		CreatedAt: r.CreatedAt,
 		UpdatedAt: r.UpdatedAt,
 	}

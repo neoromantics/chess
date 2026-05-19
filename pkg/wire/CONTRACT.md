@@ -108,9 +108,10 @@ inside game-service; non-owner gets 404 (existence-leak rule).
 |---|---|---|---|---|
 | POST | `/api/studies` | 🔐 | gateway → game-svc | `api.createStudy` (body: `{name, start_fen, tree?, source_game_id?, source_ply?}`) |
 | GET | `/api/studies` | 🔐 | gateway → game-svc | `api.listStudies` (200-row cap, newest first) |
-| GET | `/api/studies/{id}` | 🔐+owner | gateway → game-svc | `api.getStudy` |
-| GET | `/api/studies/{id}/positions` | 🔐+owner | gateway → game-svc | `api.getStudyPositions` (returns `string[]` of FENs along the main chain; index 0 = start_fen, index k = after k-th move) |
+| GET | `/api/studies/{id}` | 🔐?+owner-or-public | gateway → game-svc | `api.getStudy` (auth-optional — anonymous viewers reach public studies, owner reaches private) |
+| GET | `/api/studies/{id}/positions` | 🔐?+owner-or-public | gateway → game-svc | `api.getStudyPositions` (returns `string[]` of FENs along the main chain; auth-optional like `/state` — anonymous OK for public studies) |
 | PATCH | `/api/studies/{id}` | 🔐+owner | gateway → game-svc | `api.updateStudy` (body: `{name, tree}`) |
+| POST | `/api/studies/{id}/visibility` | 🔐+owner | gateway → game-svc | `api.setStudyVisibility` (body: `{is_public}`; flips the share-link gate) |
 | DELETE | `/api/studies/{id}` | 🔐+owner | gateway → game-svc | `api.deleteStudy` (204) |
 
 `tree` JSON shape (recursive; root has no move):

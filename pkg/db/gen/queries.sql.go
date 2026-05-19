@@ -215,7 +215,7 @@ const createStudy = `-- name: CreateStudy :one
 
 INSERT INTO studies (user_id, name, start_fen, tree, source_game_id, source_ply)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, user_id, name, start_fen, tree, source_game_id, source_ply, created_at, updated_at
+RETURNING id, user_id, name, start_fen, tree, source_game_id, source_ply, is_public, created_at, updated_at
 `
 
 type CreateStudyParams struct {
@@ -250,6 +250,7 @@ func (q *Queries) CreateStudy(ctx context.Context, arg CreateStudyParams) (Study
 		&i.Tree,
 		&i.SourceGameID,
 		&i.SourcePly,
+		&i.IsPublic,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -506,7 +507,7 @@ func (q *Queries) GetInvite(ctx context.Context, id uuid.UUID) (Invite, error) {
 }
 
 const getStudy = `-- name: GetStudy :one
-SELECT id, user_id, name, start_fen, tree, source_game_id, source_ply, created_at, updated_at
+SELECT id, user_id, name, start_fen, tree, source_game_id, source_ply, is_public, created_at, updated_at
 FROM studies
 WHERE id = $1
 `
@@ -527,6 +528,7 @@ func (q *Queries) GetStudy(ctx context.Context, id uuid.UUID) (Study, error) {
 		&i.Tree,
 		&i.SourceGameID,
 		&i.SourcePly,
+		&i.IsPublic,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -1107,7 +1109,7 @@ func (q *Queries) ListRecentSignups(ctx context.Context) ([]ListRecentSignupsRow
 }
 
 const listStudiesForUser = `-- name: ListStudiesForUser :many
-SELECT id, user_id, name, start_fen, tree, source_game_id, source_ply, created_at, updated_at
+SELECT id, user_id, name, start_fen, tree, source_game_id, source_ply, is_public, created_at, updated_at
 FROM studies
 WHERE user_id = $1
 ORDER BY created_at DESC
@@ -1135,6 +1137,7 @@ func (q *Queries) ListStudiesForUser(ctx context.Context, userID int64) ([]Study
 			&i.Tree,
 			&i.SourceGameID,
 			&i.SourcePly,
+			&i.IsPublic,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -1215,6 +1218,29 @@ type SetGameVisibilityParams struct {
 // the predicate is row-id, not row-id+user.
 func (q *Queries) SetGameVisibility(ctx context.Context, arg SetGameVisibilityParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, setGameVisibility, arg.ID, arg.IsPublic)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const setStudyVisibility = `-- name: SetStudyVisibility :execrows
+UPDATE studies
+SET is_public = $3, updated_at = NOW()
+WHERE id = $1 AND user_id = $2
+`
+
+type SetStudyVisibilityParams struct {
+	ID       uuid.UUID `json:"id"`
+	UserID   int64     `json:"user_id"`
+	IsPublic bool      `json:"is_public"`
+}
+
+// Owner-only toggle for the is_public flag (powers the "shareable
+// link" UX). Same anti-leak shape as UpdateStudy: non-owner = 0 rows
+// affected = silent rejection.
+func (q *Queries) SetStudyVisibility(ctx context.Context, arg SetStudyVisibilityParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setStudyVisibility, arg.ID, arg.UserID, arg.IsPublic)
 	if err != nil {
 		return 0, err
 	}

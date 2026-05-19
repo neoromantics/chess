@@ -67,6 +67,7 @@ type Study struct {
 	Tree         json.RawMessage `json:"tree"`
 	SourceGameID sql.NullString  `json:"source_game_id"`
 	SourcePly    sql.NullInt32   `json:"source_ply"`
+	IsPublic     bool            `json:"is_public"`
 	CreatedAt    time.Time       `json:"created_at"`
 	UpdatedAt    time.Time       `json:"updated_at"`
 }

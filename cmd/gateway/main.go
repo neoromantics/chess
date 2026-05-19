@@ -304,6 +304,14 @@ func main() {
 	// the method on each leaf. The trailing-slashless POST/GET list
 	// also lives here — ServeMux treats "/api/studies" as a child of
 	// the "/api/studies/" pattern when the literal path is non-empty.
+	// Per-id GETs are auth-optional so anonymous callers can open a
+	// shared public study (game-service's userMayReadStudy predicate
+	// gates the actual read). Everything else — list, create, patch,
+	// visibility toggle, delete — stays auth-required via the prefix
+	// mount below; Go 1.22's enhanced mux uses longest-match so these
+	// specific method+pattern entries win over the prefix.
+	mux.Handle("GET /api/studies/{id}", gw.injectAuthedUserOptional(gameProxy))
+	mux.Handle("GET /api/studies/{id}/positions", gw.injectAuthedUserOptional(gameProxy))
 	mux.Handle("/api/studies", gw.injectAuthedUser(gameProxy))
 	mux.Handle("/api/studies/", gw.injectAuthedUser(gameProxy))
 

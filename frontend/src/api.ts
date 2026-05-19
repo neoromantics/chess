@@ -114,6 +114,13 @@ export const api = {
       body: JSON.stringify(body),
     }),
   deleteStudy: (id: string) => request<void>(`/api/studies/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  // Owner-only toggle for the share-link gate. Returns the updated
+  // Study so the SPA can flip the UI without a separate getStudy call.
+  setStudyVisibility: (id: string, isPublic: boolean) => request<import('./types').Study>(`/api/studies/${encodeURIComponent(id)}/visibility`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ is_public: isPublic }),
+  }),
   move: (gameId: string, move: string) => request<StateJSON>(gameRoute(gameId, 'move'), {
     method: 'POST',
     body: JSON.stringify({ move })

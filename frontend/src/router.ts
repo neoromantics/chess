@@ -20,11 +20,13 @@ const routes: RouteRecordRaw[] = [
   { path: '/dashboard', redirect: '/match' },
   { path: '/profile', component: Profile, meta: { requiresAuth: true } },
   { path: '/invites', component: Invites, meta: { requiresAuth: true } },
-  // Studies. /study/ is the listing; /study/:id is the per-study viewer.
-  // Both require auth — the backend's /api/studies/* surface returns
-  // 401 to unauthed callers anyway, so the guard is purely UX.
+  // Studies. /study/ is the listing — owner-only, requires auth.
+  // /study/:id is the viewer — auth-optional so a shared public study
+  // works from a fresh browser without signup. The backend's
+  // userMayReadStudy predicate is the actual auth boundary; this
+  // guard just shapes the SPA experience.
   { path: '/study/', component: StudiesList, meta: { requiresAuth: true } },
-  { path: '/study/:id', component: StudyView, meta: { requiresAuth: true } },
+  { path: '/study/:id', component: StudyView },
   // /admin gated by both auth AND user.is_admin. Backend re-checks on
   // every /api/admin/* call (404s non-admins) so this guard is purely
   // UX — server is the actual auth boundary.

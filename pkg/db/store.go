@@ -304,6 +304,11 @@ type Store interface {
 	GetStudy(id uuid.UUID) (*Study, error)
 	ListStudiesForUser(userID int64) ([]Study, error)
 	UpdateStudy(id uuid.UUID, userID int64, name string, tree json.RawMessage) (int64, error)
+	// SetStudyVisibility toggles the is_public flag. Owner-scoped at
+	// the query level — non-owner = 0 rows = silent rejection. The
+	// handler returns 404 in that case to match the existence-leak
+	// pattern the rest of the studies surface uses.
+	SetStudyVisibility(id uuid.UUID, userID int64, isPublic bool) (int64, error)
 	DeleteStudy(id uuid.UUID, userID int64) (int64, error)
 }
 
@@ -319,6 +324,12 @@ type Study struct {
 	Tree         json.RawMessage `json:"tree"`
 	SourceGameID string          `json:"source_game_id,omitempty"`
 	SourcePly    int             `json:"source_ply,omitempty"`
-	CreatedAt    time.Time       `json:"created_at"`
-	UpdatedAt    time.Time       `json:"updated_at"`
+	// Owner-opt-in shareable flag. When true, /api/studies/{id} and
+	// .../positions return 200 to anonymous + non-owner callers
+	// (mirrors the games.is_public spectator pattern). Listing
+	// (/api/studies) stays owner-scoped — public studies are
+	// discoverable by link only.
+	IsPublic  bool      `json:"is_public"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }

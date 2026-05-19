@@ -59,16 +59,45 @@
         </section>
 
         <section class="card actions">
+          <!-- Play-from-here is the one action that works for any
+               viewer (signed-in or anonymous), because createGame
+               is auth-gated server-side anyway — anonymous gets an
+               auth error and the toast nudges them to sign in.
+               Source-game link only renders for the owner; non-
+               owners shouldn't be linked to a game they may not
+               be able to read. -->
           <button class="btn primary" :disabled="forking" @click="playFromHere">
             {{ forking ? 'Creating game…' : 'Play from here' }}
           </button>
           <router-link
-            v-if="study.source_game_id"
+            v-if="isOwner && study.source_game_id"
             :to="`/game/${study.source_game_id}`"
             class="btn ghost"
           >Open source game</router-link>
-          <button class="btn ghost" :disabled="busy" @click="onRename">Rename</button>
-          <button class="btn danger" :disabled="busy" @click="onDelete">Delete</button>
+          <button v-if="isOwner" class="btn ghost" :disabled="busy" @click="onRename">Rename</button>
+          <button v-if="isOwner" class="btn danger" :disabled="busy" @click="onDelete">Delete</button>
+        </section>
+
+        <!-- Share card. Owner sees a public/private toggle + a copy-
+             link button when public. Non-owners (viewing via a shared
+             link) see nothing here — the card is owner-only. -->
+        <section v-if="isOwner" class="card share-card">
+          <h3>Share</h3>
+          <div class="share-row">
+            <label class="share-toggle">
+              <input
+                type="checkbox"
+                :checked="study.is_public"
+                :disabled="busy"
+                @change="onToggleVisibility(($event.target as HTMLInputElement).checked)"
+              />
+              <span>{{ study.is_public ? 'Public — anyone with the link can view' : 'Private — only you' }}</span>
+            </label>
+          </div>
+          <div v-if="study.is_public" class="share-row">
+            <input class="share-url" :value="shareURL" readonly @focus="($event.target as HTMLInputElement).select()" />
+            <button class="btn ghost btn-sm" @click="copyShareLink">{{ copyState }}</button>
+          </div>
         </section>
 
         <section class="card">
@@ -90,6 +119,7 @@ import { api } from '../api';
 import { useToastStore } from '../stores/toast';
 import { useConfirmStore } from '../stores/confirm';
 import { usePromptStore } from '../stores/prompt';
+import { useAuthStore } from '../stores/auth';
 import type { Study, StudyTreeNode, StateJSON } from '../types';
 
 const route = useRoute();
@@ -97,6 +127,18 @@ const router = useRouter();
 const toastStore = useToastStore();
 const confirmStore = useConfirmStore();
 const promptStore = usePromptStore();
+const authStore = useAuthStore();
+
+// True when the viewer owns this study — the only viewer who sees
+// Rename / Delete / share toggle. Anonymous viewers (signed-out) on
+// a public study always evaluate false here.
+const isOwner = computed(() => !!authStore.user && !!study.value && study.value.user_id === authStore.user.id);
+
+// Permalink for the share input. Uses the current origin so the link
+// works whether we're on prod (https://vcm-50800.vm.duke.edu) or local
+// dev (http://localhost:5173 etc.); window.location.origin handles both.
+const shareURL = computed(() => `${window.location.origin}/study/${study.value?.id ?? ''}`);
+const copyState = ref('Copy link');
 
 const study = ref<Study | null>(null);
 const loading = ref(true);
@@ -314,6 +356,36 @@ const onRename = async () => {
   }
 };
 
+// Owner-only toggle for the share-link gate. Optimistic-update via
+// the returned Study (handler echoes the new is_public flag) so the
+// UI doesn't need a second fetch.
+const onToggleVisibility = async (next: boolean) => {
+  if (!study.value || !isOwner.value || busy.value) return;
+  busy.value = true;
+  try {
+    study.value = await api.setStudyVisibility(study.value.id, next);
+    toastStore.success(next ? 'Study is now public.' : 'Study is now private.');
+  } catch (e: any) {
+    toastStore.error('Could not change visibility: ' + (e?.message || e));
+  } finally {
+    busy.value = false;
+  }
+};
+
+// Copy-to-clipboard with a 1.5s "Copied!" affordance on the button.
+// Falls back to a select-on-focus on browsers that block writeText
+// (older Safari, non-secure contexts) — input is already readonly,
+// the user can ⌘C from there.
+const copyShareLink = async () => {
+  try {
+    await navigator.clipboard.writeText(shareURL.value);
+    copyState.value = 'Copied!';
+    setTimeout(() => { copyState.value = 'Copy link'; }, 1500);
+  } catch {
+    toastStore.error('Clipboard blocked — select the URL and copy manually.');
+  }
+};
+
 const onDelete = async () => {
   if (!study.value) return;
   const confirmed = await confirmStore.ask({
@@ -415,4 +487,12 @@ const onDelete = async () => {
 .btn.danger:hover { background: #3a2020; }
 
 .fen { display: block; padding: 8px; background: #1c1c1c; border-radius: 4px; font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: #ccc; word-break: break-all; margin-top: 8px; }
+
+/* Share card */
+.share-card { display: flex; flex-direction: column; gap: 10px; }
+.share-row { display: flex; align-items: center; gap: 8px; }
+.share-toggle { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; color: #ddd; }
+.share-toggle input { accent-color: #4a6b8a; }
+.share-url { flex: 1 1 auto; min-width: 0; background: #1c1c1c; border: 1px solid #333; border-radius: 4px; color: #ccc; font-family: ui-monospace, Menlo, monospace; font-size: 12px; padding: 6px 8px; }
+.share-card .btn-sm { padding: 5px 10px; font-size: 12px; flex: 0 0 auto; }
 </style>
