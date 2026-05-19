@@ -366,9 +366,9 @@ LIMIT 50;
 -- {"children": [...]}); the handler validates the shape before passing
 -- it through. source_game_id + source_ply are optional — leave them
 -- NULL for a pure "save setup" flow that didn't come from a game.
-INSERT INTO studies (user_id, name, start_fen, tree, source_game_id, source_ply)
-VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, user_id, name, start_fen, tree, source_game_id, source_ply, is_public, created_at, updated_at;
+INSERT INTO studies (user_id, name, start_fen, tree, source_game_id, source_ply, position_label)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, user_id, name, start_fen, tree, source_game_id, source_ply, is_public, position_label, created_at, updated_at;
 
 -- name: GetStudy :one
 -- Fetch one study by id. The handler is responsible for the ownership
@@ -376,7 +376,7 @@ RETURNING id, user_id, name, start_fen, tree, source_game_id, source_ply, is_pub
 -- query doesn't scope by user_id so the handler can return the
 -- distinct "missing row" vs "wrong owner" cases internally for
 -- telemetry while presenting both as 404 externally.
-SELECT id, user_id, name, start_fen, tree, source_game_id, source_ply, is_public, created_at, updated_at
+SELECT id, user_id, name, start_fen, tree, source_game_id, source_ply, is_public, position_label, created_at, updated_at
 FROM studies
 WHERE id = $1;
 
@@ -385,19 +385,19 @@ WHERE id = $1;
 -- the SPA list view can render a position preview without a second
 -- round-trip; if the list ever grows large enough that the JSON
 -- payload is the bottleneck, switch to a tree-omitting projection.
-SELECT id, user_id, name, start_fen, tree, source_game_id, source_ply, is_public, created_at, updated_at
+SELECT id, user_id, name, start_fen, tree, source_game_id, source_ply, is_public, position_label, created_at, updated_at
 FROM studies
 WHERE user_id = $1
 ORDER BY created_at DESC
 LIMIT 200;
 
 -- name: UpdateStudy :execrows
--- Partial-update: name + tree only (the other fields are immutable
--- after creation). Scoped by id AND user_id so a non-owner can't
--- modify someone else's row by guessing the UUID — affecting 0 rows
--- is the silent rejection. updated_at bumps automatically on any change.
+-- Partial-update: name + tree + position_label (the other fields are
+-- immutable after creation). Scoped by id AND user_id so a non-owner
+-- can't modify someone else's row by guessing the UUID — affecting 0
+-- rows is the silent rejection. updated_at bumps on any change.
 UPDATE studies
-SET name = $3, tree = $4, updated_at = NOW()
+SET name = $3, tree = $4, position_label = $5, updated_at = NOW()
 WHERE id = $1 AND user_id = $2;
 
 -- name: SetStudyVisibility :execrows

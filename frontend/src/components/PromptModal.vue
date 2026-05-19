@@ -26,7 +26,11 @@
           <button class="prompt-btn-cancel" @click="cancel">
             {{ store.pending.cancelLabel }}
           </button>
-          <button class="prompt-btn-ok" :disabled="!value.trim()" @click="ok">
+          <button
+            class="prompt-btn-ok"
+            :disabled="!store.pending.allowEmpty && !value.trim()"
+            @click="ok"
+          >
             {{ store.pending.confirmLabel }}
           </button>
         </div>
@@ -49,10 +53,15 @@ const msgId = computed(() => `prompt-msg-${uid}`);
 
 const ok = () => {
   const v = value.value.trim();
-  // Empty input behaves like cancel — matches window.prompt() returning
-  // the empty string for "user typed nothing then hit OK," which most
-  // callers (including ours) treat the same as cancel.
-  store.resolve(v === '' ? null : v);
+  // Empty handling: default is cancel-on-empty (matches window.prompt()
+  // semantics — "user typed nothing then hit OK" usually means cancel).
+  // allowEmpty inverts that: callers that want to receive an empty
+  // string as a legitimate "clear" signal (edit-label flow) opt in.
+  if (v === '' && !store.pending?.allowEmpty) {
+    store.resolve(null);
+    return;
+  }
+  store.resolve(v);
 };
 const cancel = () => store.resolve(null);
 

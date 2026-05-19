@@ -15,6 +15,10 @@ export interface PromptOptions {
   placeholder?: string;
   confirmLabel?: string;
   cancelLabel?: string;
+  // Default false: empty input resolves to null (treated as cancel).
+  // Set true when an empty string is a legitimate value the caller
+  // wants to receive — e.g. "clear this label" on an edit-label flow.
+  allowEmpty?: boolean;
 }
 
 interface PendingRequest extends Required<Omit<PromptOptions, 'title' | 'message' | 'placeholder'>> {
@@ -42,6 +46,7 @@ export const usePromptStore = defineStore('prompt', {
           placeholder: opts.placeholder ?? '',
           confirmLabel: opts.confirmLabel ?? 'OK',
           cancelLabel: opts.cancelLabel ?? 'Cancel',
+          allowEmpty: opts.allowEmpty ?? false,
           resolve,
         };
       });

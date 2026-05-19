@@ -178,9 +178,15 @@ CREATE TABLE IF NOT EXISTS studies (
     source_game_id  TEXT        REFERENCES games(id) ON DELETE SET NULL,
     source_ply      INT,
     is_public       BOOLEAN     NOT NULL DEFAULT FALSE,
+    -- Optional user-supplied tag for clustering studies in the /study/
+    -- listing. When set, takes priority over start_fen grouping —
+    -- lets the user say "all my English-opening saves" even when
+    -- they share the standard starting position with unrelated saves.
+    position_label  TEXT        NOT NULL DEFAULT '',
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
--- Idempotent add for clusters that initialized studies before is_public landed.
-ALTER TABLE studies ADD COLUMN IF NOT EXISTS is_public BOOLEAN NOT NULL DEFAULT FALSE;
+-- Idempotent adds for clusters that initialized studies before each column landed.
+ALTER TABLE studies ADD COLUMN IF NOT EXISTS is_public      BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE studies ADD COLUMN IF NOT EXISTS position_label TEXT    NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS studies_user_created_idx ON studies (user_id, created_at DESC);

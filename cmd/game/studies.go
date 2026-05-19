@@ -70,17 +70,23 @@ func validateStudyTree(raw json.RawMessage) (json.RawMessage, error) {
 }
 
 type createStudyRequest struct {
-	Name         string          `json:"name"`
-	StartFEN     string          `json:"start_fen"`
-	Tree         json.RawMessage `json:"tree,omitempty"`
-	SourceGameID string          `json:"source_game_id,omitempty"`
-	SourcePly    int             `json:"source_ply,omitempty"`
+	Name          string          `json:"name"`
+	StartFEN      string          `json:"start_fen"`
+	Tree          json.RawMessage `json:"tree,omitempty"`
+	SourceGameID  string          `json:"source_game_id,omitempty"`
+	SourcePly     int             `json:"source_ply,omitempty"`
+	PositionLabel string          `json:"position_label,omitempty"`
 }
 
 type updateStudyRequest struct {
-	Name string          `json:"name"`
-	Tree json.RawMessage `json:"tree"`
+	Name          string          `json:"name"`
+	Tree          json.RawMessage `json:"tree"`
+	PositionLabel string          `json:"position_label,omitempty"`
 }
+
+// studyMaxLabelBytes caps the user-supplied position_label so a
+// runaway paste can't bloat the row. Matches studyMaxNameBytes.
+const studyMaxLabelBytes = 200
 
 func (s *GameService) handleCreateStudy(w http.ResponseWriter, r *http.Request) {
 	uid, ok := authedUserID(r)
@@ -108,13 +114,19 @@ func (s *GameService) handleCreateStudy(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "invalid tree: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	label := strings.TrimSpace(req.PositionLabel)
+	if len(label) > studyMaxLabelBytes {
+		http.Error(w, "position_label too long (max "+strconv.Itoa(studyMaxLabelBytes)+" chars)", http.StatusBadRequest)
+		return
+	}
 	st := &db.Study{
-		UserID:       uid,
-		Name:         req.Name,
-		StartFEN:     req.StartFEN,
-		Tree:         tree,
-		SourceGameID: strings.TrimSpace(req.SourceGameID),
-		SourcePly:    req.SourcePly,
+		UserID:        uid,
+		Name:          req.Name,
+		StartFEN:      req.StartFEN,
+		Tree:          tree,
+		SourceGameID:  strings.TrimSpace(req.SourceGameID),
+		SourcePly:     req.SourcePly,
+		PositionLabel: label,
 	}
 	saved, err := s.db.CreateStudy(st)
 	if err != nil {
@@ -206,7 +218,12 @@ func (s *GameService) handleUpdateStudy(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "invalid tree: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	rows, err := s.db.UpdateStudy(id, uid, req.Name, tree)
+	label := strings.TrimSpace(req.PositionLabel)
+	if len(label) > studyMaxLabelBytes {
+		http.Error(w, "position_label too long (max "+strconv.Itoa(studyMaxLabelBytes)+" chars)", http.StatusBadRequest)
+		return
+	}
+	rows, err := s.db.UpdateStudy(id, uid, req.Name, tree, label)
 	if err != nil {
 		slog.Error("update study failed", "id", id, "user_id", uid, "error", err)
 		http.Error(w, "failed to update study", http.StatusInternalServerError)

@@ -669,12 +669,13 @@ func (s *PostgresStore) ExpireStaleInvites() ([]Invite, error) {
 
 func (s *PostgresStore) CreateStudy(st *Study) (*Study, error) {
 	row, err := s.q.CreateStudy(context.Background(), gen.CreateStudyParams{
-		UserID:       st.UserID,
-		Name:         st.Name,
-		StartFen:     st.StartFEN,
-		Tree:         st.Tree,
-		SourceGameID: nullStringFrom(st.SourceGameID),
-		SourcePly:    nullInt32From(st.SourcePly),
+		UserID:        st.UserID,
+		Name:          st.Name,
+		StartFen:      st.StartFEN,
+		Tree:          st.Tree,
+		SourceGameID:  nullStringFrom(st.SourceGameID),
+		SourcePly:     nullInt32From(st.SourcePly),
+		PositionLabel: st.PositionLabel,
 	})
 	if err != nil {
 		return nil, err
@@ -702,12 +703,13 @@ func (s *PostgresStore) ListStudiesForUser(userID int64) ([]Study, error) {
 	return out, nil
 }
 
-func (s *PostgresStore) UpdateStudy(id uuid.UUID, userID int64, name string, tree json.RawMessage) (int64, error) {
+func (s *PostgresStore) UpdateStudy(id uuid.UUID, userID int64, name string, tree json.RawMessage, positionLabel string) (int64, error) {
 	return s.q.UpdateStudy(context.Background(), gen.UpdateStudyParams{
-		ID:     id,
-		UserID: userID,
-		Name:   name,
-		Tree:   tree,
+		ID:            id,
+		UserID:        userID,
+		Name:          name,
+		Tree:          tree,
+		PositionLabel: positionLabel,
 	})
 }
 
@@ -815,14 +817,15 @@ func nullInt32From(v int) sql.NullInt32 {
 
 func studyFromRow(r gen.Study) *Study {
 	out := &Study{
-		ID:        r.ID,
-		UserID:    r.UserID,
-		Name:      r.Name,
-		StartFEN:  r.StartFen,
-		Tree:      r.Tree,
-		IsPublic:  r.IsPublic,
-		CreatedAt: r.CreatedAt,
-		UpdatedAt: r.UpdatedAt,
+		ID:            r.ID,
+		UserID:        r.UserID,
+		Name:          r.Name,
+		StartFEN:      r.StartFen,
+		Tree:          r.Tree,
+		IsPublic:      r.IsPublic,
+		PositionLabel: r.PositionLabel,
+		CreatedAt:     r.CreatedAt,
+		UpdatedAt:     r.UpdatedAt,
 	}
 	if r.SourceGameID.Valid {
 		out.SourceGameID = r.SourceGameID.String

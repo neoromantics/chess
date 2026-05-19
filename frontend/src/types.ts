@@ -125,6 +125,13 @@ export interface Study {
   tree: StudyTreeNode;
   source_game_id?: string;
   source_ply?: number;
+  // Owner-opt-in share gate. Public studies are reachable by anyone
+  // with the link via /study/:id (server enforces; SPA mirrors).
+  is_public: boolean;
+  // Optional user-supplied tag for /study/ grouping — when set,
+  // clusters with other studies sharing the same label instead of
+  // by start_fen.
+  position_label?: string;
   created_at: string;
   updated_at: string;
 }

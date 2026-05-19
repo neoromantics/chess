@@ -213,18 +213,19 @@ func (q *Queries) CreateInvite(ctx context.Context, arg CreateInviteParams) (Inv
 
 const createStudy = `-- name: CreateStudy :one
 
-INSERT INTO studies (user_id, name, start_fen, tree, source_game_id, source_ply)
-VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, user_id, name, start_fen, tree, source_game_id, source_ply, is_public, created_at, updated_at
+INSERT INTO studies (user_id, name, start_fen, tree, source_game_id, source_ply, position_label)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, user_id, name, start_fen, tree, source_game_id, source_ply, is_public, position_label, created_at, updated_at
 `
 
 type CreateStudyParams struct {
-	UserID       int64           `json:"user_id"`
-	Name         string          `json:"name"`
-	StartFen     string          `json:"start_fen"`
-	Tree         json.RawMessage `json:"tree"`
-	SourceGameID sql.NullString  `json:"source_game_id"`
-	SourcePly    sql.NullInt32   `json:"source_ply"`
+	UserID        int64           `json:"user_id"`
+	Name          string          `json:"name"`
+	StartFen      string          `json:"start_fen"`
+	Tree          json.RawMessage `json:"tree"`
+	SourceGameID  sql.NullString  `json:"source_game_id"`
+	SourcePly     sql.NullInt32   `json:"source_ply"`
+	PositionLabel string          `json:"position_label"`
 }
 
 // ===== Studies =====
@@ -240,6 +241,7 @@ func (q *Queries) CreateStudy(ctx context.Context, arg CreateStudyParams) (Study
 		arg.Tree,
 		arg.SourceGameID,
 		arg.SourcePly,
+		arg.PositionLabel,
 	)
 	var i Study
 	err := row.Scan(
@@ -251,6 +253,7 @@ func (q *Queries) CreateStudy(ctx context.Context, arg CreateStudyParams) (Study
 		&i.SourceGameID,
 		&i.SourcePly,
 		&i.IsPublic,
+		&i.PositionLabel,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -507,7 +510,7 @@ func (q *Queries) GetInvite(ctx context.Context, id uuid.UUID) (Invite, error) {
 }
 
 const getStudy = `-- name: GetStudy :one
-SELECT id, user_id, name, start_fen, tree, source_game_id, source_ply, is_public, created_at, updated_at
+SELECT id, user_id, name, start_fen, tree, source_game_id, source_ply, is_public, position_label, created_at, updated_at
 FROM studies
 WHERE id = $1
 `
@@ -529,6 +532,7 @@ func (q *Queries) GetStudy(ctx context.Context, id uuid.UUID) (Study, error) {
 		&i.SourceGameID,
 		&i.SourcePly,
 		&i.IsPublic,
+		&i.PositionLabel,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -1109,7 +1113,7 @@ func (q *Queries) ListRecentSignups(ctx context.Context) ([]ListRecentSignupsRow
 }
 
 const listStudiesForUser = `-- name: ListStudiesForUser :many
-SELECT id, user_id, name, start_fen, tree, source_game_id, source_ply, is_public, created_at, updated_at
+SELECT id, user_id, name, start_fen, tree, source_game_id, source_ply, is_public, position_label, created_at, updated_at
 FROM studies
 WHERE user_id = $1
 ORDER BY created_at DESC
@@ -1138,6 +1142,7 @@ func (q *Queries) ListStudiesForUser(ctx context.Context, userID int64) ([]Study
 			&i.SourceGameID,
 			&i.SourcePly,
 			&i.IsPublic,
+			&i.PositionLabel,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -1272,27 +1277,29 @@ func (q *Queries) UpdatePassword(ctx context.Context, arg UpdatePasswordParams) 
 
 const updateStudy = `-- name: UpdateStudy :execrows
 UPDATE studies
-SET name = $3, tree = $4, updated_at = NOW()
+SET name = $3, tree = $4, position_label = $5, updated_at = NOW()
 WHERE id = $1 AND user_id = $2
 `
 
 type UpdateStudyParams struct {
-	ID     uuid.UUID       `json:"id"`
-	UserID int64           `json:"user_id"`
-	Name   string          `json:"name"`
-	Tree   json.RawMessage `json:"tree"`
+	ID            uuid.UUID       `json:"id"`
+	UserID        int64           `json:"user_id"`
+	Name          string          `json:"name"`
+	Tree          json.RawMessage `json:"tree"`
+	PositionLabel string          `json:"position_label"`
 }
 
-// Partial-update: name + tree only (the other fields are immutable
-// after creation). Scoped by id AND user_id so a non-owner can't
-// modify someone else's row by guessing the UUID — affecting 0 rows
-// is the silent rejection. updated_at bumps automatically on any change.
+// Partial-update: name + tree + position_label (the other fields are
+// immutable after creation). Scoped by id AND user_id so a non-owner
+// can't modify someone else's row by guessing the UUID — affecting 0
+// rows is the silent rejection. updated_at bumps on any change.
 func (q *Queries) UpdateStudy(ctx context.Context, arg UpdateStudyParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, updateStudy,
 		arg.ID,
 		arg.UserID,
 		arg.Name,
 		arg.Tree,
+		arg.PositionLabel,
 	)
 	if err != nil {
 		return 0, err

@@ -107,7 +107,7 @@ export const api = {
   // Returns one FEN per node along the main chain, index 0 = start_fen.
   // Lets StudyView scrub without a JS chess engine.
   getStudyPositions: (id: string) => request<string[]>(`/api/studies/${encodeURIComponent(id)}/positions`),
-  updateStudy: (id: string, body: { name: string; tree: import('./types').StudyTreeNode }) =>
+  updateStudy: (id: string, body: { name: string; tree: import('./types').StudyTreeNode; position_label?: string }) =>
     request<import('./types').Study>(`/api/studies/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },

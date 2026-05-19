@@ -500,7 +500,7 @@ func (panicStore) GetStudy(uuid.UUID) (*db.Study, error)    { panic("unexpected 
 func (panicStore) ListStudiesForUser(int64) ([]db.Study, error) {
 	panic("unexpected ListStudiesForUser")
 }
-func (panicStore) UpdateStudy(uuid.UUID, int64, string, json.RawMessage) (int64, error) {
+func (panicStore) UpdateStudy(uuid.UUID, int64, string, json.RawMessage, string) (int64, error) {
 	panic("unexpected UpdateStudy")
 }
 func (panicStore) SetStudyVisibility(uuid.UUID, int64, bool) (int64, error) {

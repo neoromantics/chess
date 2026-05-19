@@ -22,7 +22,7 @@
            row (no group chrome) — clustering a group of one would be
            visual noise. -->
       <ul v-else class="study-groups">
-        <li v-for="g in groups" :key="g.startFen" :class="['study-group', { multi: g.studies.length > 1 }]">
+        <li v-for="g in groups" :key="g.key" :class="['study-group', { multi: g.studies.length > 1 }]">
           <div v-if="g.studies.length > 1" class="group-header">
             <div class="group-preview" :style="{ '--sq': '18px' }">
               <ChessBoard
@@ -34,8 +34,10 @@
               />
             </div>
             <div class="group-summary">
-              <strong>{{ g.studies.length }} lines from this position</strong>
-              <span class="muted">{{ positionLabel(g.startFen) }}</span>
+              <strong v-if="g.label">{{ g.label }}</strong>
+              <strong v-else>{{ g.studies.length }} lines from this position</strong>
+              <span v-if="g.label" class="muted">{{ g.studies.length }} {{ g.studies.length === 1 ? 'line' : 'lines' }} · {{ positionLabel(g.startFen) }}</span>
+              <span v-else class="muted">{{ positionLabel(g.startFen) }}</span>
             </div>
           </div>
           <ul class="study-list">
@@ -62,6 +64,9 @@
               <div class="study-actions">
                 <button class="btn-secondary" @click="open(st)">Open</button>
                 <button class="btn-secondary" :disabled="busyId === st.id" @click="rename(st)">Rename</button>
+                <button class="btn-secondary" :disabled="busyId === st.id" @click="editLabel(st)">
+                  {{ st.position_label ? 'Edit label' : 'Add label' }}
+                </button>
                 <button class="btn-danger" :disabled="busyId === st.id" @click="onDelete(st)">Delete</button>
               </div>
             </li>
@@ -121,6 +126,39 @@ const formatDate = (iso: string): string => {
   return d.toLocaleString();
 };
 
+// Edit-label flow: same PromptModal pattern as rename. Setting an
+// empty label clears it (study re-falls-back to start_fen grouping);
+// setting any non-empty string moves the study into that label's
+// group on the next render. Server validates the 200-byte cap.
+const editLabel = async (st: Study) => {
+  const label = await promptStore.ask({
+    title: 'Group label',
+    message: 'Studies that share this label cluster together in the list. Leave blank to clear.',
+    defaultValue: st.position_label || '',
+    confirmLabel: 'Save',
+    // Allow empty submission so "leave blank to clear" actually works —
+    // default prompt behaviour treats empty as cancel.
+    allowEmpty: true,
+  });
+  if (label === null) return; // user cancelled
+  if (label === (st.position_label || '')) return; // no change
+  busyId.value = st.id;
+  try {
+    const updated = await api.updateStudy(st.id, {
+      name: st.name,
+      tree: st.tree,
+      position_label: label,
+    });
+    const idx = studies.value.findIndex(s => s.id === st.id);
+    if (idx >= 0) studies.value[idx] = updated;
+    toastStore.success(label ? `Labeled "${label}"` : 'Label cleared');
+  } catch (e: any) {
+    toastStore.error('Could not update label: ' + (e?.message || e));
+  } finally {
+    busyId.value = null;
+  }
+};
+
 const rename = async (st: Study) => {
   const name = await promptStore.ask({
     title: 'Rename study',
@@ -130,7 +168,7 @@ const rename = async (st: Study) => {
   if (!name || name === st.name) return;
   busyId.value = st.id;
   try {
-    const updated = await api.updateStudy(st.id, { name, tree: st.tree });
+    const updated = await api.updateStudy(st.id, { name, tree: st.tree, position_label: st.position_label });
     const idx = studies.value.findIndex(s => s.id === st.id);
     if (idx >= 0) studies.value[idx] = updated;
     toastStore.success('Renamed');
@@ -141,19 +179,23 @@ const rename = async (st: Study) => {
   }
 };
 
-// Bucket studies by start_fen, preserving the order the list arrived
-// in (backend returns ORDER BY created_at DESC, so a group lands
-// where its newest member was). Each multi-study group gets a header
-// summarizing the shared position; single-study positions render as
-// flat rows like before.
-interface Group { startFen: string; studies: Study[] }
+// Bucket studies by position_label when set, else by start_fen.
+// Labeled studies cluster together regardless of starting position
+// (so "English" and "Italian" can be separated even though both
+// open from the standard start). Unlabeled studies fall back to
+// start-fen grouping. Order preserves the backend's ORDER BY
+// created_at DESC — a group lands where its newest member was.
+interface Group { key: string; label: string; startFen: string; studies: Study[] }
 const groups = computed<Group[]>(() => {
   const map = new Map<string, Group>();
   for (const st of studies.value) {
-    const key = st.start_fen;
+    // Distinguish label keys from fen keys with a prefix so a label
+    // that happens to equal a FEN string can't accidentally merge.
+    const label = (st.position_label || '').trim();
+    const key = label ? 'L:' + label : 'F:' + st.start_fen;
     const g = map.get(key);
     if (g) g.studies.push(st);
-    else map.set(key, { startFen: key, studies: [st] });
+    else map.set(key, { key, label, startFen: st.start_fen, studies: [st] });
   }
   return Array.from(map.values());
 });

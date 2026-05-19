@@ -66,13 +66,14 @@ func (s *studyStore) ListStudiesForUser(uid int64) ([]db.Study, error) {
 	return out, nil
 }
 
-func (s *studyStore) UpdateStudy(id uuid.UUID, uid int64, name string, tree json.RawMessage) (int64, error) {
+func (s *studyStore) UpdateStudy(id uuid.UUID, uid int64, name string, tree json.RawMessage, positionLabel string) (int64, error) {
 	row, ok := s.rows[id]
 	if !ok || row.UserID != uid {
 		return 0, nil
 	}
 	row.Name = name
 	row.Tree = tree
+	row.PositionLabel = positionLabel
 	row.UpdatedAt = time.Now()
 	return 1, nil
 }

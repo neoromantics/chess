@@ -330,7 +330,7 @@ const onRename = async () => {
   if (!name || name === study.value.name) return;
   busy.value = true;
   try {
-    study.value = await api.updateStudy(study.value.id, { name, tree: study.value.tree });
+    study.value = await api.updateStudy(study.value.id, { name, tree: study.value.tree, position_label: study.value.position_label });
     toastStore.success('Renamed');
   } catch (e: any) {
     toastStore.error('Could not rename: ' + (e?.message || e));

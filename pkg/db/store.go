@@ -303,7 +303,7 @@ type Store interface {
 	CreateStudy(s *Study) (*Study, error)
 	GetStudy(id uuid.UUID) (*Study, error)
 	ListStudiesForUser(userID int64) ([]Study, error)
-	UpdateStudy(id uuid.UUID, userID int64, name string, tree json.RawMessage) (int64, error)
+	UpdateStudy(id uuid.UUID, userID int64, name string, tree json.RawMessage, positionLabel string) (int64, error)
 	// SetStudyVisibility toggles the is_public flag. Owner-scoped at
 	// the query level — non-owner = 0 rows = silent rejection. The
 	// handler returns 404 in that case to match the existence-leak
@@ -329,7 +329,12 @@ type Study struct {
 	// (mirrors the games.is_public spectator pattern). Listing
 	// (/api/studies) stays owner-scoped — public studies are
 	// discoverable by link only.
-	IsPublic  bool      `json:"is_public"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	IsPublic bool `json:"is_public"`
+	// Optional user-supplied tag. When set, the SPA's /study/ listing
+	// clusters studies by this label instead of by start_fen — useful
+	// for separating "English" from "Italian" when both start from
+	// the standard position.
+	PositionLabel string    `json:"position_label,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }

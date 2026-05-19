@@ -106,11 +106,11 @@ inside game-service; non-owner gets 404 (existence-leak rule).
 
 | Method | Path | Auth | Owner | Frontend caller |
 |---|---|---|---|---|
-| POST | `/api/studies` | 🔐 | gateway → game-svc | `api.createStudy` (body: `{name, start_fen, tree?, source_game_id?, source_ply?}`) |
+| POST | `/api/studies` | 🔐 | gateway → game-svc | `api.createStudy` (body: `{name, start_fen, tree?, source_game_id?, source_ply?, position_label?}`) |
 | GET | `/api/studies` | 🔐 | gateway → game-svc | `api.listStudies` (200-row cap, newest first) |
 | GET | `/api/studies/{id}` | 🔐?+owner-or-public | gateway → game-svc | `api.getStudy` (auth-optional — anonymous viewers reach public studies, owner reaches private) |
 | GET | `/api/studies/{id}/positions` | 🔐?+owner-or-public | gateway → game-svc | `api.getStudyPositions` (returns `string[]` of FENs along the main chain; auth-optional like `/state` — anonymous OK for public studies) |
-| PATCH | `/api/studies/{id}` | 🔐+owner | gateway → game-svc | `api.updateStudy` (body: `{name, tree}`) |
+| PATCH | `/api/studies/{id}` | 🔐+owner | gateway → game-svc | `api.updateStudy` (body: `{name, tree, position_label?}`; position_label is user-supplied tag for /study/ clustering) |
 | POST | `/api/studies/{id}/visibility` | 🔐+owner | gateway → game-svc | `api.setStudyVisibility` (body: `{is_public}`; flips the share-link gate) |
 | DELETE | `/api/studies/{id}` | 🔐+owner | gateway → game-svc | `api.deleteStudy` (204) |
 

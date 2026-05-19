@@ -60,16 +60,17 @@ type Invite struct {
 }
 
 type Study struct {
-	ID           uuid.UUID       `json:"id"`
-	UserID       int64           `json:"user_id"`
-	Name         string          `json:"name"`
-	StartFen     string          `json:"start_fen"`
-	Tree         json.RawMessage `json:"tree"`
-	SourceGameID sql.NullString  `json:"source_game_id"`
-	SourcePly    sql.NullInt32   `json:"source_ply"`
-	IsPublic     bool            `json:"is_public"`
-	CreatedAt    time.Time       `json:"created_at"`
-	UpdatedAt    time.Time       `json:"updated_at"`
+	ID            uuid.UUID       `json:"id"`
+	UserID        int64           `json:"user_id"`
+	Name          string          `json:"name"`
+	StartFen      string          `json:"start_fen"`
+	Tree          json.RawMessage `json:"tree"`
+	SourceGameID  sql.NullString  `json:"source_game_id"`
+	SourcePly     sql.NullInt32   `json:"source_ply"`
+	IsPublic      bool            `json:"is_public"`
+	PositionLabel string          `json:"position_label"`
+	CreatedAt     time.Time       `json:"created_at"`
+	UpdatedAt     time.Time       `json:"updated_at"`
 }
 
 type User struct {

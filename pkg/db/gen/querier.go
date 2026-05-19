@@ -152,10 +152,10 @@ type Querier interface {
 	SetStudyVisibility(ctx context.Context, arg SetStudyVisibilityParams) (int64, error)
 	UpdateLastLogin(ctx context.Context, id int64) error
 	UpdatePassword(ctx context.Context, arg UpdatePasswordParams) error
-	// Partial-update: name + tree only (the other fields are immutable
-	// after creation). Scoped by id AND user_id so a non-owner can't
-	// modify someone else's row by guessing the UUID — affecting 0 rows
-	// is the silent rejection. updated_at bumps automatically on any change.
+	// Partial-update: name + tree + position_label (the other fields are
+	// immutable after creation). Scoped by id AND user_id so a non-owner
+	// can't modify someone else's row by guessing the UUID — affecting 0
+	// rows is the silent rejection. updated_at bumps on any change.
 	UpdateStudy(ctx context.Context, arg UpdateStudyParams) (int64, error)
 	UpdateUserProfile(ctx context.Context, arg UpdateUserProfileParams) error
 	// Glicko-2 outcome write. Called by the leader-elected rating updater
