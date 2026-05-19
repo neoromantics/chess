@@ -249,17 +249,41 @@ const formatDate = (iso: string): string => {
   return d.toLocaleString();
 };
 
-// "Play from here" creates a new engine-game row at the study's start
-// position. The user can then play out the line (or any other line)
-// against the engine. We don't pre-apply the study's moves — playing
-// out the saved variation manually is the point.
+const STANDARD_START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+
+// "Play from here" forks the study into a new engine-game row at the
+// CURRENTLY-SCRUBBED position, carrying the prefix chain as history.
+// So if the user scrubbed to ply 7 and clicked Play, the new game
+// starts at the standard position with moves 1-7 already played and
+// the move list populated — the user picks up from there. Mirrors
+// GameView's fork-from-ply behavior; one round-trip via load_pgn.
+//
+// When selectedIdx === 0 (start position): nothing to replay, fall
+// back to setPosition (or skip both if start_fen is the standard).
 const playFromHere = async () => {
   if (!study.value || forking.value) return;
   forking.value = true;
   try {
     const { game_id } = await api.createGame({});
+    const prefix = mainChain.value.slice(0, selectedIdx.value);
     try {
-      await api.setPosition(game_id, study.value.start_fen);
+      if (prefix.length > 0) {
+        let pgn = '';
+        if (study.value.start_fen && study.value.start_fen !== STANDARD_START_FEN) {
+          pgn += `[SetUp "1"]\n[FEN "${study.value.start_fen}"]\n\n`;
+        }
+        for (let i = 0; i < prefix.length; i++) {
+          if (i % 2 === 0) pgn += `${Math.floor(i / 2) + 1}. `;
+          pgn += `${prefix[i].san || prefix[i].move} `;
+        }
+        pgn += '*';
+        await api.loadPgn(game_id, pgn.trim());
+      } else if (study.value.start_fen && study.value.start_fen !== STANDARD_START_FEN) {
+        // No prefix, but non-standard start — set the position alone.
+        await api.setPosition(game_id, study.value.start_fen);
+      }
+      // else: standard start + no prefix → fresh game already at the
+      // standard position from createGame, no extra call needed.
     } catch (e: any) {
       toastStore.error('Created the game but couldn’t apply the position: ' + (e?.message || e));
     }
