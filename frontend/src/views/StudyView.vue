@@ -298,6 +298,13 @@ const playFromHere = async () => {
   forking.value = true;
   try {
     const { game_id } = await api.createGame({});
+    // Flip both sides to human immediately — "Play from here" is
+    // exploration, and the gateway's createGame default forces an
+    // engine slot (engine_black=true when no flags are passed) which
+    // would auto-respond the moment the user plays a move. The user
+    // can switch a side to engine via the SidePanel toggles if they
+    // want. think times preserved at the engine default (1000ms).
+    await api.setPlayers(game_id, false, false, 1000, 1000);
     const prefix = mainChain.value.slice(0, selectedIdx.value);
     try {
       if (prefix.length > 0) {
