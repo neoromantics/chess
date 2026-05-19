@@ -125,9 +125,17 @@ onMounted(async () => {
   try {
     study.value = await api.getStudy(id);
     // Fetch positions in the background; the viewer renders the start
-    // position immediately, and once positions land the user can scrub.
+    // position immediately, then snaps to the end-of-line once positions
+    // land. Defaulting to the saved end state (rather than start)
+    // matches what the user expects when opening a study they saved —
+    // the named "study" is the position they reached, not the position
+    // they started from. They can Home / arrow back to scrub.
     api.getStudyPositions(id)
-      .then((fs) => { positions.value = fs; positionsLoaded.value = true; })
+      .then((fs) => {
+        positions.value = fs;
+        positionsLoaded.value = true;
+        selectedIdx.value = Math.max(0, fs.length - 1);
+      })
       .catch((e) => toastStore.error('Could not load study positions: ' + (e?.message || e)));
   } catch (e: any) {
     error.value = e?.message || 'Failed to load.';
