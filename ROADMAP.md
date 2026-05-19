@@ -106,6 +106,49 @@ Recent ops/cleanup (2026-05-18):
   middleware/`Hijack()` gotcha, metric cardinality), the trace of
   a single move through the stack, then a Redis-data + Pub/Sub +
   hub + AWS deep-dive in section 9–10.
+- ✅ **In-theme prompt modal + replay-frames gateway proxy**
+  (`fb3bbfb`). Singleton `PromptModal` mirrors the `ConfirmModal`
+  pattern (Pinia store, `<PromptModal />` mounted in `App.vue`,
+  Promise-resolving `usePromptStore().ask(...)`); replaces every
+  `window.prompt()` site. Also added the missing
+  `GET /api/games/{id}/replay` gateway proxy — the move-list scrub
+  + Save-as-study flows were hitting the SPA's index.html fallback
+  ("Unexpected token '<'" on parse).
+- ✅ **Favicon discovery + Save-as-study in Replay + StudyView
+  layout** (`b6ea7e2`). Added `manifest.webmanifest` + Apple
+  touch icon + theme-color meta so Chrome's URL-bar autocomplete
+  finds our chess SVG instead of falling back to a dev-server
+  default. Replay view (standalone bundle) gained a one-click
+  Save-as-study button with auto-generated name + inline status
+  banner (no Pinia/api.ts available). StudyView layout switched
+  from a max-width grid to a GameView-style flex so the board's
+  `--sq` (sized for full-viewport flex) doesn't overflow its
+  column.
+- ✅ **Fork carries history + Study move pairs + Hint mid-scrub**
+  (`cfc5ae1`, `5373a2d`, `78db87f`). Fork-from-ply now creates
+  the new engine-game with the source's prefix moves applied via
+  `createGame` + `load_pgn` (one round-trip; PGN built from
+  `state.history_san.slice(0, ply)`, optionally headered with
+  `[SetUp][FEN]` for non-standard starts). Study viewer move list
+  switched to paired-per-row format matching SidePanel's shape.
+  Hint extended to accept an optional `fen` body field — when
+  scrubbed, SPA passes `displayState.fen` so the engine searches
+  the scrubbed position; flat 1s movetime regardless of game
+  think-time config; SidePanel grew a Hint button in the scrub
+  row (regular actions row is hidden on finished games);
+  `pendingHintForFEN` guard drops a stale result that lands after
+  the user navigated plies.
+- ✅ **Study viewer click-to-scrub + end-of-line default +
+  Play-from-here history** (`921b62d`, `40dd625`, `78db87f`).
+  New `GET /api/studies/{id}/positions` endpoint replays the
+  main chain through `pkg/core` and returns per-ply FENs; viewer
+  fetches on mount in the background and lets the user click any
+  move (or use ←/→/Home/End) to jump positions locally — no JS
+  chess engine in the bundle. Default opens at end-of-line so a
+  saved study lands on the position the user actually saved.
+  "Play from here" now respects `selectedIdx`: builds a PGN from
+  `mainChain.slice(0, selectedIdx)` and `load_pgn`s it into the
+  new game, so the move list carries the prefix.
 
 Recent ops/cleanup (2026-05-17):
 - ✅ **In-theme confirm modal** (`1f8ba41`). Singleton Pinia store +
