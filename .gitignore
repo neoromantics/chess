@@ -38,3 +38,4 @@ default.pgo
 
 # Onboarding doc kept local only.
 ONBOARDING.md
+/onboarding/
