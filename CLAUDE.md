@@ -1,181 +1,89 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code (claude.ai/code) working in this repository. Topic-organized depth lives in [`docs/`](docs/); this file is the slim always-loaded index.
 
 ## What this is
 
 A production multiplayer chess platform deployed to `https://vcm-50800.vm.duke.edu` on k3s with Traefik + Let's Encrypt. **Every change must survive multi-replica deployment, rolling restarts, and HTTPS reverse-proxying** — "works locally" is not sufficient.
 
-## High-level architecture
-
-**Three Go services**, one Postgres, one Redis. All cross-service comms via Redis. All three services build from a single multi-stage Dockerfile into one image; the binary to run is selected by the deployment's `command:`.
-
-We were briefly six pods (gateway, user-service, game-service, matchmaker, rating-updater, engine-worker). The split was over-engineered for this scale and most of our bugs were wire-protocol drift across the extra boundaries. Consolidated 6→3 in commits c413513…43d5f8b: user-service folded into gateway, matchmaker + rating-updater folded into game-service. **engine-worker stays separate** because CPU-bound search has a genuinely different scaling profile (HPA on queue depth, can scale out wide).
-
-**This is not a fully event-sourced platform** despite some early docs framing it that way. The Streams layer is intentionally narrow — see the **Streams-vs-HTTP rule** below.
+## Architecture in 30 seconds
 
 ```
-                  Browser (Vue 3 SPA, embedded into the gateway binary)
-                                  │
-                                  ▼  HTTPS + WSS
+                  Browser (Vue 3 SPA, embedded in gateway binary)
+                                  │  HTTPS + WSS
+                                  ▼
         ┌────────────────────── gateway ──────────────────────┐
-        │ JWT auth, signup/login/profile/search,              │
-        │ HTTP routing, WebSocket fan-out (PSUBSCRIBE), intent│
-        │ dispatch (Commands) to game-service, replay HTML.   │
+        │ JWT auth, HTTP routing, WS fan-out,                 │
+        │ intent dispatch to game-service                     │
         └──────┬──────────────────────────────┬───────────────┘
                │                              │
                ▼                              ▼
          game-service (HPA 2-6)         engine-worker (HPA 2-8)
-         · sync HTTP: /api/move,        · CPU-bound search
-           /api/state, /api/games,      · engine:requests stream
-           /api/invites/*, /api/resign  · engine:results stream
-         · stream consumers: game       · concurrency = GOMAXPROCS(0)
-           commands, engine results       (one search per pod)
-         · goroutines (singletons via
-           leader election): matchmaker
-           pairing, invite expiry sweep,
-           rating-updater (Glicko-2)
+         · sync HTTP for game state     · CPU-bound search
+         · stream consumers             · engine:requests / :results
+         · leader-elected singletons    · one search per pod
                 │                                ▲
                 ▼                                │
-              Postgres  ◀──── shared cache + bus ──── Redis
-              (durable truth)                   (hot cache, streams,
-                                                 pub/sub, locks)
+              Postgres  ◀── shared cache + bus ── Redis
+              (durable truth)                (cache, streams, pub/sub, locks)
 ```
 
-### Service responsibilities
+Three Go services + Postgres + Redis. Single multi-stage Dockerfile produces one image; the binary is selected by the deployment's `command:`. Deep dive: [`docs/architecture/overview.md`](docs/architecture/overview.md).
 
-- **`gateway` (cmd/gateway)** — Stateless HTTP/WS entry. Validates JWT via `auth.Middleware`, serves the auth + profile surface directly (signup, login, change-password, /api/user/*, /api/users/search), reverse-proxies game endpoints to game-service with `?user_id=N` injection. For the anonymous temp-game surface, mints a `chess-anon` HttpOnly cookie on first hit and proxies `/api/temp/*` with `?anon_id=<uuid>` injected by `injectAnonID` (cookie-as-identity, mirrors the JWT-as-identity pattern). Handles intent dispatch (`POST /api/games/new`, `POST /api/matchmaking/{join,leave}`) by appending Commands to the `game:commands` stream. **Frontend SPA is embedded only here** via `go:embed all:dist`. The hub runs Redis `PSUBSCRIBE game.evt.*` and `user.evt.*` to fan messages out to locally-attached WebSocket clients. Two WS endpoints: `/ws?game_id=X` (per-game stream — branches inside `handleWSGame` on the `temp-` prefix; durable IDs use the JWT path, temp IDs use the cookie path) and `/ws/user` (per-user, for invites/match-found). Opens its own PG pool for the auth + profile reads. Auth surface is hardened: per-IP token-bucket rate limiter (`authLim` 12/min, `signupLim` 6/hr, `probeLim` 10 burst @1/2s for check-username), per-route `http.MaxBytesReader` body caps, and a shared bounded `*http.Transport` reused by both the reverse proxy and explicit upstream calls (`gw.upstream`) so a hung game-service can't OOM the gateway. WS upgrade enforces same-origin + env-driven `ALLOWED_WS_ORIGINS` allow-list (CSWSH defense) in `cmd/gateway/ws.go:checkWSOrigin`.
-- **`game-service` (cmd/game)** — Authoritative game state machine + everything else that touches game state. Sync HTTP for the SPA contract: `GET /api/games` (list), `DELETE /api/games/{id}`, and the per-game verbs nested under `/api/games/{id}/<verb>` (`state`, `move`, `resign`, `new`, `undo`, `set_players`, `set_position`, `hint`, `replay`, `pgn`, `load_pgn`, `analyze`, `visibility`, `can_watch`, `draw_*`, `takeback_*`, `rematch_*`), plus `/api/invites/*`, plus the anonymous temp-game surface `/api/temp/*` (Redis-only, 10-minute sliding TTL — see `cmd/game/temp.go`) and the internal `/api/temp/upgrade` the gateway calls during signup. Stream consumers: `game:commands` (game-service-group) for engine-translated MakeMove + JoinQueue/LeaveQueue, `engine:results` for engine-worker outputs (branches on `resp.Context` for `move` / `hint` / `assess`, then on `Metadata["temp"]` to route results to either `CmdMakeMove` or `applyTempEngineMove`). Goroutines started at boot: invite expiry sweeper (30s ticker), matchmaker pairing loop (2s ticker, Redis-leader-elected via `mm:leader`), clock flag-fall sweeper (500ms ticker), Glicko-2 rating updater (consumes `game:events` for `GameFinished`). Every read-modify-write on `games` rows goes through the per-game Redis lock and the hot cache; the same `game:lock:{id}` lock also serializes temp-game mutations. Source layout: `cmd/game/main.go` is boot only (~190 lines); the read surface lives in `state.go`, command-stream consumer + new-game/PvP/MakeMove in `commands.go`, and engine-result fan-in in `engine_results.go`. Test helpers (`panicStore` + `gameStore` in-memory composer, `newTestService`) live in `testhelpers_test.go` and back the `lock_test.go` / `handle_move_test.go` suites. **Note:** `/api/touch` and `/api/touch_move` from the 0.x platform stay deleted — touch-move is now a client-side session toggle. See `pkg/wire/CONTRACT.md` and `ROADMAP.md`.
-- **`engine-worker` (cmd/engine-worker)** — CPU-bound search. Reads the `engine:requests` stream (`engine-worker-group`), publishes results to the `engine:results` stream. Runs **exactly one search per pod**: concurrency caps at `runtime.GOMAXPROCS(0)` (cgroup-aware, **not** `runtime.NumCPU()`). To handle more concurrent searches, scale OUT (more pods), don't pack threads. Same binary can run as a UCI CLI via `-uci`; opt-in only, never auto-detected (that bug bit us — every k8s pod tty-check failed and silently EOF'd).
+## Critical invariants (always-on for Claude)
 
-## Wire-protocol contracts (read before adding new events)
+Violating any of these silently corrupts data or opens a security hole. The full list with full explanations is in [`docs/invariants.md`](docs/invariants.md); the subset below is what Claude should know without needing to read further.
 
-**See `pkg/wire/CONTRACT.md` for the canonical source of truth** — every endpoint, every event type, every payload shape, with both the backend constant and the frontend listener. The doc is normative; this section is the high-level summary.
+- **Streams vs HTTP rule** — Streams only for CPU-asymmetric workloads + cross-service intent. Single-game mutations stay sync HTTP through the gateway. See [`docs/architecture/redis-patterns.md`](docs/architecture/redis-patterns.md).
+- **Per-game lock** — Every read-modify-write on a game row holds `game:lock:{id}` (Redis SETNX + token + Lua release). See `cmd/game/lock.go`.
+- **Gateway injects `?user_id=N`** — Downstream services trust the gateway-set param. Never accept user IDs from the frontend.
+- **Per-game authz returns 404, not 403** — Existence leak avoidance. `userOwnsGame(uid, rec)` is the predicate.
+- **Only gateway has `JWT_SECRET`** — Game-service and engine-worker never verify JWTs.
+- **`pkg/core` is zero-dependency Go** — Engine search is the core IP; no third-party deps in there.
+- **Postgres is truth; Redis is cache** — Write-through. Never in-memory game state (breaks multi-replica).
+- **Middleware must forward `Hijack()` and `Flush()`** — WebSocket upgrades and SSE break silently otherwise. See `pkg/metrics/metrics.go:statusRecorder` for the canonical wrapper.
 
-Three Redis "channels" with different durability semantics. Don't conflate them.
+## Where things live
 
-| Channel | Type | Durability | Purpose |
-|---|---|---|---|
-| `game:commands` | Stream + consumer group | Durable, at-least-once via XCLAIM | Intent dispatch from gateway/matchmaker → game-service |
-| `game:events` | Stream + consumer group | Durable, replayable | Facts emitted by game-service → rating-updater, audit |
-| `engine:requests` | Stream + consumer group | Durable | Search work → engine-worker pool |
-| `engine:results` | Stream + consumer group | Durable, at-least-once | Worker → game-service result fan-in (was Pub/Sub; promoted in fa76c2f after a production loss-of-result incident) |
-| `game.evt.{id}` | Pub/Sub channel | Ephemeral | game-service → gateway hub → per-game WS clients |
-| `user.evt.{id}` | Pub/Sub channel | Ephemeral | any service → gateway hub → per-user WS clients |
+| Topic | File |
+|---|---|
+| Architecture overview, service responsibilities | [`docs/architecture/overview.md`](docs/architecture/overview.md) |
+| Redis patterns (locks, leader election, streams vs pub/sub) | [`docs/architecture/redis-patterns.md`](docs/architecture/redis-patterns.md) |
+| Wire surface summary | [`docs/architecture/wire.md`](docs/architecture/wire.md) |
+| Wire contract (normative) | [`pkg/wire/CONTRACT.md`](pkg/wire/CONTRACT.md) |
+| Full invariants list | [`docs/invariants.md`](docs/invariants.md) |
+| Dev commands | [`docs/operations/commands.md`](docs/operations/commands.md) |
+| Deployment & secrets | [`docs/operations/deployment.md`](docs/operations/deployment.md) |
+| Debugging cheatsheet | [`docs/operations/debugging.md`](docs/operations/debugging.md) |
+| Database & sqlc workflow | [`docs/operations/database.md`](docs/operations/database.md) |
+| Roadmap & shipped log | [`docs/roadmap.md`](docs/roadmap.md) |
 
-**Two delivery tiers, never mix them:**
-- Ephemeral events (moves, hints, clock ticks): Pub/Sub only. Reconnecting clients re-sync via `GET /api/state`.
-- Durable events (invites, match-found, game-end): Postgres row first, **then** publish to `user.evt.{id}`. Reconnecting clients fetch outstanding via REST (e.g. `GET /api/invites/pending`).
-
-All Command/Event types live in `pkg/eventbus/eventbus.go`. Adding a new type is additive; renaming an existing one breaks the wire.
-
-## Key invariants
-
-- **Streams vs HTTP rule.** Redis Streams are used for **(1) CPU-asymmetric workloads** (engine search dispatch + result delivery on `engine:requests` / `engine:results`) and **(2) cross-service intent** (matchmaker pairing on `game:commands`). Everything else — single-game mutations, invites, profile changes — uses synchronous HTTP through the gateway. **Do not put a user-initiated chess action behind a Stream**; the SPA expects each button to round-trip a new `StateJSON`. See cmd/game/handlers.go for the pattern.
-- **Per-game lock (Redis `game:lock:{id}`, SETNX + token + Lua release).** Every code path that reads-then-writes a game's row must hold this lock for the duration. With N replicas of game-service consuming the same Redis Stream, the round-robin delivery does NOT partition by game_id; two MakeMove commands for the same game could otherwise race. See `acquireGameLock` in cmd/game/lock.go.
-- **Gateway injects `?user_id=N` into proxied requests.** Downstream services trust this query param and do not re-validate JWTs. See `injectAuthedUser` in cmd/gateway/main.go. Letting the frontend supply `user_id` would let any caller read anyone's games.
-- **Per-game authorization at every game-keyed endpoint.** `userOwnsGame(uid, rec)` is the predicate; non-participants get 404 (not 403) so existence doesn't leak. The WS upgrade gate pre-flights /api/state with the user_id injected to enforce the same check.
-- **Only gateway gets `JWT_SECRET`** (see infra/deploy.yaml). Gateway is the only place JWTs are signed/verified; game-service and engine-worker trust the gateway-injected `?user_id=N` query param instead.
-- **Frontend is embedded only in the gateway binary** (`cmd/gateway/dist/` via `go:embed`). Other services that need a built asset (e.g. game-service's replay JSON) compose with the gateway, which substitutes templates.
-- **`pkg/core` is zero-dependency, pure Go.** The chess engine search is the core IP; do not introduce deps there.
-- **Postgres is durable truth; Redis is the hot cache.** Game rows live in `game:state:{id}` as a Redis hash, write-through to PG. Reads go Redis-first with PG fallback. Don't store game state in process memory — that breaks multi-replica. See `cmd/game/cache.go`.
-- **Any HTTP middleware that wraps `http.ResponseWriter` MUST forward `Hijack()` and `Flush()`.** `gorilla/websocket` needs `Hijack()` to take over the TCP connection during Upgrade; SSE/streaming responses need `Flush()`. Forgetting this is silent at compile time and breaks every WebSocket handler at runtime with `websocket: response does not implement http.Hijacker`. See `pkg/metrics/metrics.go:statusRecorder` for the canonical pattern.
-- **Gateway hub uses per-channel SUBSCRIBE, not PSUBSCRIBE.** When the first local WS client for game G connects, the hub `SUBSCRIBE`s `game.evt.G`; on the last disconnect it `UNSUBSCRIBE`s. This keeps cross-pod fan-out cost proportional to "pods with a live subscriber" instead of "every pod gets every event". A regression to PSUBSCRIBE wildcards would silently work but blow up the bandwidth bill at scale. See `cmd/gateway/hub.go`.
-- **Gateway pulls the matchmaker rating from the DB, never from the request body.** `handleJoinQueue` looks up `dbUser.Rating` so a 1200 player can't queue as 2400. The SPA's `api.joinQueue` no longer sends a rating field.
-- **Register HTTP routes with Go 1.22 `Method /path/{id}` patterns.** The metrics middleware (`pkg/metrics/metrics.go:HTTPMiddleware`) labels by `r.Pattern`; anything that arrives without a Pattern gets bucketed as `<unknown>` to keep cardinality bounded. A `<unknown>` spike on the Grafana panel = someone registered a handler without a Method+Pattern declaration. Prefix handlers (`mux.Handle("/api/invites/", …)`) also populate `r.Pattern` with the registered prefix, so they're fine — what's NOT fine is hand-routed dispatchers that wrap a handler without going through ServeMux's pattern matching.
-- **Confirm + prompt dialogs use the singleton Pinia modals, not `window.confirm` / `window.prompt`.** Both follow the same pattern: store mounted once in `App.vue` (`<ConfirmModal />` + `<PromptModal />`), callers do `useConfirmStore().ask({title, message, confirmLabel, danger}) → Promise<boolean>` or `usePromptStore().ask({title, message?, defaultValue?, confirmLabel}) → Promise<string|null>`. Esc cancels, Enter confirms. Browser-native dialogs don't match the theme and get blocked on some embedded contexts. See `frontend/src/components/{ConfirmModal,PromptModal}.vue` + `frontend/src/stores/{confirm,prompt}.ts`.
-
-## Common operations
-
-There is **no Justfile** despite some lingering doc references. Direct commands only:
+## Critical commands
 
 | What | Command |
 |---|---|
-| Format check (CI gate) | `gofmt -l .` — must be empty |
-| Lint | `golangci-lint run --config infra/.golangci.yml` |
-| Tests | `go test -v ./pkg/... ./cmd/...` (CI runs both) |
-| Run one test | `go test -run TestSingleLeader ./pkg/leader/...` |
+| Format (CI gate) | `gofmt -l .` — must be empty |
+| Tests | `go test ./pkg/... ./cmd/...` |
 | Build everything | `go build ./...` |
-| Build a single service | `go build -o /tmp/gateway ./cmd/gateway` |
-| Regenerate sqlc | `sqlc generate -f infra/sqlc.yaml` (config is **not** at repo root) |
-| Frontend build | `cd frontend && npm run build` (runs both `build:main` and `build:replay`) |
-| UCI smoke (matches CI) | `printf 'uci\nposition startpos\ngo depth 4\nquit\n' \| ./chess-worker -uci` |
+| Frontend | `cd frontend && npm run build` |
 
-**Backend-only build needs a dummy frontend dir** (the gateway's `go:embed` requires `cmd/gateway/dist/*` to exist):
+Full table + pre-commit gate: [`docs/operations/commands.md`](docs/operations/commands.md).
+
+**Backend-only build prerequisite** — gateway's `go:embed all:dist` needs `cmd/gateway/dist/*` to exist:
 ```bash
 mkdir -p cmd/gateway/dist && touch cmd/gateway/dist/index.html
 ```
-CI does this in the backend job to avoid an npm round-trip when only Go changed.
 
-## Database & schema
+## Skills
 
-- Schema lives in **one file**: `pkg/db/schema.sql`. There is no `migrations/` directory.
-- `OpenPostgres` applies the schema on every service boot under a Postgres advisory lock (`schemaLockID`), so racing replicas serialize the apply safely. The schema is idempotent (`CREATE TABLE IF NOT EXISTS`).
-- Editing the schema: prefer additive `ADD COLUMN IF NOT EXISTS`. Column drops or renames need to be deliberate and idempotent — the canonical pattern is `ALTER TABLE … DROP COLUMN IF EXISTS …;` appended after the `CREATE TABLE`, so the next boot's schema-apply removes the column on any cluster that still has it. Only do this when nothing reads or writes the column anywhere in the code (grep first).
-- After editing `pkg/db/queries/queries.sql`, run `sqlc generate -f infra/sqlc.yaml` to regenerate `pkg/db/gen/*`. Never hand-edit generated code.
+`.claude/skills/` has three Claude Code skills for this repo:
 
-## Secrets & deployment
+- **`chess-precommit`** — runs the full local CI gate (gofmt, golangci-lint, tests, wire-contract drift, sqlc) before committing.
+- **`investigate`** — separates analysis from implementation. Producing a prioritized punch-list first, then shipping one item per explicit "Yes / Ship it / Do it" approval.
+- **`update-chess-docs`** — refreshes the right docs after shipping a feature.
 
-- **Secrets live in k3s**, owned by the cluster. Bootstrap a fresh cluster with `./infra/bootstrap-secrets.sh` (random openssl-generated values). Rotate via `kubectl edit secret chess-secrets -n chess` then `kubectl rollout restart …`.
-- **CI never sees prod secrets.** The deploy job is `kubectl apply -k infra/` + `kubectl rollout restart`. The self-hosted runner runs on the VM.
-- All manifests live in `infra/deploy.yaml` (a single file with all three services + ingress + PVCs). Kustomize at `infra/kustomization.yaml` sets `namespace: chess`.
-- **Postgres `max_connections` is raised to 500** via `args: ["-c", "max_connections=500"]` on the chess-db Deployment. Engine-worker doesn't open a PG pool, so the live ceiling is `(gateway HPA max 8) + (game-service HPA max 6) = 14 pods × MaxOpenConns=30 = 420 client conns`, leaving ~80 for autovacuum + superuser reservations. Per-pod sizing is env-tunable via `PG_MAX_OPEN_CONNS` / `PG_MAX_IDLE_CONNS`. We tried PGBouncer but burned four deploy cycles on broken Docker Hub tags; tuning PG itself is the simpler win at this scale.
-- **Rotating Postgres credentials requires also wiping `chess-db-pvc`**, since Postgres only honors `POSTGRES_USER`/`PASSWORD` on the first init of the data dir.
+## Doing tasks
 
-## Production debugging cheatsheet
-
-```bash
-# Switch namespace once per shell so we stop passing -n
-kubectl config set-context --current --namespace=chess
-
-# Pod state across all services
-kubectl get pods
-
-# Why a service is crash-looping (gets the LAST exit's logs)
-kubectl logs -l app=chess-<service> --tail=80 --previous
-
-# Live logs of a specific service
-kubectl logs -l app=chess-gateway --tail=80 -f
-
-# Verify env var injection on a Deployment
-kubectl get deploy chess-gateway -o jsonpath='{.spec.template.spec.containers[0].env[*].name}'
-```
-
-Common failure modes and where to look:
-- **Every WebSocket call fails silently** ("doesn't update live", "refresh required", browser DevTools shows WS connections in red) — almost always an HTTP middleware wrapping `http.ResponseWriter` without forwarding `Hijack()`. Gateway logs show `websocket: response does not implement http.Hijacker`. Fix: every wrapper in the middleware chain must implement `http.Hijacker` (and `http.Flusher`). The metrics middleware bit us this way once; see `pkg/metrics/metrics.go:statusRecorder`.
-- `502 Bad Gateway` on `/api/auth/*` — gateway pod crash-looping (it owns auth now, not a separate user-service)
-- All Postgres-touching services crash-looping with `28P01` — credential drift; usually means the chess-db PVC was initialized with different credentials than `chess-secrets` now holds. Fix: wipe PVC + redeploy
-- Worker stuck in `Completed` — pre-fix this was `runtime.NumCPU()` oversubscribing or tty-auto-detect entering UCI mode. Both are fixed; if it returns, something in cmd/engine-worker/main.go is exiting cleanly without an error
-- 401 "unauthorized" everywhere after signup works — gateway is missing `JWT_SECRET` env, so its `loadSecret()` falls back to an ephemeral random key
-- Engine plays but its move never reaches the SPA — historically because `engine:results` was Pub/Sub (lossy under restart); now a durable Stream. If it regresses, check the consumer-group reader in `cmd/game/engine_results.go:listenToEngineResults`
-- Image pull failures pinning a public pgbouncer / bitnami / ... tag — Docker Hub's tag publishing is unreliable. Either pin a verified digest, switch images, or in our case (low scale) skip the dependency entirely. See the in-line comment under "PGBOUNCER" in `infra/deploy.yaml`
-
-## Things explicitly left as follow-ups
-
-Full status board: `ROADMAP.md`. The high-impact open items at a glance:
-
-**Product:**
-- _(no open product items right now — move-assessment phases 1–3 all shipped.)_
-
-**Production hardening:**
-- **Redis Sentinel** — single Redis is a full-platform SPOF; AOF gives durability but not failover. Requires a multi-node cluster to be meaningful.
-- _(KEDA on `engine:requests` pending depth + CPU backstop shipped 2026-05-16; see `infra/keda.yaml`.)_
-- **PG read replicas** for ListGames / search / replay queries.
-
-**Already shipped (kept here so they're easy to find again):**
-- Spectator mode (`/watch/:id`, `is_public` column, `userMayRead` predicate).
-- Prometheus + Grafana via `infra/observability.yaml` (Grafana at `/grafana/`, admin password in `chess-secrets:GRAFANA_ADMIN_PASSWORD`).
-- Wire-contract drift check (`infra/check-wire-contract.sh` + CI job).
-- Business metrics (`MovesAppliedTotal`, `EngineSearchDuration`, `MatchmakerQueueDepth`, `MatchmakerWaitSeconds`, `GamesFinishedTotal`, `RatingUpdateDuration`) + matching Grafana panels.
-- Auth surface hardening: per-IP rate limiter + body-size caps on signup/login/profile/check-username + WS origin allow-list (env `ALLOWED_WS_ORIGINS`).
-- Change-password UI on `/profile`; signup username minimum bumped to 5 chars.
-- In-theme confirm modal singleton replacing every `window.confirm` call site.
-- **Studies** (`/api/studies` CRUD on game-service; `/study/`+`/study/:id` SPA views). One PG table (`studies` with JSONB `tree` column) doubles for saved setups (empty tree, FEN only) and saved sessions (linear chain of moves). Save buttons live in `SidePanel.vue` ("Save as study"), `EditPanel.vue` ("Save setup"), and `Replay.vue` (one-click save with auto-generated name — Replay is a standalone bundle, no Pinia/api.ts). Listing + viewer in `frontend/src/views/Studies*.vue`. **Viewer scrub:** `GET /api/studies/{id}/positions` replays the main chain through `pkg/core` and returns per-ply FENs so the SPA can scrub locally without a JS chess engine. Viewer opens on the saved end-of-line, not the start. "Play from here" forks at the scrubbed ply with prefix history via `load_pgn` (same one-round-trip mechanism as the GameView fork). See `pkg/wire/CONTRACT.md` for the JSON tree shape.
-- **Move-list click-to-scrub + fork-from-ply + hint-mid-scrub** on finished games. Click any SAN span → board jumps to that ply (synthesizes a StateJSON from `/api/games/{id}/replay`); ←/→/Home/End/Esc work too. "Fork" creates a new engine-game row at the scrubbed FEN + replays the prefix history via one `load_pgn` round-trip (gateway also proxies `/api/games/{id}/replay` since `b6ea7e2`). "Hint" while scrubbed sends the scrubbed FEN via the optional `fen` body field on `/api/games/{id}/hint`; engine searches that position directly, not the live one. All hints use a flat 3s engine search regardless of game think-time config (depth ~13-15 on this engine; was 1s / depth 8-10 — too shallow to trust). See `cmd/game/state.go:handleReplayData`, `cmd/game/handlers.go:handleHTTPHint`, and `GameView.vue:onSelectPly/onForkFromPly/getHint`.
-- **Spectator-only viewer count.** `Hub.add` / `Hub.remove` gate `broadcastViewerCount` on a `Client.isSpectator` flag set from `/can_watch`'s `X-Is-Player` response header — players watching their own game no longer inflate the chip.
-- **Setup-Board landing tile** (`Landing.vue` third card) routes to `/game/{id}?mode=setup`; `GameView.onMounted` reads the query param and auto-calls `enterEditMode` so the user lands inside the editor.
-- **Collapsible control panel** in `GameView.vue` — chevron toggle hides `SidePanel`/`EditPanel`, keeps status + clock visible. Pref persisted to `localStorage['chess-panel-collapsed']`.
-- **New Game from a finished engine game** spawns a new durable row instead of resetting; ongoing PvP-shaped games (real human or bot-fallback) hide the New Game button entirely so players can't abandon-by-reset.
-- **Chrome favicon discovery via web manifest.** `frontend/public/manifest.webmanifest` + `<link rel="apple-touch-icon">` + `<meta name="theme-color">` in `index.html`. Chrome's URL-bar autocomplete + bookmark UI prefer the manifest over a bare `<link rel="icon">` when picking which icon to cache for the domain.
-
-See `ROADMAP.md` "Scale design notes" for the 10k-pair-scale walk-through (per-channel SUBSCRIBE, PG indices, env-tunable pool already shipped; the remaining items are deliberately deferred with reasons).
+- Read this file + the relevant `docs/` subsection before suggesting changes that touch invariants.
+- The wire contract ([`pkg/wire/CONTRACT.md`](pkg/wire/CONTRACT.md)) is normative — update it in the same commit as any new wire surface. CI (`infra/check-wire-contract.sh`) enforces drift.
+- Don't introduce new doc files at the repo root; edit the ones organized in `docs/`. New topics get their own file inside the matching `docs/<area>/` folder.

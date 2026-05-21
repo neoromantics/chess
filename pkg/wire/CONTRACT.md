@@ -14,7 +14,7 @@ backend and frontend.
 > save / load PGN file, FEN paste, draw / takeback offers, and every
 > PvP time control except `15+10` were removed from this surface to
 > reduce broken-feature entropy. They will be re-introduced one at a
-> time later — see the `chess-paused-features` memory and ROADMAP.md.
+> time later — see the `chess-paused-features` memory and `docs/roadmap.md`.
 >
 > **2026-05-15:** Elo / Glicko-2 ratings paused. Anonymous **temp
 > games** added — Redis-only, 10-minute sliding TTL, cookie-bound
