@@ -500,6 +500,15 @@ For `ListGames`, user search, replay queries. Wait until actual traffic justifie
 ### ⬜ Frontend not embedded in gateway binary
 Currently every SPA tweak rebuilds the gateway image. CDN-host `dist/` instead, with the gateway only serving `index.html` (or even just the manifest). Mostly a deploy-pipeline change.
 
+### ⬜ Off-VM Postgres + Redis snapshots
+Closest free durability win without buying more VMs. Cron `pg_dump` + Redis RDB snapshot, ship off-cluster (S3 / another host via `rclone`). Today the AOF on the PVC is the only thing between us and total data loss; if the disk corrupts, history vanishes. Half a day of work.
+
+### ⬜ Staging namespace
+A `chess-staging` namespace alongside `chess`, sharing the same node but with its own Postgres/Redis PVCs and its own ingress path (`/staging/`). Lets us smoke-test a deploy before pointing prod traffic at the new image. A few hours.
+
+### ⬜ Frontend Playwright smoke tests
+Login → start game → make move → resign, plus a Studies create/load loop. Go tests cover the backend; the Vue side relies on manual QA today, which scales poorly as the SPA grows. One day of work for the core path.
+
 ---
 
 ## Deferred (deliberate)

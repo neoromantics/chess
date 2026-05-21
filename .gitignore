@@ -35,3 +35,6 @@ default.pgo
 # should ever rely on a local .env existing.
 .env
 .env.*
+
+# Onboarding doc kept local only.
+ONBOARDING.md
