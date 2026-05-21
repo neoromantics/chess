@@ -1024,12 +1024,13 @@ const getHint = async () => {
   // and let the backend use the game's actual current state.
   const ds = displayState.value;
   const scrubFen = selectedPly.value !== null && ds ? ds.fen : undefined;
-  // Hints always use a 1s engine search — fixed, independent of the
-  // per-side think time configured for actual moves. Long-think
-  // configs would make the user wait too long for an advisory action;
-  // blitz configs would return too-shallow suggestions. 1s is the
-  // sweet spot the engine has been tuned around.
-  const movetime = 1000;
+  // Hints always use a 3s engine search — fixed, independent of the
+  // per-side think time configured for actual moves. 1s gave too-shallow
+  // suggestions (depth 8-10) that frequently disagreed with deeper
+  // searches at the same position; 3s lets the engine reach depth 13-15
+  // where evaluation stabilizes. Still short enough for an interactive
+  // "hint" feel.
+  const movetime = 3000;
   pendingHintForFEN = ds?.fen ?? state.value.fen;
   try {
     await api.getHint(props.id, movetime, scrubFen);

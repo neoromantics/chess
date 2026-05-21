@@ -641,7 +641,7 @@ func (s *GameService) handleHTTPHint(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewDecoder(r.Body).Decode(&req)
 	moveTime := time.Duration(req.MoveTime) * time.Millisecond
 	if moveTime <= 0 {
-		moveTime = 1000 * time.Millisecond
+		moveTime = 3000 * time.Millisecond
 	}
 
 	var searchFEN string

@@ -50,10 +50,12 @@ import (
 	"github.com/neoromantics/chess/pkg/game"
 )
 
-// assessMoveTime is the per-ply search budget. Short enough that a
-// 60-ply game finishes analyzing in under a minute on a single
-// engine-worker pod; the HPA scales out under burst.
-const assessMoveTime = 200 * time.Millisecond
+// assessMoveTime is the per-ply search budget. 1.5s gives the engine
+// ~depth 12-14, enough that the blunder/good-move classifier produces
+// real signal (200ms was too noisy — depth 6-8 missed the inflection
+// plies). KEDA scales workers out so a 60-ply game still wall-clocks
+// at ~15s under burst.
+const assessMoveTime = 1500 * time.Millisecond
 
 // assessScoresKey holds per-position search results until the
 // neighbour-pairing classifier consumes them. TTL covers analysis
