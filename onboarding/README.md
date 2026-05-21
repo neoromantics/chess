@@ -1,4 +1,4 @@
-# Onboarding — neoromantics Chess
+# Onboarding — Chess
 
 Welcome. This is the bridge between what you learned in your CS degree and what you'll actually be doing in this codebase. It assumes you're comfortable with algorithms, data structures, basic OS concepts, SQL, Git, and at least one mainstream language. It does **not** assume you've shipped to a Kubernetes cluster, debugged a distributed lock, or argued with a Prometheus dashboard at 11 pm. Those gaps are what this doc fills.
 
