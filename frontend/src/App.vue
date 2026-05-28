@@ -18,6 +18,7 @@ import { useAuthStore } from './stores/auth';
 import { useUserEventsStore } from './stores/userEvents';
 import { useToastStore } from './stores/toast';
 import Navbar from './components/Navbar.vue';
+import Footer from './components/Footer.vue';
 import Toast from './components/Toast.vue';
 import ConfirmModal from './components/ConfirmModal.vue';
 import PromptModal from './components/PromptModal.vue';
