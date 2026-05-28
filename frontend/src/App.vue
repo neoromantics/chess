@@ -124,5 +124,3 @@ button:hover, select:hover { background: #404040; }
 #app-root { display: flex; flex-direction: column; min-height: 100vh; }
 .app-content { flex: 1; }
 </style>
--content { flex: 1; }
-</style>
