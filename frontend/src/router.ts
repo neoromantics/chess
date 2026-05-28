@@ -9,6 +9,9 @@ import Match from './views/Match.vue';
 import Admin from './views/Admin.vue';
 import StudiesList from './views/StudiesList.vue';
 import StudyView from './views/StudyView.vue';
+import About from './views/About.vue';
+import Terms from './views/Terms.vue';
+import Privacy from './views/Privacy.vue';
 import { useAuthStore } from './stores/auth';
 
 const routes: RouteRecordRaw[] = [
@@ -20,6 +23,9 @@ const routes: RouteRecordRaw[] = [
   { path: '/dashboard', redirect: '/match' },
   { path: '/profile', component: Profile, meta: { requiresAuth: true } },
   { path: '/invites', component: Invites, meta: { requiresAuth: true } },
+  { path: '/about', component: About },
+  { path: '/terms', component: Terms },
+  { path: '/privacy', component: Privacy },
   // Studies. /study/ is the listing — owner-only, requires auth.
   // /study/:id is the viewer — auth-optional so a shared public study
   // works from a fresh browser without signup. The backend's
