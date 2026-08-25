@@ -55,16 +55,6 @@ Three pods scale horizontally; `engine-worker` has its own autoscaling profile b
 - **Touch-move rule.** Client-side session toggle in the SidePanel; enforces FIDE 4.3 when ON.
 - **Glicko-2 ratings.** Numerically verified against the paper's worked example (`pkg/rating/glicko2_test.go`).
 
-## Documentation
-
-- **[CLAUDE.md](CLAUDE.md)** — entry point for Claude Code (and humans). Slim orienting index.
-- **[docs/architecture/overview.md](docs/architecture/overview.md)** — services, responsibilities, why we consolidated 6 → 3.
-- **[docs/architecture/redis-patterns.md](docs/architecture/redis-patterns.md)** — distributed locks, leader election, streams vs pub/sub.
-- **[docs/invariants.md](docs/invariants.md)** — the rules every change must respect.
-- **[docs/operations/](docs/operations/)** — dev commands, deployment, debugging, database.
-- **[pkg/wire/CONTRACT.md](pkg/wire/CONTRACT.md)** — every HTTP route, WebSocket event, and JSON payload (normative).
-- **[docs/roadmap.md](docs/roadmap.md)** — shipped, queued, deferred.
-
 ## Repository layout
 
 ```
